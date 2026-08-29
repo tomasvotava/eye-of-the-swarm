@@ -1,0 +1,40 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: check-toml
+      - id: fix-byte-order-marker
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: check-illegal-windows-names
+      - id: detect-private-key
+      - id: forbid-submodules
+      - id: check-json
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.18.0
+    hooks:
+      - id: commitizen
+        stages:
+          - commit-msg
+        args: [--allow-abort, --commit-msg-file]
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy eye tests
+        pass_filenames: false
+        language: system
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format eye tests
+        pass_filenames: false
+        language: system
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check eye tests
+        pass_filenames: false
+        language: system
