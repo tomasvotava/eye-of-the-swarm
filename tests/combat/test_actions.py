@@ -118,6 +118,19 @@ def test_resolve_hit_is_deterministic_for_unchanged_inputs() -> None:
     assert first == second
 
 
+def test_action_definition_name_defaults_to_empty_string() -> None:
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    assert action.name == ""
+
+
+def test_action_definitions_of_the_same_kind_with_different_names_are_distinct() -> None:
+    base = ActionDefinition(kind=ActionKind.STRUGGLE)
+    variant = ActionDefinition(kind=ActionKind.STRUGGLE, name="Barbed Struggle")
+
+    assert base != variant
+
+
 def test_inflicted_effect_resolves_self_and_opponent_to_concrete_combatants() -> None:
     attacker = _combatant("Sporeling", attack=10, defense=3)
     defender = _combatant("Grub", attack=4, defense=3)
