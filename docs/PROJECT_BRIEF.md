@@ -110,6 +110,11 @@ The intended effect: fights can't be fully calculated in advance from stats alon
 - **Uprooted** (buff) — each turn, a fixed flat % chance of a second action that same turn.
 - **Wilty** (debuff) — each turn, a fixed flat % chance of spontaneous death, checked independent of the chosen action. Pairs well with Adrenaline — some attacks may inflict both at once.
 - **Vegetative** (debuff) — each turn, a fixed flat % chance the turn is skipped entirely.
+- **Swarm Resonance** (buff) — one-shot: the next battle this generation enters starts with the
+  Swarm Meter (§5.4) already partially filled. Consumed the moment that battle begins, regardless
+  of how many battles pass before it's triggered. Exploration-only in practice (see §6) — nothing
+  in the system stops a future battle-granted instance, but it would have nothing left to carry
+  forward to, since Battle-scoped effects clear when the battle that granted them ends.
 
 All "may" probabilities above are fixed flat percentages baked into the buff's definition — not upgradeable via the skill tree in v1; a knob to revisit post-jam if it proves fun.
 
@@ -129,11 +134,22 @@ Enemies loop through their available actions each turn and score each one:
 
 ## 6. Exploration Format
 
-**Decided:** a linear sequence of procedurally-generated **screens**. The player walks left to right; there is no free-roam map. Each screen spawns with a single random encounter that triggers on contact — the player walks *into* it and something happens:
+**Decided:** a linear sequence of procedurally-generated **screens**, grouped into **Biomes** —
+zones the path is divided into (see §8 for how many). The player walks left to right; there is no
+free-roam map. Each screen spawns with a single random encounter that triggers on contact — the
+player walks *into* it and something happens:
 
-- Touch an enemy → cut to the turn-based combat screen (§5.4).
-- Touch a power-up → apply a Lifespan buff or debuff (§5.6) — lasts until this generation dies.
-- Touch a heal pickup → restore HP.
+- Touch an enemy (of some **Strain** — an enemy archetype/kind, native to its Biome, §7) → cut to
+  the turn-based combat screen (§5.4).
+- Touch an effect pickup → apply a Lifespan buff or debuff (§5.6) — lasts until this generation
+  dies.
+- Touch a resource pickup → one of: restore HP; gain Spores (the skill-tree currency, §5.3); jump
+  the current Seed's growth meter (§5.2); or shrink the *felt* distance to the nearest matured
+  Turf — a "fellow carcass" find, a memory of a fallen hive-mate that makes the swarm feel closer.
+  This last one only discounts proximity-to-hive combat scaling (§5.1) — it never affects Seed
+  growth rate (§5.2), since growth is meant to reward pushing further out, not be blunted by a
+  lucky find.
+- Touch nothing → the screen is safely traversed — no gain, just further from Turf.
 - (Other trigger types can be added to this list as they're designed — the pattern is generic: walk in, trigger fires.)
 
 This keeps "distance from the nearest Seed" exactly as simple as intended: it's just a count of screens traversed, no spatial map math required (per §5.2 and §5.1). It also keeps the spawn-point rule from §5.2 unambiguous — furthest matured Seed = next generation's start screen.
@@ -154,12 +170,13 @@ Given the timeline, suggested priority order if cuts become necessary:
 
 **Optional add-on, not on the critical path:** basic platformer movement (§6 stretch goal). Only attempt once 1–4 above are working and proven fun — it's pure upside, never required to ship a complete loop.
 
-Recommend keeping the first pass to a single enemy archetype set, a short single-segment path, and minimal UI, and only expanding once the core loop (1–3 above) is proven fun in isolation.
+Recommend keeping the first pass to a single Strain (enemy archetype, §6), a single Biome (§6), a short path, and minimal UI, and only expanding once the core loop (1–3 above) is proven fun in isolation.
 
 ## 8. Open Questions / TBD
 
 - Final tone: sinister invasive plant vs. sympathetic natural growth (art-driven decision).
-- How many distinct zones/segments the path is divided into (visually and by enemy difficulty).
+- How many distinct Biomes the path is divided into (visually and by Strain difficulty), and
+  whether Biome affects which Strains can spawn there.
 - Whether "Struggle" stays purely mechanical or gets a narrative-flavored name once the world's tone is set.
 - Whether basic platformer movement (§6 stretch goal) makes it into the jam build or gets pushed to post-jam.
 - Exact numeric tuning for buff/debuff magnitudes, durations, "may" chance percentages, and AI difficulty T values (§5.6, §5.7) — playtesting-driven, not fixed by this brief.
