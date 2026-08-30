@@ -1,5 +1,6 @@
 import random
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from eye.combat.actions import ActionDefinition, resolve_hit
 from eye.combat.ai import ActionChooser
@@ -38,7 +39,21 @@ from eye.combat.tuning import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ActionAvailability:
+    action: ActionDefinition
+    is_available: bool
+
+
 class Battle:
+    """Round-resolution state machine for a single 1v1 encounter.
+
+    take_round() mutates the player/enemy Combatants directly as it resolves each step and
+    returns the resulting BattleEvent log in chronological order -- the events are a record
+    of what already happened, for playback/animation, not instructions for the caller to
+    apply.
+    """
+
     def __init__(
         self,
         player: Combatant,
@@ -270,12 +285,17 @@ class Battle:
             ),
         ]
 
-    def _available_actions(self, actor: Combatant) -> Sequence[ActionDefinition]:
+    def action_availability(self, combatant: Combatant) -> list[ActionAvailability]:
         return [
-            action
-            for action in actor.available_actions
-            if not action.requires_full_meter or actor.current_meter >= actor.base_stats.meter_capacity
+            ActionAvailability(action=action, is_available=self._is_action_available(combatant, action))
+            for action in combatant.available_actions
         ]
+
+    def _is_action_available(self, actor: Combatant, action: ActionDefinition) -> bool:
+        return not action.requires_full_meter or actor.current_meter >= actor.base_stats.meter_capacity
+
+    def _available_actions(self, actor: Combatant) -> Sequence[ActionDefinition]:
+        return [action for action in actor.available_actions if self._is_action_available(actor, action)]
 
     def _choose_action(
         self, actor: Combatant, opponent: Combatant, available: Sequence[ActionDefinition]
