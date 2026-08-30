@@ -326,7 +326,8 @@ def test_recoil_damages_the_attacker_via_self_damage_taken() -> None:
     assert self_damage == SelfDamageTaken(combatant=player, damage=5, combatant_hp_after=95)
 
 
-def test_nourished_heals_after_toxicity_ticks_in_the_same_turn() -> None:
+def test_nourished_heals_after_toxicity_ticks_in_the_same_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(battle_module, "HEAL_BEFORE_DAMAGE_TICKS", False)
     player = _combatant("Player", current_hp=50)
     enemy = _combatant("Enemy")
     player.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, remaining_turns=3))
@@ -343,7 +344,8 @@ def test_nourished_heals_after_toxicity_ticks_in_the_same_turn() -> None:
     assert hot == HealApplied(target=player, effect=EffectName.NOURISHED, amount=3, target_hp_after=50)
 
 
-def test_lethal_toxicity_kills_under_the_default_tick_order() -> None:
+def test_lethal_toxicity_kills_when_heal_does_not_precede_damage_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(battle_module, "HEAL_BEFORE_DAMAGE_TICKS", False)
     player = _combatant("Player", current_hp=3)
     enemy = _combatant("Enemy", attack=0)
     player.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, remaining_turns=3))
