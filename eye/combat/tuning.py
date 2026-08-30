@@ -10,3 +10,8 @@ SPLINTERED_DEFENSE_MAGNITUDE = -4.0
 STRUGGLE_BASE_POWER = 5.0
 SWARM_ATTACK_BASE_POWER = 20.0
 SWARM_ATTACK_FALLOFF_RANGE = 10.0  # distance_from_turf at which SwarmAttack power reaches zero
+
+AI_DIFFICULTY_EASY_T = 0.6
+AI_DIFFICULTY_MEDIUM_T = 0.35
+AI_DIFFICULTY_HARD_T = 0.15
+AI_LETHAL_SCORE_BONUS = 10_000.0  # large enough that any lethal action always outranks any non-lethal one
