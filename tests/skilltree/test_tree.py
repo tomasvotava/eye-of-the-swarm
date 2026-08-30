@@ -43,10 +43,20 @@ def test_skill_node_constructs_with_defaults() -> None:
 
     assert node.id == node_id
     assert node.cost == 10
+    assert node.name == ""
     assert node.stats_delta == StatsDelta()
     assert node.lifespan_effects == ()
     assert node.unlocked_actions == ()
     assert node.exploration_modifier == ExplorationModifierDelta()
+
+
+def test_skill_nodes_with_the_same_id_and_cost_but_different_names_are_distinct() -> None:
+    node_id = SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.DEFENSE, tier=0)
+
+    base = SkillNode(id=node_id, cost=10)
+    named = SkillNode(id=node_id, cost=10, name="Ossified Shell")
+
+    assert base != named
 
 
 def test_skill_node_carries_multiple_lifespan_effects_and_unlocked_actions() -> None:
