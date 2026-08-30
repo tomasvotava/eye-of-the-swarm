@@ -28,10 +28,11 @@ class EffectName(Enum):
     UPROOTED = auto()
     WILTY = auto()
     VEGETATIVE = auto()
+    RESONANCE = auto()
 
 
 # Trigger-type effects (Toxicity, Nourished, Spiky Skin, Adrenaline, Clouded Judgement,
-# Uprooted, Wilty, Vegetative) carry no entry here — Battle checks them via has().
+# Uprooted, Wilty, Vegetative, Resonance) carry no entry here — Battle checks them via has().
 _STAT_MODIFIERS: dict[EffectName, tuple[Stat, float]] = {
     EffectName.FIBROUS: (Stat.ATTACK, FIBROUS_ATTACK_MAGNITUDE),
     EffectName.RUNT: (Stat.ATTACK, RUNT_ATTACK_MAGNITUDE),

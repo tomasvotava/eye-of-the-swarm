@@ -31,6 +31,7 @@ from eye.combat.tuning import (
     MAX_EXTRA_ACTIONS_PER_TURN,
     NOURISHED_HEAL_PER_TURN,
     PROXIMITY_FALLOFF_RANGE,
+    RESONANCE_METER_PREFILL_RATIO,
     SPIKY_SKIN_REFLECT_RATIO,
     TOXICITY_DAMAGE_PER_TURN,
     VEGETATIVE_TRIGGER_CHANCE,
@@ -82,6 +83,23 @@ class Battle:
         if player_dead == enemy_dead:
             return None
         return self._enemy if player_dead else self._player
+
+    def start(self) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+        for combatant in (self._player, self._enemy):
+            events.extend(self._prefill_resonance(combatant))
+        return events
+
+    def _prefill_resonance(self, combatant: Combatant) -> list[BattleEvent]:
+        if not combatant.effects.has(EffectName.RESONANCE, category=EffectCategory.LIFESPAN):
+            return []
+        amount = round(combatant.base_stats.meter_capacity * RESONANCE_METER_PREFILL_RATIO)
+        combatant.current_meter = min(combatant.base_stats.meter_capacity, combatant.current_meter + amount)
+        combatant.effects.remove(EffectName.RESONANCE, category=EffectCategory.LIFESPAN)
+        return [
+            MeterFilled(combatant=combatant, amount=amount, meter_after=combatant.current_meter),
+            EffectExpired(target=combatant, effect=EffectName.RESONANCE),
+        ]
 
     def take_round(self) -> list[BattleEvent]:
         if self.is_over:
