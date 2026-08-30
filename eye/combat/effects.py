@@ -67,6 +67,13 @@ class EffectRegistry:
             return (category, name) in self._active
         return any(key_name == name for _, key_name in self._active)
 
+    def remove(self, name: EffectName, category: EffectCategory | None = None) -> None:
+        if category is not None:
+            self._active.pop((category, name), None)
+            return
+        for key in [key for key in self._active if key[1] == name]:
+            del self._active[key]
+
     def tick_battle_effects(self) -> list[EffectName]:
         expired: list[EffectName] = []
         for key, effect in list(self._active.items()):
@@ -78,6 +85,9 @@ class EffectRegistry:
                 expired.append(effect.name)
         return expired
 
-    def clear_battle_effects(self) -> None:
+    def clear_battle_effects(self) -> list[EffectName]:
+        cleared: list[EffectName] = []
         for key in [key for key in self._active if key[0] is EffectCategory.BATTLE]:
+            cleared.append(key[1])
             del self._active[key]
+        return cleared

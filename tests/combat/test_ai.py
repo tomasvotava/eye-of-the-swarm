@@ -6,7 +6,7 @@ from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.ai import GreedyAI, ScriptedChooser
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName, EffectRegistry
 from eye.combat.stats import Combatant, Stats
-from eye.combat.tuning import SWARM_ATTACK_FALLOFF_RANGE
+from eye.combat.tuning import PROXIMITY_FALLOFF_RANGE
 
 _NEAR_ZERO_T = 1e-9
 
@@ -51,7 +51,7 @@ def test_greedy_ai_prefers_a_lethal_action_via_the_k_bonus() -> None:
     opponent = _combatant("Player", attack=4, defense=5, current_hp=9)
     struggle = ActionDefinition(kind=ActionKind.STRUGGLE)
     swarm = ActionDefinition(kind=ActionKind.SWARM_ATTACK, requires_full_meter=True)
-    ai = GreedyAI(t=_NEAR_ZERO_T, rng=random.Random(0), distance_from_turf=SWARM_ATTACK_FALLOFF_RANGE * 0.8)
+    ai = GreedyAI(t=_NEAR_ZERO_T, rng=random.Random(0), distance_from_turf=PROXIMITY_FALLOFF_RANGE * 0.8)
 
     assert ai.choose(actor, opponent, [struggle, swarm]) is struggle
 
@@ -62,7 +62,7 @@ def test_greedy_ai_suppresses_the_k_bonus_when_opponent_holds_adrenaline() -> No
     opponent.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
     struggle = ActionDefinition(kind=ActionKind.STRUGGLE)
     swarm = ActionDefinition(kind=ActionKind.SWARM_ATTACK, requires_full_meter=True)
-    ai = GreedyAI(t=_NEAR_ZERO_T, rng=random.Random(0), distance_from_turf=SWARM_ATTACK_FALLOFF_RANGE * 0.8)
+    ai = GreedyAI(t=_NEAR_ZERO_T, rng=random.Random(0), distance_from_turf=PROXIMITY_FALLOFF_RANGE * 0.8)
 
     assert ai.choose(actor, opponent, [struggle, swarm]) is swarm
 
