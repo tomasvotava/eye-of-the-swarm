@@ -1,6 +1,9 @@
 import random
 from collections.abc import Sequence
 
+import pytest
+
+from eye.combat import battle as battle_module
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.ai import ScriptedChooser
 from eye.combat.battle import ActionAvailability, Battle
@@ -338,6 +341,35 @@ def test_nourished_heals_after_toxicity_ticks_in_the_same_turn() -> None:
     hot = next(event for event in events if isinstance(event, HealApplied))
     assert dot == DotTicked(target=player, effect=EffectName.TOXICITY, damage=3, target_hp_after=47)
     assert hot == HealApplied(target=player, effect=EffectName.NOURISHED, amount=3, target_hp_after=50)
+
+
+def test_lethal_toxicity_kills_under_the_default_tick_order() -> None:
+    player = _combatant("Player", current_hp=3)
+    enemy = _combatant("Enemy", attack=0)
+    player.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, remaining_turns=3))
+    player.effects.apply(ActiveEffect(EffectName.NOURISHED, EffectCategory.BATTLE, remaining_turns=3))
+    battle = Battle(
+        player, enemy, ScriptedChooser([STRUGGLE_ACTION]), ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0
+    )
+
+    battle.take_round()
+
+    assert player.current_hp <= 0
+
+
+def test_lethal_toxicity_is_survived_when_heal_precedes_damage_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(battle_module, "HEAL_BEFORE_DAMAGE_TICKS", True)
+    player = _combatant("Player", current_hp=3)
+    enemy = _combatant("Enemy", attack=0)
+    player.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, remaining_turns=3))
+    player.effects.apply(ActiveEffect(EffectName.NOURISHED, EffectCategory.BATTLE, remaining_turns=3))
+    battle = Battle(
+        player, enemy, ScriptedChooser([STRUGGLE_ACTION]), ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0
+    )
+
+    battle.take_round()
+
+    assert player.current_hp == 3
 
 
 def test_requires_full_meter_action_consumes_the_meter() -> None:
