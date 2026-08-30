@@ -104,7 +104,7 @@ The intended effect: fights can't be fully calculated in advance from stats alon
 - **Ligneous Periderm** (buff, name pending) — reduces damage taken (raises effective Defense) for its duration.
 - **Splintered** (debuff) — lowers effective Defense for its duration.
 - **Spiky Skin** (buff) — an attacker takes reflected damage when they hit the holder.
-- **Adrenaline** (buff) — one-shot: the next time the holder would die, they instead revive with a small fixed HP, gain Fibrous, and take an extra turn immediately. Consumed on trigger.
+- **Adrenaline** (buff) — one-shot: the next time the holder would die, they instead revive with a small fixed HP, gain Fibrous, and take an extra turn immediately. Consumed on trigger, regardless of which category (Lifespan or Battle) held the triggering instance — a Lifespan-granted Adrenaline (e.g. a skill-tree trait) is a once-per-generation save, not a once-per-battle one. If both categories are active on the same holder, only the triggering instance is consumed (Battle preferred over Lifespan), leaving the other independently in play per the reapplication rule above.
 - **Fibrous** (buff) — raises Attack for its duration.
 - **Runt** (debuff) — lowers Attack for its duration.
 - **Uprooted** (buff) — each turn, a fixed flat % chance of a second action that same turn.
