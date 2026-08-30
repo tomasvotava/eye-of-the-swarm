@@ -84,12 +84,18 @@ Utility sub-branches on both sides could govern things like Seed growth rate, ma
 
 ## 6. Exploration Format
 
-**Decided:** a linear, procedurally-generated path (in the vein of *Spelunky* or *Rogue Legacy*). This resolves two things that were previously open:
+**Decided:** a linear sequence of procedurally-generated **screens**. The player walks left to right; there is no free-roam map. Each screen spawns with a single random encounter that triggers on contact — the player walks *into* it and something happens:
 
-- **Distance metric:** "distance from the nearest Seed" (used by both Seed growth in §5.2 and the proximity falloff in §5.1) is simply how far along the path the player has traveled — a single number, no spatial map math required.
-- **Multi-seed spawn point (§5.2):** since the path is linear, the furthest matured Seed is unambiguously the new spawn point for the next generation.
+- Touch an enemy → cut to the turn-based combat screen (§5.4).
+- Touch a power-up → apply a temporary buff or debuff.
+- Touch a heal pickup → restore HP.
+- (Other trigger types can be added to this list as they're designed — the pattern is generic: walk in, trigger fires.)
 
-Runner-up options considered, for reference: an open top-down world (more player freedom, but real map generation and backtracking logic to build), and a hand-authored biome hub (fastest content to produce, but turns "further = riskier" into a level-select choice rather than something felt moment-to-moment).
+This keeps "distance from the nearest Seed" exactly as simple as intended: it's just a count of screens traversed, no spatial map math required (per §5.2 and §5.1). It also keeps the spawn-point rule from §5.2 unambiguous — furthest matured Seed = next generation's start screen.
+
+**Core version (v1, no platforming):** movement within a screen is just "walk right until you touch the thing." No jumping, no obstacles, no physics. This is enough on its own to support the full core loop (proximity scaling, Seed growth, planting, combat) — the game is feature-complete without any platforming mechanics.
+
+**Stretch goal — basic platformer movement:** if time allows, add jump input and simple obstacles (spikes, gaps, etc.) that damage the player if not cleared. This would layer on top of the existing screen-and-trigger structure rather than replace it — screens would just gain an optional physical-traversal layer before you reach the trigger. Because the core loop doesn't depend on this, it can be cut entirely without touching anything else in this document.
 
 ## 7. Scope Guardrails for a 17-Day Jam
 
@@ -101,6 +107,8 @@ Given the timeline, suggested priority order if cuts become necessary:
 4. Rebirth/meta-progression framing
 5. Art direction, tone, and narrative flourish (lowest priority — can be simplified or reskinned last)
 
+**Optional add-on, not on the critical path:** basic platformer movement (§6 stretch goal). Only attempt once 1–4 above are working and proven fun — it's pure upside, never required to ship a complete loop.
+
 Recommend keeping the first pass to a single enemy archetype set, a short single-segment path, and minimal UI, and only expanding once the core loop (1–3 above) is proven fun in isolation.
 
 ## 8. Open Questions / TBD
@@ -108,3 +116,4 @@ Recommend keeping the first pass to a single enemy archetype set, a short single
 - Final tone: sinister invasive plant vs. sympathetic natural growth (art-driven decision).
 - How many distinct zones/segments the path is divided into (visually and by enemy difficulty).
 - Whether "Struggle" stays purely mechanical or gets a narrative-flavored name once the world's tone is set.
+- Whether basic platformer movement (§6 stretch goal) makes it into the jam build or gets pushed to post-jam.
