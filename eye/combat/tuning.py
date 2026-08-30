@@ -9,9 +9,29 @@ SPLINTERED_DEFENSE_MAGNITUDE = -4.0
 
 STRUGGLE_BASE_POWER = 5.0
 SWARM_ATTACK_BASE_POWER = 20.0
-SWARM_ATTACK_FALLOFF_RANGE = 10.0  # distance_from_turf at which SwarmAttack power reaches zero
+PROXIMITY_FALLOFF_RANGE = 10.0  # distance_from_turf at which proximity-to-hive scaling (SS5.1) reaches zero
 
 AI_DIFFICULTY_EASY_T = 0.6
 AI_DIFFICULTY_MEDIUM_T = 0.35
 AI_DIFFICULTY_HARD_T = 0.15
 AI_LETHAL_SCORE_BONUS = 10_000.0  # large enough that any lethal action always outranks any non-lethal one
+
+WILTY_TRIGGER_CHANCE = 0.1
+VEGETATIVE_TRIGGER_CHANCE = 0.1
+ADRENALINE_REVIVE_HP = 1
+DEFAULT_BATTLE_EFFECT_DURATION_TURNS = 3
+TOXICITY_DAMAGE_PER_TURN = 3
+NOURISHED_HEAL_PER_TURN = 3
+SPIKY_SKIN_REFLECT_RATIO = 0.5
+
+UPROOTED_BASE_CHANCE = 0.15
+UPROOTED_DECAY_FACTOR = 1.0  # v1: no decay; lower later if procs feel too frequent
+MAX_EXTRA_ACTIONS_PER_TURN = 10  # defensive ceiling only, not intended to bind at sane tuning values
+
+
+def uprooted_chance(extra_action_index: int) -> float:
+    return UPROOTED_BASE_CHANCE * (UPROOTED_DECAY_FACTOR**extra_action_index)
+
+
+def distance_falloff_scale(distance_from_turf: float, falloff_range: float) -> float:
+    return max(0.0, 1.0 - distance_from_turf / falloff_range)

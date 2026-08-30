@@ -1,7 +1,7 @@
 from eye.combat.actions import ActionDefinition, ActionKind, EffectTarget, InflictedEffect, resolve_hit
 from eye.combat.effects import EffectName
 from eye.combat.stats import Combatant, Stats
-from eye.combat.tuning import STRUGGLE_BASE_POWER, SWARM_ATTACK_BASE_POWER, SWARM_ATTACK_FALLOFF_RANGE
+from eye.combat.tuning import PROXIMITY_FALLOFF_RANGE, STRUGGLE_BASE_POWER, SWARM_ATTACK_BASE_POWER
 
 
 def _combatant(name: str, attack: int, defense: int, recoil: float = 0.0) -> Combatant:
@@ -54,7 +54,7 @@ def test_swarm_attack_damage_falls_off_linearly_with_distance() -> None:
     defender = _combatant("Grub", attack=4, defense=5)
     action = ActionDefinition(kind=ActionKind.SWARM_ATTACK, requires_full_meter=True)
 
-    outcome = resolve_hit(attacker, defender, action, distance_from_turf=SWARM_ATTACK_FALLOFF_RANGE / 2)
+    outcome = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE / 2)
 
     base_damage = SWARM_ATTACK_BASE_POWER + 10 - 5
     assert outcome.damage_to_defender == round(base_damage * 0.5)
@@ -65,7 +65,7 @@ def test_swarm_attack_damage_is_zero_at_or_beyond_falloff_range() -> None:
     defender = _combatant("Grub", attack=4, defense=5)
     action = ActionDefinition(kind=ActionKind.SWARM_ATTACK, requires_full_meter=True)
 
-    outcome = resolve_hit(attacker, defender, action, distance_from_turf=SWARM_ATTACK_FALLOFF_RANGE * 2)
+    outcome = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE * 2)
 
     assert outcome.damage_to_defender == 0
 

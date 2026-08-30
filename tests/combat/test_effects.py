@@ -86,6 +86,36 @@ def test_tick_battle_effects_does_not_touch_lifespan_effects() -> None:
     assert registry.has(EffectName.FIBROUS, category=EffectCategory.LIFESPAN) is True
 
 
+def test_remove_drops_a_specific_active_effect() -> None:
+    registry = EffectRegistry()
+    registry.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
+
+    registry.remove(EffectName.ADRENALINE)
+
+    assert registry.has(EffectName.ADRENALINE) is False
+
+
+def test_remove_drops_all_categories_of_the_named_effect_when_none_given() -> None:
+    registry = EffectRegistry()
+    registry.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.LIFESPAN, remaining_turns=None))
+    registry.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
+
+    registry.remove(EffectName.ADRENALINE)
+
+    assert registry.has(EffectName.ADRENALINE) is False
+
+
+def test_remove_only_the_given_category_when_specified() -> None:
+    registry = EffectRegistry()
+    registry.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.LIFESPAN, remaining_turns=None))
+    registry.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
+
+    registry.remove(EffectName.ADRENALINE, category=EffectCategory.BATTLE)
+
+    assert registry.has(EffectName.ADRENALINE, category=EffectCategory.BATTLE) is False
+    assert registry.has(EffectName.ADRENALINE, category=EffectCategory.LIFESPAN) is True
+
+
 def test_clear_battle_effects_removes_battle_but_keeps_lifespan() -> None:
     registry = EffectRegistry()
     registry.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.LIFESPAN, remaining_turns=None))
@@ -95,3 +125,13 @@ def test_clear_battle_effects_removes_battle_but_keeps_lifespan() -> None:
 
     assert registry.has(EffectName.RUNT, category=EffectCategory.BATTLE) is False
     assert registry.has(EffectName.FIBROUS, category=EffectCategory.LIFESPAN) is True
+
+
+def test_clear_battle_effects_returns_the_cleared_effect_names() -> None:
+    registry = EffectRegistry()
+    registry.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.LIFESPAN, remaining_turns=None))
+    registry.apply(ActiveEffect(EffectName.RUNT, EffectCategory.BATTLE, remaining_turns=3))
+
+    cleared = registry.clear_battle_effects()
+
+    assert cleared == [EffectName.RUNT]
