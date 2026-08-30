@@ -26,7 +26,7 @@ from eye.combat.events import (
     TurnSkipped,
 )
 from eye.combat.stats import Combatant, Stats
-from eye.combat.tuning import MAX_EXTRA_ACTIONS_PER_TURN
+from eye.combat.tuning import MAX_EXTRA_ACTIONS_PER_TURN, RESONANCE_METER_PREFILL_RATIO
 
 
 class _ScriptedRandom(random.Random):
@@ -480,4 +480,93 @@ def test_action_availability_marks_full_meter_action_available_once_meter_is_ful
     assert battle.action_availability(player) == [
         ActionAvailability(action=STRUGGLE_ACTION, is_available=True),
         ActionAvailability(action=SWARM_ACTION, is_available=True),
+    ]
+
+
+def test_start_is_a_no_op_when_neither_combatant_holds_resonance() -> None:
+    player = _combatant("Player")
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    events = battle.start()
+
+    assert events == []
+    assert player.current_meter == 0
+    assert enemy.current_meter == 0
+
+
+def test_start_prefills_the_meter_for_a_combatant_holding_lifespan_resonance() -> None:
+    player = _combatant("Player", current_meter=0, meter_capacity=100)
+    player.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, remaining_turns=None))
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    events = battle.start()
+
+    expected_amount = round(100 * RESONANCE_METER_PREFILL_RATIO)
+    assert player.current_meter == expected_amount
+    assert events == [
+        MeterFilled(combatant=player, amount=expected_amount, meter_after=expected_amount),
+        EffectExpired(target=player, effect=EffectName.RESONANCE),
+    ]
+
+
+def test_start_clamps_the_prefill_to_meter_capacity() -> None:
+    player = _combatant("Player", current_meter=90, meter_capacity=100)
+    player.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, remaining_turns=None))
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    events = battle.start()
+
+    assert player.current_meter == 100
+    assert events == [
+        MeterFilled(combatant=player, amount=round(100 * RESONANCE_METER_PREFILL_RATIO), meter_after=100),
+        EffectExpired(target=player, effect=EffectName.RESONANCE),
+    ]
+
+
+def test_start_consumes_resonance_so_a_second_call_is_a_no_op() -> None:
+    player = _combatant("Player", current_meter=0, meter_capacity=100)
+    player.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, remaining_turns=None))
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+    battle.start()
+
+    events = battle.start()
+
+    assert events == []
+    assert player.effects.has(EffectName.RESONANCE) is False
+
+
+def test_start_only_checks_lifespan_category() -> None:
+    player = _combatant("Player", current_meter=0, meter_capacity=100)
+    player.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.BATTLE, remaining_turns=3))
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    events = battle.start()
+
+    assert events == []
+    assert player.current_meter == 0
+    assert player.effects.has(EffectName.RESONANCE, category=EffectCategory.BATTLE) is True
+
+
+def test_start_prefills_both_combatants_independently() -> None:
+    player = _combatant("Player", current_meter=0, meter_capacity=100)
+    player.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, remaining_turns=None))
+    enemy = _combatant("Enemy", current_meter=0, meter_capacity=100)
+    enemy.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, remaining_turns=None))
+    battle = Battle(player, enemy, ScriptedChooser([]), ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    events = battle.start()
+
+    expected_amount = round(100 * RESONANCE_METER_PREFILL_RATIO)
+    assert player.current_meter == expected_amount
+    assert enemy.current_meter == expected_amount
+    assert events == [
+        MeterFilled(combatant=player, amount=expected_amount, meter_after=expected_amount),
+        EffectExpired(target=player, effect=EffectName.RESONANCE),
+        MeterFilled(combatant=enemy, amount=expected_amount, meter_after=expected_amount),
+        EffectExpired(target=enemy, effect=EffectName.RESONANCE),
     ]
