@@ -23,6 +23,9 @@ DEFAULT_BATTLE_EFFECT_DURATION_TURNS = 3
 TOXICITY_DAMAGE_PER_TURN = 3
 NOURISHED_HEAL_PER_TURN = 3
 SPIKY_SKIN_REFLECT_RATIO = 0.5
+HEAL_BEFORE_DAMAGE_TICKS = False  # v1 default: Toxicity resolves before Nourished each turn
+
+STRUGGLE_SCALES_WITH_DISTANCE = False  # v1 default: Struggle is distance-independent, unlike SwarmAttack
 
 UPROOTED_BASE_CHANCE = 0.15
 UPROOTED_DECAY_FACTOR = 1.0  # v1: no decay; lower later if procs feel too frequent
