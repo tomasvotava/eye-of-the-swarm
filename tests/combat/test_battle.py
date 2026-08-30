@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.ai import ScriptedChooser
-from eye.combat.battle import Battle
+from eye.combat.battle import ActionAvailability, Battle
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName, EffectRegistry
 from eye.combat.events import (
     ActionChosen,
@@ -425,3 +425,25 @@ def test_battle_ending_clears_indefinite_battle_effects_and_emits_effect_expired
 
     assert EffectExpired(target=enemy, effect=EffectName.RUNT) in events
     assert enemy.effects.has(EffectName.RUNT, category=EffectCategory.BATTLE) is False
+
+
+def test_action_availability_reports_every_action_including_unavailable_ones() -> None:
+    player = _combatant("Player", current_meter=0, available_actions=(STRUGGLE_ACTION, SWARM_ACTION))
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    assert battle.action_availability(player) == [
+        ActionAvailability(action=STRUGGLE_ACTION, is_available=True),
+        ActionAvailability(action=SWARM_ACTION, is_available=False),
+    ]
+
+
+def test_action_availability_marks_full_meter_action_available_once_meter_is_full() -> None:
+    player = _combatant("Player", current_meter=100, available_actions=(STRUGGLE_ACTION, SWARM_ACTION))
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    assert battle.action_availability(player) == [
+        ActionAvailability(action=STRUGGLE_ACTION, is_available=True),
+        ActionAvailability(action=SWARM_ACTION, is_available=True),
+    ]
