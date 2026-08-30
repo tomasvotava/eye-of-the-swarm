@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from eye.combat.actions import ActionDefinition
-    from eye.combat.effects import ActiveEffect, EffectName
+    from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
 
 
 class Stat(Enum):
@@ -18,19 +18,31 @@ class EffectSource(Protocol):
     """Port for whatever holds/queries active effect state (`eye.combat.effects.EffectRegistry`)."""
 
     def modifier(self, stat: Stat) -> float: ...
-    def has(self, name: EffectName) -> bool: ...
+    def has(self, name: EffectName, category: EffectCategory | None = None) -> bool: ...
     def apply(self, effect: ActiveEffect) -> None: ...
+    def remove(self, name: EffectName, category: EffectCategory | None = None) -> None: ...
+    def tick_battle_effects(self) -> list[EffectName]: ...
+    def clear_battle_effects(self) -> list[EffectName]: ...
 
 
 class _NoEffects:
     def modifier(self, stat: Stat) -> float:
         return 0.0
 
-    def has(self, name: EffectName) -> bool:
+    def has(self, name: EffectName, category: EffectCategory | None = None) -> bool:
         return False
 
     def apply(self, effect: ActiveEffect) -> None:
         pass
+
+    def remove(self, name: EffectName, category: EffectCategory | None = None) -> None:
+        pass
+
+    def tick_battle_effects(self) -> list[EffectName]:
+        return []
+
+    def clear_battle_effects(self) -> list[EffectName]:
+        return []
 
 
 @dataclass(frozen=True, slots=True)

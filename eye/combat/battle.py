@@ -1,0 +1,294 @@
+import random
+from collections.abc import Sequence
+
+from eye.combat.actions import ActionDefinition, resolve_hit
+from eye.combat.ai import ActionChooser
+from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
+from eye.combat.events import (
+    ActionChosen,
+    BattleEnded,
+    BattleEvent,
+    Death,
+    DotTicked,
+    EffectApplied,
+    EffectExpired,
+    ExtraActionTriggered,
+    HealApplied,
+    HitLanded,
+    HitReflected,
+    MeterConsumed,
+    MeterFilled,
+    Revive,
+    SelfDamageTaken,
+    TurnSkipped,
+)
+from eye.combat.stats import Combatant
+from eye.combat.tuning import (
+    ADRENALINE_REVIVE_HP,
+    DEFAULT_BATTLE_EFFECT_DURATION_TURNS,
+    MAX_EXTRA_ACTIONS_PER_TURN,
+    NOURISHED_HEAL_PER_TURN,
+    PROXIMITY_FALLOFF_RANGE,
+    SPIKY_SKIN_REFLECT_RATIO,
+    TOXICITY_DAMAGE_PER_TURN,
+    VEGETATIVE_TRIGGER_CHANCE,
+    WILTY_TRIGGER_CHANCE,
+    distance_falloff_scale,
+    uprooted_chance,
+)
+
+
+class Battle:
+    def __init__(
+        self,
+        player: Combatant,
+        enemy: Combatant,
+        player_chooser: ActionChooser,
+        enemy_chooser: ActionChooser,
+        rng: random.Random,
+        distance_from_turf: float,
+    ) -> None:
+        self._player = player
+        self._enemy = enemy
+        self._player_chooser = player_chooser
+        self._enemy_chooser = enemy_chooser
+        self._rng = rng
+        self._distance_from_turf = distance_from_turf
+
+    @property
+    def is_over(self) -> bool:
+        return self._player.current_hp <= 0 or self._enemy.current_hp <= 0
+
+    @property
+    def winner(self) -> Combatant | None:
+        player_dead = self._player.current_hp <= 0
+        enemy_dead = self._enemy.current_hp <= 0
+        if player_dead == enemy_dead:
+            return None
+        return self._enemy if player_dead else self._player
+
+    def take_round(self) -> list[BattleEvent]:
+        if self.is_over:
+            return []
+        events: list[BattleEvent] = []
+        for actor, opponent in ((self._player, self._enemy), (self._enemy, self._player)):
+            if self.is_over:
+                break
+            events.extend(self._take_turn(actor, opponent))
+        if not self.is_over:
+            events.extend(self._expire_battle_effects())
+        else:
+            events.extend(self._clear_battle_effects())
+            events.append(BattleEnded(winner=self.winner))
+        return events
+
+    def _take_turn(self, actor: Combatant, opponent: Combatant) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+
+        revived = False
+        if actor.effects.has(EffectName.WILTY) and self._roll(WILTY_TRIGGER_CHANCE):
+            actor.current_hp = 0
+            death_events, revived = self._handle_potential_death(actor)
+            events.extend(death_events)
+            if not revived:
+                return events
+
+        if not revived and actor.effects.has(EffectName.VEGETATIVE) and self._roll(VEGETATIVE_TRIGGER_CHANCE):
+            events.append(TurnSkipped(combatant=actor))
+            events.extend(self._end_of_turn_ticks(actor, actor_got_turn=False))
+            return events
+
+        events.extend(self._run_actions(actor, opponent))
+        if self.is_over:
+            return events
+
+        events.extend(self._end_of_turn_ticks(actor, actor_got_turn=True))
+        return events
+
+    def _run_actions(self, actor: Combatant, opponent: Combatant) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+        extra_action_index = 0
+        while True:
+            events.extend(self._act(actor, opponent))
+            if self.is_over:
+                return events
+            if extra_action_index >= MAX_EXTRA_ACTIONS_PER_TURN:
+                return events
+            if not actor.effects.has(EffectName.UPROOTED) or not self._roll(uprooted_chance(extra_action_index)):
+                return events
+            events.append(ExtraActionTriggered(actor=actor, extra_action_index=extra_action_index))
+            extra_action_index += 1
+
+    def _act(self, actor: Combatant, opponent: Combatant) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+        available = self._available_actions(actor)
+
+        chosen = self._choose_action(actor, opponent, available)
+        was_swapped = actor is self._player and actor.effects.has(EffectName.CLOUDED_JUDGEMENT)
+        if was_swapped:
+            chosen = self._rng.choice(available)
+        events.append(ActionChosen(actor=actor, action=chosen.kind, was_swapped_by_clouded_judgement=was_swapped))
+
+        for hit_index in range(chosen.hit_count):
+            events.extend(self._resolve_one_hit(actor, opponent, chosen, hit_index))
+            if self.is_over:
+                break
+
+        if chosen.requires_full_meter:
+            actor.current_meter = 0
+            events.append(MeterConsumed(combatant=actor, meter_after=0))
+
+        return events
+
+    def _resolve_one_hit(
+        self, actor: Combatant, opponent: Combatant, action: ActionDefinition, hit_index: int
+    ) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+        outcome = resolve_hit(actor, opponent, action, distance_from_turf=self._distance_from_turf)
+
+        opponent.current_hp -= outcome.damage_to_defender
+        events.append(
+            HitLanded(
+                source=actor,
+                target=opponent,
+                action=action.kind,
+                hit_index=hit_index,
+                hit_count=action.hit_count,
+                damage=outcome.damage_to_defender,
+                target_hp_after=opponent.current_hp,
+            )
+        )
+
+        if outcome.damage_to_defender > 0 and opponent.effects.has(EffectName.SPIKY_SKIN):
+            reflected = round(outcome.damage_to_defender * SPIKY_SKIN_REFLECT_RATIO)
+            actor.current_hp -= reflected
+            events.append(
+                HitReflected(source=opponent, target=actor, damage=reflected, target_hp_after=actor.current_hp)
+            )
+
+        if outcome.recoil_to_attacker > 0:
+            actor.current_hp -= outcome.recoil_to_attacker
+            events.append(
+                SelfDamageTaken(combatant=actor, damage=outcome.recoil_to_attacker, combatant_hp_after=actor.current_hp)
+            )
+
+        for effect_name, target in outcome.inflicted:
+            duration = None if effect_name is EffectName.ADRENALINE else DEFAULT_BATTLE_EFFECT_DURATION_TURNS
+            target.effects.apply(ActiveEffect(effect_name, EffectCategory.BATTLE, duration))
+            events.append(
+                EffectApplied(
+                    target=target, effect=effect_name, category=EffectCategory.BATTLE, remaining_turns=duration
+                )
+            )
+
+        events.extend(self._check_death(opponent))
+        events.extend(self._check_death(actor))
+
+        return events
+
+    def _end_of_turn_ticks(self, actor: Combatant, actor_got_turn: bool) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+
+        if actor.current_hp > 0 and actor.effects.has(EffectName.TOXICITY):
+            actor.current_hp -= TOXICITY_DAMAGE_PER_TURN
+            events.append(
+                DotTicked(
+                    target=actor,
+                    effect=EffectName.TOXICITY,
+                    damage=TOXICITY_DAMAGE_PER_TURN,
+                    target_hp_after=actor.current_hp,
+                )
+            )
+            events.extend(self._check_death(actor))
+
+        if actor.current_hp > 0 and actor.effects.has(EffectName.NOURISHED):
+            actor.current_hp = min(actor.base_stats.max_hp, actor.current_hp + NOURISHED_HEAL_PER_TURN)
+            events.append(
+                HealApplied(
+                    target=actor,
+                    effect=EffectName.NOURISHED,
+                    amount=NOURISHED_HEAL_PER_TURN,
+                    target_hp_after=actor.current_hp,
+                )
+            )
+
+        if actor_got_turn and actor.current_hp > 0:
+            amount = self._meter_fill_amount(actor)
+            actor.current_meter = min(actor.base_stats.meter_capacity, actor.current_meter + amount)
+            events.append(MeterFilled(combatant=actor, amount=amount, meter_after=actor.current_meter))
+
+        return events
+
+    def _expire_battle_effects(self) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+        for combatant in (self._player, self._enemy):
+            for name in combatant.effects.tick_battle_effects():
+                events.append(EffectExpired(target=combatant, effect=name))
+        return events
+
+    def _clear_battle_effects(self) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+        for combatant in (self._player, self._enemy):
+            for name in combatant.effects.clear_battle_effects():
+                events.append(EffectExpired(target=combatant, effect=name))
+        return events
+
+    def _check_death(self, combatant: Combatant) -> list[BattleEvent]:
+        events, _ = self._handle_potential_death(combatant)
+        return events
+
+    def _handle_potential_death(self, combatant: Combatant) -> tuple[list[BattleEvent], bool]:
+        if combatant.current_hp > 0:
+            return [], False
+        events: list[BattleEvent] = [Death(combatant=combatant)]
+        adrenaline_category = self._active_adrenaline_category(combatant)
+        if adrenaline_category is not None:
+            events.extend(self._revive(combatant, adrenaline_category))
+            return events, True
+        return events, False
+
+    def _active_adrenaline_category(self, combatant: Combatant) -> EffectCategory | None:
+        if combatant.effects.has(EffectName.ADRENALINE, category=EffectCategory.BATTLE):
+            return EffectCategory.BATTLE
+        if combatant.effects.has(EffectName.ADRENALINE, category=EffectCategory.LIFESPAN):
+            return EffectCategory.LIFESPAN
+        return None
+
+    def _revive(self, combatant: Combatant, adrenaline_category: EffectCategory) -> list[BattleEvent]:
+        combatant.current_hp = ADRENALINE_REVIVE_HP
+        combatant.effects.remove(EffectName.ADRENALINE, category=adrenaline_category)
+        combatant.effects.apply(
+            ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, DEFAULT_BATTLE_EFFECT_DURATION_TURNS)
+        )
+        return [
+            Revive(combatant=combatant, revived_hp=ADRENALINE_REVIVE_HP),
+            EffectApplied(
+                target=combatant,
+                effect=EffectName.FIBROUS,
+                category=EffectCategory.BATTLE,
+                remaining_turns=DEFAULT_BATTLE_EFFECT_DURATION_TURNS,
+            ),
+        ]
+
+    def _available_actions(self, actor: Combatant) -> Sequence[ActionDefinition]:
+        return [
+            action
+            for action in actor.available_actions
+            if not action.requires_full_meter or actor.current_meter >= actor.base_stats.meter_capacity
+        ]
+
+    def _choose_action(
+        self, actor: Combatant, opponent: Combatant, available: Sequence[ActionDefinition]
+    ) -> ActionDefinition:
+        chooser = self._player_chooser if actor is self._player else self._enemy_chooser
+        return chooser.choose(actor, opponent, available)
+
+    def _meter_fill_amount(self, actor: Combatant) -> int:
+        rate = actor.base_stats.meter_fill_rate
+        if actor is self._player:
+            scale = distance_falloff_scale(self._distance_from_turf, PROXIMITY_FALLOFF_RANGE)
+            return round(rate * scale)
+        return rate
+
+    def _roll(self, probability: float) -> bool:
+        return self._rng.random() < probability
