@@ -2,6 +2,7 @@ import random
 
 import pytest
 
+from eye.combat import actions as actions_module
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.ai import GreedyAI, ScriptedChooser
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName, EffectRegistry
@@ -46,7 +47,8 @@ def test_greedy_ai_picks_the_highest_scoring_action() -> None:
     assert ai.choose(actor, opponent, [struggle, swarm]) is swarm
 
 
-def test_greedy_ai_prefers_a_lethal_action_via_the_k_bonus() -> None:
+def test_greedy_ai_prefers_a_lethal_action_via_the_k_bonus(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(actions_module, "STRUGGLE_SCALES_WITH_DISTANCE", False)
     actor = _combatant("Enemy", attack=10, defense=5, recoil=0.9)
     opponent = _combatant("Player", attack=4, defense=5, current_hp=9)
     struggle = ActionDefinition(kind=ActionKind.STRUGGLE)
@@ -56,7 +58,8 @@ def test_greedy_ai_prefers_a_lethal_action_via_the_k_bonus() -> None:
     assert ai.choose(actor, opponent, [struggle, swarm]) is struggle
 
 
-def test_greedy_ai_suppresses_the_k_bonus_when_opponent_holds_adrenaline() -> None:
+def test_greedy_ai_suppresses_the_k_bonus_when_opponent_holds_adrenaline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(actions_module, "STRUGGLE_SCALES_WITH_DISTANCE", False)
     actor = _combatant("Enemy", attack=10, defense=5, recoil=0.9)
     opponent = _combatant("Player", attack=4, defense=5, current_hp=9)
     opponent.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))

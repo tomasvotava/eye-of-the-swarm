@@ -73,7 +73,8 @@ def test_swarm_attack_damage_is_zero_at_or_beyond_falloff_range() -> None:
     assert outcome.damage_to_defender == 0
 
 
-def test_struggle_damage_is_distance_independent_by_default() -> None:
+def test_struggle_damage_is_distance_independent_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(actions_module, "STRUGGLE_SCALES_WITH_DISTANCE", False)
     attacker = _combatant("Sporeling", attack=10, defense=3)
     defender = _combatant("Grub", attack=4, defense=3)
     action = ActionDefinition(kind=ActionKind.STRUGGLE)
