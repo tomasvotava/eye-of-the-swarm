@@ -1,3 +1,6 @@
+import pytest
+
+from eye.combat import actions as actions_module
 from eye.combat.actions import ActionDefinition, ActionKind, EffectTarget, InflictedEffect, resolve_hit
 from eye.combat.effects import EffectName
 from eye.combat.stats import Combatant, Stats
@@ -68,6 +71,29 @@ def test_swarm_attack_damage_is_zero_at_or_beyond_falloff_range() -> None:
     outcome = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE * 2)
 
     assert outcome.damage_to_defender == 0
+
+
+def test_struggle_damage_is_distance_independent_by_default() -> None:
+    attacker = _combatant("Sporeling", attack=10, defense=3)
+    defender = _combatant("Grub", attack=4, defense=3)
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    close = resolve_hit(attacker, defender, action, distance_from_turf=0.0)
+    far = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE * 2)
+
+    assert close.damage_to_defender == far.damage_to_defender
+
+
+def test_struggle_damage_falls_off_with_distance_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(actions_module, "STRUGGLE_SCALES_WITH_DISTANCE", True)
+    attacker = _combatant("Sporeling", attack=10, defense=3)
+    defender = _combatant("Grub", attack=4, defense=3)
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    outcome = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE / 2)
+
+    base_damage = STRUGGLE_BASE_POWER + 10 - 3
+    assert outcome.damage_to_defender == round(base_damage * 0.5)
 
 
 def test_damage_floors_at_zero_when_defense_overwhelms_attack() -> None:

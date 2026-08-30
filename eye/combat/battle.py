@@ -27,6 +27,7 @@ from eye.combat.stats import Combatant
 from eye.combat.tuning import (
     ADRENALINE_REVIVE_HP,
     DEFAULT_BATTLE_EFFECT_DURATION_TURNS,
+    HEAL_BEFORE_DAMAGE_TICKS,
     MAX_EXTRA_ACTIONS_PER_TURN,
     NOURISHED_HEAL_PER_TURN,
     PROXIMITY_FALLOFF_RANGE,
@@ -204,6 +205,26 @@ class Battle:
     def _end_of_turn_ticks(self, actor: Combatant, actor_got_turn: bool) -> list[BattleEvent]:
         events: list[BattleEvent] = []
 
+        tick_order = (
+            (self._tick_nourished, self._tick_toxicity)
+            if HEAL_BEFORE_DAMAGE_TICKS
+            else (
+                self._tick_toxicity,
+                self._tick_nourished,
+            )
+        )
+        for tick in tick_order:
+            events.extend(tick(actor))
+
+        if actor_got_turn and actor.current_hp > 0:
+            amount = self._meter_fill_amount(actor)
+            actor.current_meter = min(actor.base_stats.meter_capacity, actor.current_meter + amount)
+            events.append(MeterFilled(combatant=actor, amount=amount, meter_after=actor.current_meter))
+
+        return events
+
+    def _tick_toxicity(self, actor: Combatant) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
         if actor.current_hp > 0 and actor.effects.has(EffectName.TOXICITY):
             actor.current_hp -= TOXICITY_DAMAGE_PER_TURN
             events.append(
@@ -215,7 +236,10 @@ class Battle:
                 )
             )
             events.extend(self._check_death(actor))
+        return events
 
+    def _tick_nourished(self, actor: Combatant) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
         if actor.current_hp > 0 and actor.effects.has(EffectName.NOURISHED):
             actor.current_hp = min(actor.base_stats.max_hp, actor.current_hp + NOURISHED_HEAL_PER_TURN)
             events.append(
@@ -226,12 +250,6 @@ class Battle:
                     target_hp_after=actor.current_hp,
                 )
             )
-
-        if actor_got_turn and actor.current_hp > 0:
-            amount = self._meter_fill_amount(actor)
-            actor.current_meter = min(actor.base_stats.meter_capacity, actor.current_meter + amount)
-            events.append(MeterFilled(combatant=actor, amount=amount, meter_after=actor.current_meter))
-
         return events
 
     def _expire_battle_effects(self) -> list[BattleEvent]:
