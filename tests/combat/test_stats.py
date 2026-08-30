@@ -11,6 +11,12 @@ class _FakeModifierSource:
     def modifier(self, stat: Stat) -> float:
         return self._battle.get(stat, 0.0) + self._lifespan.get(stat, 0.0)
 
+    def has(self, name: object) -> bool:
+        return False
+
+    def apply(self, effect: object) -> None:
+        pass
+
 
 def _stats() -> Stats:
     return Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10)
