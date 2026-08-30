@@ -1,6 +1,7 @@
 import random
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import assert_never
 
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
 from eye.exploration.tuning import (
@@ -84,12 +85,16 @@ class EncounterGenerator:
         kinds = list(_ENCOUNTER_KIND_WEIGHTS)
         weights = [_ENCOUNTER_KIND_WEIGHTS[kind] for kind in kinds]
         kind = self._rng.choices(kinds, weights=weights, k=1)[0]
-        if kind is EncounterKind.ENEMY:
-            return EnemyEncounter(strain=self._rng.choice(list(Strain)))
-        if kind is EncounterKind.EFFECT_PICKUP:
-            name = self._rng.choice(list(EffectName))
-            return EffectPickupEncounter(effect=ActiveEffect(name, EffectCategory.LIFESPAN, remaining_turns=None))
-        if kind is EncounterKind.RESOURCE_PICKUP:
-            resource = self._rng.choice(list(ResourceKind))
-            return ResourcePickupEncounter(resource=resource, magnitude=_RESOURCE_MAGNITUDES[resource])
-        return NothingEncounter()
+        match kind:
+            case EncounterKind.ENEMY:
+                return EnemyEncounter(strain=self._rng.choice(list(Strain)))
+            case EncounterKind.EFFECT_PICKUP:
+                name = self._rng.choice(list(EffectName))
+                return EffectPickupEncounter(effect=ActiveEffect(name, EffectCategory.LIFESPAN, remaining_turns=None))
+            case EncounterKind.RESOURCE_PICKUP:
+                resource = self._rng.choice(list(ResourceKind))
+                return ResourcePickupEncounter(resource=resource, magnitude=_RESOURCE_MAGNITUDES[resource])
+            case EncounterKind.NOTHING:
+                return NothingEncounter()
+            case _:
+                assert_never(kind)
