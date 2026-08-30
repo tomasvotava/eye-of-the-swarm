@@ -31,6 +31,8 @@ UPROOTED_BASE_CHANCE = 0.15
 UPROOTED_DECAY_FACTOR = 1.0  # v1: no decay; lower later if procs feel too frequent
 MAX_EXTRA_ACTIONS_PER_TURN = 10  # defensive ceiling only, not intended to bind at sane tuning values
 
+RESONANCE_METER_PREFILL_RATIO = 0.3
+
 
 def uprooted_chance(extra_action_index: int) -> float:
     return UPROOTED_BASE_CHANCE * (UPROOTED_DECAY_FACTOR**extra_action_index)
