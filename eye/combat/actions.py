@@ -6,6 +6,7 @@ from eye.combat.stats import Combatant, Stat
 from eye.combat.tuning import (
     PROXIMITY_FALLOFF_RANGE,
     STRUGGLE_BASE_POWER,
+    STRUGGLE_SCALES_WITH_DISTANCE,
     SWARM_ATTACK_BASE_POWER,
     distance_falloff_scale,
 )
@@ -50,7 +51,11 @@ def _damage_to_defender(
         scale = distance_falloff_scale(distance_from_turf, PROXIMITY_FALLOFF_RANGE)
     else:
         base_power = STRUGGLE_BASE_POWER
-        scale = 1.0
+        scale = (
+            distance_falloff_scale(distance_from_turf, PROXIMITY_FALLOFF_RANGE)
+            if STRUGGLE_SCALES_WITH_DISTANCE
+            else 1.0
+        )
     raw = base_power + attacker.effective(Stat.ATTACK) - defender.effective(Stat.DEFENSE)
     return round(max(0.0, raw) * scale)
 
