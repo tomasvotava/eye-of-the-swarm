@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "tomasvotava": {
+      "source": { "source": "github", "repo": "tomasvotava/house-rules" }
+    }
+  },
+  "enabledPlugins": {
+    "house-rules@tomasvotava": true
+  }
+}
