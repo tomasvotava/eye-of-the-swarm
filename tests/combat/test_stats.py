@@ -1,3 +1,4 @@
+from eye.combat.effects import EffectCategory, EffectName
 from eye.combat.stats import Combatant, Stat, Stats
 
 
@@ -11,11 +12,20 @@ class _FakeModifierSource:
     def modifier(self, stat: Stat) -> float:
         return self._battle.get(stat, 0.0) + self._lifespan.get(stat, 0.0)
 
-    def has(self, name: object) -> bool:
+    def has(self, name: EffectName, category: EffectCategory | None = None) -> bool:
         return False
 
     def apply(self, effect: object) -> None:
         pass
+
+    def remove(self, name: EffectName, category: EffectCategory | None = None) -> None:
+        pass
+
+    def tick_battle_effects(self) -> list[EffectName]:
+        return []
+
+    def clear_battle_effects(self) -> list[EffectName]:
+        return []
 
 
 def _stats() -> Stats:

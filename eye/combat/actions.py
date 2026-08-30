@@ -3,7 +3,12 @@ from enum import Enum, auto
 
 from eye.combat.effects import EffectName
 from eye.combat.stats import Combatant, Stat
-from eye.combat.tuning import STRUGGLE_BASE_POWER, SWARM_ATTACK_BASE_POWER, SWARM_ATTACK_FALLOFF_RANGE
+from eye.combat.tuning import (
+    PROXIMITY_FALLOFF_RANGE,
+    STRUGGLE_BASE_POWER,
+    SWARM_ATTACK_BASE_POWER,
+    distance_falloff_scale,
+)
 
 
 class ActionKind(Enum):
@@ -37,16 +42,12 @@ class HitOutcome:
     inflicted: tuple[tuple[EffectName, Combatant], ...]
 
 
-def _swarm_attack_power_scale(distance_from_turf: float) -> float:
-    return max(0.0, 1.0 - distance_from_turf / SWARM_ATTACK_FALLOFF_RANGE)
-
-
 def _damage_to_defender(
     attacker: Combatant, defender: Combatant, action: ActionDefinition, distance_from_turf: float
 ) -> int:
     if action.kind is ActionKind.SWARM_ATTACK:
         base_power = SWARM_ATTACK_BASE_POWER
-        scale = _swarm_attack_power_scale(distance_from_turf)
+        scale = distance_falloff_scale(distance_from_turf, PROXIMITY_FALLOFF_RANGE)
     else:
         base_power = STRUGGLE_BASE_POWER
         scale = 1.0
