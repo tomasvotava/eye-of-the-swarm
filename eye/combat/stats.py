@@ -4,6 +4,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from eye.combat.actions import ActionDefinition
     from eye.combat.effects import ActiveEffect, EffectName
 
 
@@ -50,7 +51,7 @@ class Combatant:
     current_meter: int = 0
     is_player: bool = False
     effects: EffectSource = field(default_factory=_NoEffects)
-    available_actions: Sequence[object] = ()  # TODO(#7): eye.combat.actions.ActionDefinition
+    available_actions: Sequence[ActionDefinition] = ()
 
     def effective(self, stat: Stat) -> float:
         base = {
