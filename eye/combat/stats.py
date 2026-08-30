@@ -1,7 +1,10 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from eye.combat.effects import ActiveEffect, EffectName
 
 
 class Stat(Enum):
@@ -10,15 +13,23 @@ class Stat(Enum):
     RECOIL = auto()
 
 
-class ModifierSource(Protocol):
-    """Port for whatever supplies active stat modifiers (`eye.combat.effects.EffectRegistry`)."""
+class EffectSource(Protocol):
+    """Port for whatever holds/queries active effect state (`eye.combat.effects.EffectRegistry`)."""
 
     def modifier(self, stat: Stat) -> float: ...
+    def has(self, name: EffectName) -> bool: ...
+    def apply(self, effect: ActiveEffect) -> None: ...
 
 
-class _NoModifiers:
+class _NoEffects:
     def modifier(self, stat: Stat) -> float:
         return 0.0
+
+    def has(self, name: EffectName) -> bool:
+        return False
+
+    def apply(self, effect: ActiveEffect) -> None:
+        pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +49,7 @@ class Combatant:
     current_hp: int
     current_meter: int = 0
     is_player: bool = False
-    effects: ModifierSource = field(default_factory=_NoModifiers)
+    effects: EffectSource = field(default_factory=_NoEffects)
     available_actions: Sequence[object] = ()  # TODO(#7): eye.combat.actions.ActionDefinition
 
     def effective(self, stat: Stat) -> float:
