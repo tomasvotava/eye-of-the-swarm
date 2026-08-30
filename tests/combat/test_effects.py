@@ -9,6 +9,13 @@ def test_modifier_returns_zero_with_no_active_effects() -> None:
     assert registry.modifier(Stat.ATTACK) == 0.0
 
 
+def test_modifier_is_zero_for_a_trigger_type_effect() -> None:
+    registry = EffectRegistry()
+    registry.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, remaining_turns=None))
+
+    assert registry.modifier(Stat.ATTACK) == 0.0
+
+
 def test_modifier_includes_a_single_active_stat_effect() -> None:
     registry = EffectRegistry()
     registry.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, remaining_turns=3))
