@@ -1,0 +1,13 @@
+"""Every magic number in the exploration engine — encounter-kind weights and resource pickup
+magnitudes. Values are playtesting-driven placeholders (PROJECT_BRIEF.md §8), not final tuning.
+"""
+
+ENCOUNTER_KIND_WEIGHT_ENEMY = 1.0
+ENCOUNTER_KIND_WEIGHT_EFFECT_PICKUP = 1.0
+ENCOUNTER_KIND_WEIGHT_RESOURCE_PICKUP = 1.0
+ENCOUNTER_KIND_WEIGHT_NOTHING = 1.0
+
+RESOURCE_HEAL_MAGNITUDE = 10
+RESOURCE_SPORES_MAGNITUDE = 5
+RESOURCE_SEED_GROWTH_MAGNITUDE = 10
+RESOURCE_DISTANCE_DISCOUNT_MAGNITUDE = 1
