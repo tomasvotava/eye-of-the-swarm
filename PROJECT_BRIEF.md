@@ -77,17 +77,62 @@ Utility sub-branches on both sides could govern things like Seed growth rate, ma
 - **Base attack ("Struggle"-style):** weak and self-damaging without upgrades — intentionally bad, so upgrading it feels like an obvious early win. This is the game's "hook" for the self-investment path.
 - **Swarm attack:** the special, meter-gated attack. Its power *and* frequency (how fast the meter fills) both scale down with distance from the hive/turf — tying combat directly back into the core proximity mechanic.
 - Basic stat set: HP, Attack, Defense, plus something like a "Swarm Meter" or "Resonance" stat governing the special attack.
+- Enemy action selection each turn follows the process in §5.7; buffs/debuffs (§5.6) modify combat stats and can alter that process (e.g. Clouded Judgement).
 
 ### 5.5 Rebirth & Shared Memory
 - On death, the player becomes a new individual — narratively the "next generation" — but retains all meta-progression (skill tree, currency, etc.).
 - Framing: the hive shares memory across generations, so it's continuously "you," just a newer version. This turns the roguelite death loop into a narrative feature instead of a break in continuity.
+
+### 5.6 Buffs & Debuffs
+
+The intended effect: fights can't be fully calculated in advance from stats alone — some volatility, in bounded and named ways.
+
+**Two categories, kept strictly separate** (no exploration-granted effect is battle-scoped, and vice versa):
+- **Lifespan** — granted only while exploring (touching a power-up, §6). Lasts for the lifetime of the current generation; lost on death, not on battle end.
+- **Battle/turn** — granted only during combat. Lasts a fixed number of turns, or until the current battle ends.
+
+**Shared mechanic:** both the player and enemies can hold any buff/debuff type — nothing in the system is side-specific.
+
+**Reapplication:** applying a buff/debuff already active on a target refreshes it (the new instance replaces the old) rather than stacking — but only *within* the same category. A Lifespan instance and a Battle/turn instance of the same buff type are tracked as separate slots and both apply at once, combining additively (e.g. a Lifespan Fibrous +20% picked up while exploring plus a Battle/turn Fibrous +30% granted mid-fight give +50% Attack for that battle, dropping back to +20% once the battle-scoped instance expires). At most one instance per category per buff type is ever active on a target.
+
+**v1 has no cleanse/dispel mechanic** — effects run out only via duration or death.
+
+**Specialty types** (beyond conventional HP/Attack/Defense modifiers):
+- **Toxicity** (debuff) — after the holder attacks, they take poison damage each turn for N turns.
+- **Nourished** (buff) — heals a few HP each turn. Plays nicely against Toxicity (net HP change depends on which is larger).
+- **Clouded Judgement** (debuff) — player: the chosen action is swapped for a random one from their available set. Enemy: the normal action-selection process (§5.7) runs, but the top-ranked action is excluded from the candidate pool first.
+- **Ligneous Periderm** (buff, name pending) — reduces damage taken (raises effective Defense) for its duration.
+- **Splintered** (debuff) — lowers effective Defense for its duration.
+- **Spiky Skin** (buff) — an attacker takes reflected damage when they hit the holder.
+- **Adrenaline** (buff) — one-shot: the next time the holder would die, they instead revive with a small fixed HP, gain Fibrous, and take an extra turn immediately. Consumed on trigger.
+- **Fibrous** (buff) — raises Attack for its duration.
+- **Runt** (debuff) — lowers Attack for its duration.
+- **Uprooted** (buff) — each turn, a fixed flat % chance of a second action that same turn.
+- **Wilty** (debuff) — each turn, a fixed flat % chance of spontaneous death, checked independent of the chosen action. Pairs well with Adrenaline — some attacks may inflict both at once.
+- **Vegetative** (debuff) — each turn, a fixed flat % chance the turn is skipped entirely.
+
+All "may" probabilities above are fixed flat percentages baked into the buff's definition — not upgradeable via the skill tree in v1; a knob to revisit post-jam if it proves fun.
+
+### 5.7 Enemy AI — Action Selection
+
+Enemies loop through their available actions each turn and score each one:
+
+`score = damage_to_target − self_damage_taken + self_heal_gained + (K if this action wins the fight, else 0)`
+
+...with `K` large enough that any lethal action always outranks any non-lethal one. Actions are ranked by score, best first.
+
+**Difficulty** is a single greediness parameter **T ∈ (0, 1)** per tier (e.g. easy ≈ 0.6, medium ≈ 0.35, hard ≈ 0.15 — exact values to be tuned by playtesting, not fixed here). The probability of the rank-*k* action (0 = best) is proportional to `(1 − T)^k`, normalized across however many actions are available that turn — a geometric falloff. Low T → sharply peaked on the best action (hard, near-deterministic); high T → flatter, more random picks (easy). This generalizes to any number of available actions without a per-count lookup table.
+
+**Clouded Judgement** (enemy side, §5.6): drop the rank-0 action from the candidate list, then apply the same distribution to what remains — the enemy still "tries," it just never reaches for its actual best option.
+
+**Interaction with Adrenaline:** if the target of a lethal hit holds Adrenaline (§5.6), that action doesn't count as "wins the fight" — the target survives — so the `K` bonus doesn't apply. The AI naturally deprioritizes attacks that can't actually close out the fight.
 
 ## 6. Exploration Format
 
 **Decided:** a linear sequence of procedurally-generated **screens**. The player walks left to right; there is no free-roam map. Each screen spawns with a single random encounter that triggers on contact — the player walks *into* it and something happens:
 
 - Touch an enemy → cut to the turn-based combat screen (§5.4).
-- Touch a power-up → apply a temporary buff or debuff.
+- Touch a power-up → apply a Lifespan buff or debuff (§5.6) — lasts until this generation dies.
 - Touch a heal pickup → restore HP.
 - (Other trigger types can be added to this list as they're designed — the pattern is generic: walk in, trigger fires.)
 
@@ -117,3 +162,4 @@ Recommend keeping the first pass to a single enemy archetype set, a short single
 - How many distinct zones/segments the path is divided into (visually and by enemy difficulty).
 - Whether "Struggle" stays purely mechanical or gets a narrative-flavored name once the world's tone is set.
 - Whether basic platformer movement (§6 stretch goal) makes it into the jam build or gets pushed to post-jam.
+- Exact numeric tuning for buff/debuff magnitudes, durations, "may" chance percentages, and AI difficulty T values (§5.6, §5.7) — playtesting-driven, not fixed by this brief.
