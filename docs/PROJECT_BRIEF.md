@@ -121,7 +121,7 @@ Enemies loop through their available actions each turn and score each one:
 
 ...with `K` large enough that any lethal action always outranks any non-lethal one. Actions are ranked by score, best first.
 
-**Difficulty** is a single greediness parameter **T ∈ (0, 1)** per tier (e.g. easy ≈ 0.6, medium ≈ 0.35, hard ≈ 0.15 — exact values to be tuned by playtesting, not fixed here). The probability of the rank-*k* action (0 = best) is proportional to `(1 − T)^k`, normalized across however many actions are available that turn — a geometric falloff. Low T → sharply peaked on the best action (hard, near-deterministic); high T → flatter, more random picks (easy). This generalizes to any number of available actions without a per-count lookup table.
+**Difficulty** is a single greediness parameter **T ∈ (0, 1)** per tier (e.g. easy ≈ 0.6, medium ≈ 0.35, hard ≈ 0.15 — exact values to be tuned by playtesting, not fixed here). The probability of the rank-*k* action (0 = best) is proportional to `T^k`, normalized across however many actions are available that turn — a geometric falloff. Low T → sharply peaked on the best action (hard, near-deterministic); high T → flatter, more random picks (easy). This generalizes to any number of available actions without a per-count lookup table.
 
 **Clouded Judgement** (enemy side, §5.6): drop the rank-0 action from the candidate list, then apply the same distribution to what remains — the enemy still "tries," it just never reaches for its actual best option.
 
