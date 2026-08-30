@@ -31,6 +31,7 @@ class InflictedEffect:
 @dataclass(frozen=True, slots=True)
 class ActionDefinition:
     kind: ActionKind
+    name: str = ""
     hit_count: int = 1
     inflicts: tuple[InflictedEffect, ...] = ()
     requires_full_meter: bool = False
