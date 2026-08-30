@@ -34,6 +34,10 @@ All work is tracked as GitHub Issues, not in this repo's own docs:
 - Design/brainstorming specs are working artefacts, not committed history — `docs/superpowers/`
   is git-ignored on purpose (see `.gitignore`). Nothing under it is authoritative; if a decision
   from a working spec matters going forward, it belongs in an ADR instead.
+- A PR whose branch fully implements a tracked issue closes it in the body — use a `Closes #N` /
+  `Fixes #N` / `Resolves #N` line, not `Refs #N`, which links without closing, so merging the PR
+  auto-closes the issue. Reserve `Refs #N` for a PR that's partial, related, or otherwise
+  shouldn't close the issue on merge.
 
 ## Conventions already in use
 
