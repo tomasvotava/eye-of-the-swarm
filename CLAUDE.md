@@ -1,4 +1,4 @@
-# Eye of the Swarm — agent orientation
+# The Eye of the Swarm — agent orientation
 
 Read these before touching anything in this repo:
 
