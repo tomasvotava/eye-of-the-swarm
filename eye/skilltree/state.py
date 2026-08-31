@@ -1,13 +1,14 @@
 import dataclasses
+from collections.abc import Iterable
 
 from eye.skilltree.events import NodePurchased, SkillTreeEvent
 from eye.skilltree.tree import SkillNode, SkillNodeId
 
 
 class SkillTree:
-    def __init__(self, spores_available: int = 0) -> None:
+    def __init__(self, spores_available: int = 0, purchased_nodes: Iterable[SkillNodeId] = ()) -> None:
         self._spores_available = spores_available
-        self._purchased: set[SkillNodeId] = set()
+        self._purchased: set[SkillNodeId] = set(purchased_nodes)
 
     def add_spores(self, amount: int) -> None:
         self._spores_available += amount
