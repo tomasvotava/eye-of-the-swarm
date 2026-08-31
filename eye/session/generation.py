@@ -59,6 +59,15 @@ class Generation:
     def spores_gained(self) -> int:
         return self._exploration.spores_gained + self._battle_spores_gained
 
+    @property
+    def is_seed_ready(self) -> bool:
+        return self._exploration.is_seed_ready
+
+    def plant_seed(self) -> list[SessionEvent]:
+        if self.died:
+            return []
+        return list(self._exploration.plant_seed())
+
     def advance(self) -> list[SessionEvent]:
         if self.died:
             return []
