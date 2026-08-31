@@ -11,3 +11,4 @@ Design source: [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 | [0003](adr/0003-skilltree-domain-architecture.md) | Skill tree domain architecture | Accepted |
 | [0004](adr/0004-composition-root-architecture.md) | Composition root architecture | Accepted |
 | [0005](adr/0005-persistence-architecture.md) | Persistence architecture | Accepted |
+| [0006](adr/0006-tui-adapter-architecture.md) | TUI adapter architecture | Accepted |
