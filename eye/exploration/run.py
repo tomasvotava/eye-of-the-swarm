@@ -34,6 +34,8 @@ class ExplorationRun:
         rng: random.Random,
         starting_screen: int,
         matured_turfs: Sequence[int],
+        seed_growth_multiplier: float = 1.0,
+        base_proximity_discount: float = 0.0,
     ) -> None:
         self._character = character
         self._generator = EncounterGenerator(rng)
@@ -42,12 +44,13 @@ class ExplorationRun:
         self._pending_seeds: tuple[int, ...] = ()
         self._seed_meter = 0.0
         self._spores_gained = 0
-        self._proximity_discount = 0.0
+        self._proximity_discount = base_proximity_discount
+        self._seed_growth_multiplier = seed_growth_multiplier
 
     def advance(self) -> list[ExplorationEvent]:
         events: list[ExplorationEvent] = []
         self._current_screen += 1
-        events.append(self._grow_seed(seed_growth_rate(self.distance_to_nearest_seed)))
+        events.append(self._grow_seed(seed_growth_rate(self.distance_to_nearest_seed) * self._seed_growth_multiplier))
 
         encounter = self._generator.generate()
         match encounter:
