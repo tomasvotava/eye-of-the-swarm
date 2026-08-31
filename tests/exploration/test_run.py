@@ -115,6 +115,48 @@ def test_distance_discount_affects_turf_distance_but_not_seed_growth() -> None:
     assert run.distance_to_nearest_seed == 6.0  # matured turf still counts as a seed, undiscounted
 
 
+def test_seed_growth_multiplier_scales_the_seed_grew_amount() -> None:
+    run = ExplorationRun(
+        _character(),
+        _ScriptedRandom([EncounterKind.NOTHING]),
+        starting_screen=0,
+        matured_turfs=(),
+        seed_growth_multiplier=1.5,
+    )
+
+    events = run.advance()
+
+    scaled = SEED_GROWTH_RATE_CAP * 1.5
+    assert events == [SeedGrew(amount=scaled, meter_after=scaled), NothingHappened()]
+
+
+def test_base_proximity_discount_applies_before_any_pickup_is_touched() -> None:
+    run = ExplorationRun(
+        _character(),
+        _ScriptedRandom([]),
+        starting_screen=5,
+        matured_turfs=(0,),
+        base_proximity_discount=2.0,
+    )
+
+    assert run.distance_to_nearest_matured_turf == 3.0
+
+
+def test_base_proximity_discount_combines_additively_with_a_distance_discount_pickup() -> None:
+    run = ExplorationRun(
+        _character(),
+        _ScriptedRandom([EncounterKind.RESOURCE_PICKUP], choice_indices=[3]),  # DISTANCE_DISCOUNT
+        starting_screen=5,
+        matured_turfs=(0,),
+        base_proximity_discount=2.0,
+    )
+
+    run.advance()
+
+    total_discount = 2.0 + RESOURCE_DISTANCE_DISCOUNT_MAGNITUDE
+    assert run.distance_to_nearest_matured_turf == (6 - 0) - total_discount
+
+
 def test_heal_pickup_caps_at_max_hp() -> None:
     character = _character(current_hp=95, max_hp=100)
     run = ExplorationRun(
