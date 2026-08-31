@@ -1,9 +1,10 @@
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, TypeIs
 
 from eye.session.game import Game
-from eye.skilltree.tree import Branch, SkillNodeId, SubBranch
+from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
 
 SCHEMA_VERSION = 1
 
@@ -34,7 +35,7 @@ def encode(game: Game) -> str:
     return json.dumps(payload)
 
 
-def decode(data: str) -> GameSnapshot:
+def decode(data: str, catalog: Iterable[SkillNode]) -> GameSnapshot:
     try:
         payload = json.loads(data)
     except json.JSONDecodeError as exc:
@@ -51,10 +52,11 @@ def decode(data: str) -> GameSnapshot:
     if not _is_int(spores_available):
         raise SaveDataError(f"spores_available must be an int, got {spores_available!r}")
 
+    known_node_ids = {node.id for node in catalog}
     return GameSnapshot(
         schema_version=SCHEMA_VERSION,
         spores_available=spores_available,
-        purchased_nodes=_decode_purchased_nodes(payload.get("purchased_nodes")),
+        purchased_nodes=_decode_purchased_nodes(payload.get("purchased_nodes"), known_node_ids),
         matured_turf_positions=_decode_matured_turf_positions(payload.get("matured_turf_positions")),
     )
 
@@ -63,7 +65,7 @@ def _is_int(value: Any) -> TypeIs[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _decode_purchased_nodes(raw: Any) -> frozenset[SkillNodeId]:
+def _decode_purchased_nodes(raw: Any, known_node_ids: set[SkillNodeId]) -> frozenset[SkillNodeId]:
     if not isinstance(raw, list):
         raise SaveDataError(f"purchased_nodes must be a list, got {type(raw).__name__}")
 
@@ -84,7 +86,10 @@ def _decode_purchased_nodes(raw: Any) -> frozenset[SkillNodeId]:
         if not _is_int(tier):
             raise SaveDataError(f"tier must be an int, got {tier!r}")
 
-        node_ids.add(SkillNodeId(branch=Branch[branch_name], sub_branch=SubBranch[sub_branch_name], tier=tier))
+        node_id = SkillNodeId(branch=Branch[branch_name], sub_branch=SubBranch[sub_branch_name], tier=tier)
+        if node_id not in known_node_ids:
+            raise SaveDataError(f"purchased node not in the current skill tree catalog: {node_id}")
+        node_ids.add(node_id)
     return frozenset(node_ids)
 
 

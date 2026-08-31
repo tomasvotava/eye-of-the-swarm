@@ -76,15 +76,23 @@ adapters, which is exactly what the DI pattern already used throughout this code
       matured_turf_positions: tuple[int, ...]
 
   def encode(game: Game) -> str: ...
-  def decode(data: str) -> GameSnapshot: ...  # raises SaveDataError on malformed/unknown-version
+  def decode(data: str, catalog: Iterable[SkillNode]) -> GameSnapshot: ...  # raises SaveDataError on malformed/unknown-version/unknown-node data
   ```
   `schema_version` is written (starts at `1`) but only that version is understood in v1 —
   `decode()` raises rather than attempting a migration; no migration framework exists yet and
   isn't built speculatively. `decode()` validates JSON shape (required fields, types, known enum
-  values) but not domain invariants — it doesn't check purchased nodes form a valid
-  prerequisite chain, or that they still exist in the current `CATALOG`. This matches v1's
-  existing "no defensive validation" posture (e.g. no cleanse/dispel mechanic) and is deliberately
-  punted, not overlooked — see Consequences.
+  values) and that each purchased node exists in an injected `catalog: Iterable[SkillNode]` —
+  matching the resolver-function convention already established in `eye/skilltree/resolve.py`
+  (`resolved_stats(base, tree, catalog)` and friends): `decode()` takes `catalog` as a required
+  parameter with no default, so the codec doesn't reach into `eye.skilltree.catalog.CATALOG`
+  itself — the caller injects it, the same way callers of the skilltree resolvers already do. A
+  syntactically well-formed but nonexistent node (valid enum names, valid int tier, but no such
+  node in the injected catalog — e.g. one renumbered or removed since the save was written) raises
+  `SaveDataError` rather than decoding successfully and silently granting credit for it once
+  reconstituted into a `SkillTree` (see the direct-reconstitution decision below). `decode()` does
+  not check that purchased nodes form a valid prerequisite chain — that stays out of scope,
+  matching v1's existing "no defensive validation" posture elsewhere (e.g. no cleanse/dispel
+  mechanic) and is deliberately punted, not overlooked — see Consequences.
 - **`SkillTree.__init__` gains a `purchased_nodes: Iterable[SkillNodeId] = ()` parameter**,
   mirroring how `Game.__init__` already accepts `matured_turf_positions` directly rather than
   replaying history. Considered and rejected: persisting the ordered purchase history and
@@ -135,7 +143,9 @@ adapters, which is exactly what the DI pattern already used throughout this code
 - No save-data migration framework exists. If `SkillNode`s or `GameSnapshot`'s shape change later,
   a save written under `schema_version: 1` fails to `decode()` outright rather than upgrading —
   acceptable for a jam-scale v1, but the first breaking change to persisted shape needs its own
-  ADR addendum or a new ADR for a migration strategy.
+  ADR addendum or a new ADR for a migration strategy. This now also covers `CATALOG` drift: a save
+  referencing a node renamed or removed since it was written fails `decode()` for the same reason,
+  not just a `schema_version` bump.
 - Mid-life run state (current screen, HP, active effects, an in-progress `Battle`) is never
   persisted by this design. If a future decision reverses that (e.g. players complain about losing
   progress on an accidental tab close), it's new scope — serializing `Character`/`ExplorationRun`/
