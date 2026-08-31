@@ -1,5 +1,5 @@
 import random
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 from eye.bestiary import BESTIARY
 from eye.character import Character
@@ -12,6 +12,11 @@ from eye.exploration.events import EnemyEncountered, ExplorationEvent
 from eye.exploration.run import ExplorationRun
 from eye.session.events import GenerationEnded, SessionEvent
 from eye.session.tuning import ENEMY_AI_DIFFICULTY_T
+
+
+def drain(chunks: Iterator[list[SessionEvent]]) -> list[SessionEvent]:
+    """Flatten a `Generation.advance()` call's round-stepping generator into one ordered list."""
+    return [event for chunk in chunks for event in chunk]
 
 
 class Generation:
@@ -68,22 +73,22 @@ class Generation:
             return []
         return list(self._exploration.plant_seed())
 
-    def advance(self) -> list[SessionEvent]:
+    def advance(self) -> Iterator[list[SessionEvent]]:
         if self.died:
-            return []
+            return
         exploration_events = self._exploration.advance()
-        events: list[SessionEvent] = list(exploration_events)
+        screen_events: list[SessionEvent] = list(exploration_events)
+        yield screen_events
         enemy_encountered = self._enemy_encountered(exploration_events)
         if enemy_encountered is not None:
-            events.extend(self._resolve_battle(enemy_encountered))
+            yield from self._resolve_battle(enemy_encountered)
         if self.died:
-            events.append(GenerationEnded())
-        return events
+            yield [GenerationEnded()]
 
     def _enemy_encountered(self, events: Sequence[ExplorationEvent]) -> EnemyEncountered | None:
         return next((event for event in events if isinstance(event, EnemyEncountered)), None)
 
-    def _resolve_battle(self, encounter: EnemyEncountered) -> list[SessionEvent]:
+    def _resolve_battle(self, encounter: EnemyEncountered) -> Iterator[list[SessionEvent]]:
         profile = BESTIARY[encounter.strain]
         distance_from_turf = self._exploration.distance_to_nearest_matured_turf
 
@@ -105,11 +110,12 @@ class Generation:
         enemy_chooser = GreedyAI(ENEMY_AI_DIFFICULTY_T, self._rng, distance_from_turf)
         battle = Battle(player, enemy, self._player_chooser, enemy_chooser, self._rng, distance_from_turf)
 
-        events: list[SessionEvent] = list(battle.start())
+        start_events: list[SessionEvent] = list(battle.start())
+        yield start_events
         while not battle.is_over:
-            events.extend(battle.take_round())
+            round_events: list[SessionEvent] = list(battle.take_round())
+            yield round_events
 
         self._character.current_hp = player.current_hp
         if battle.winner is player:
             self._battle_spores_gained += profile.spore_award
-        return events

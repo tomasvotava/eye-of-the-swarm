@@ -5,8 +5,20 @@ from typing import TypeVar
 from eye.combat.actions import ActionDefinition
 from eye.combat.stats import Combatant
 from eye.exploration.encounters import EncounterKind
+from eye.session.events import SessionEvent
+from eye.session.generation import Generation, drain
 
 _T = TypeVar("_T")
+
+
+def advance_flat(generation: Generation) -> list[SessionEvent]:
+    """Drain Generation.advance()'s round-stepping generator into a flat event list.
+
+    Also forces the generator to run to completion for callers that only care about the side
+    effects (HP write-back, spore award, death) -- advance() is lazy, so a bare, un-iterated
+    call executes nothing.
+    """
+    return drain(generation.advance())
 
 
 class ScriptedEncounterRandom(random.Random):
