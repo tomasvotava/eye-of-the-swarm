@@ -11,7 +11,7 @@ from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.player import BASE_PLAYER_STATS
 from eye.session.events import SeedsMatured, SporesAwarded
 from eye.session.game import Game
-from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom
+from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom, advance_flat
 
 
 def _game(kind_queue: Sequence[EncounterKind] = (), matured_turf_positions: Sequence[int] = ()) -> Game:
@@ -26,7 +26,7 @@ def test_start_generation_uses_base_player_stats_from_an_empty_skill_tree() -> N
     game = _game(kind_queue=[EncounterKind.ENEMY])
     generation = game.start_generation()
 
-    events = generation.advance()
+    events = advance_flat(generation)
 
     first_hit = next(event for event in events if isinstance(event, HitLanded))
     bramble = BESTIARY[Strain.BRAMBLE]
@@ -40,7 +40,7 @@ def test_start_generation_spawns_at_the_furthest_matured_turf() -> None:
     generation = game.start_generation()
     advances = 0
     while not generation.is_seed_ready:
-        generation.advance()
+        advance_flat(generation)
         advances += 1
 
     events = generation.plant_seed()
@@ -60,7 +60,7 @@ def test_end_generation_awards_spores_and_leaves_matured_turf_positions_unchange
     game = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY])
     generation = game.start_generation()
     while not generation.died:
-        generation.advance()
+        advance_flat(generation)
 
     events = game.end_generation(generation)
 
@@ -78,10 +78,10 @@ def test_end_generation_folds_a_planted_seed_into_matured_turf_positions() -> No
     generation = game.start_generation()
 
     for _ in range(advances_to_ready):
-        generation.advance()
+        advance_flat(generation)
     generation.plant_seed()
     while not generation.died:
-        generation.advance()
+        advance_flat(generation)
 
     events = game.end_generation(generation)
 
@@ -93,7 +93,7 @@ def test_end_generation_raises_if_called_twice_on_the_same_generation() -> None:
     game = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY])
     generation = game.start_generation()
     while not generation.died:
-        generation.advance()
+        advance_flat(generation)
     game.end_generation(generation)
 
     with pytest.raises(RuntimeError):
@@ -104,7 +104,7 @@ def test_end_generation_raises_for_a_generation_started_by_a_different_game() ->
     owner = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY])
     generation = owner.start_generation()
     while not generation.died:
-        generation.advance()
+        advance_flat(generation)
     stranger = _game()
 
     with pytest.raises(RuntimeError):
@@ -134,7 +134,7 @@ def test_start_generation_is_allowed_again_after_end_generation() -> None:
     game = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY])
     first = game.start_generation()
     while not first.died:
-        first.advance()
+        advance_flat(first)
     game.end_generation(first)
 
     second = game.start_generation()
