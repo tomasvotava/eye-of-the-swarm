@@ -6,7 +6,7 @@ from rich.console import Console
 
 from eye.persistence.port import SaveStore
 from eye.session.game import Game
-from eye.session.generation import Generation
+from eye.session.generation import Generation, drain
 from eye.tui import render, save, skilltree_menu
 from eye.tui._input import next_line
 from eye.tui.chooser import TUIActionChooser
@@ -48,7 +48,7 @@ def _play(console: Console, game: Game, input_source: Iterator[str], save_store:
 
 def _play_generation(console: Console, generation: Generation, input_source: Iterator[str]) -> None:
     while not generation.died:
-        render.events(console, generation.advance())
+        render.events(console, drain(generation.advance()))
         if generation.died:
             break
         if generation.is_seed_ready:

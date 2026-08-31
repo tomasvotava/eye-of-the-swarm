@@ -4,7 +4,7 @@ from eye.bestiary import BESTIARY
 from eye.character import Character
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
-from eye.combat.events import HitLanded
+from eye.combat.events import ActionChosen, BattleEnded, Death, HitLanded
 from eye.combat.stats import Stats
 from eye.combat.tuning import FIBROUS_ATTACK_MAGNITUDE, STRUGGLE_BASE_POWER
 from eye.exploration.encounters import EncounterKind, Strain
@@ -12,7 +12,7 @@ from eye.exploration.events import EnemyEncountered, NothingHappened, SeedGrew, 
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.session.events import GenerationEnded
 from eye.session.generation import Generation
-from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom
+from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom, advance_flat
 
 
 def _character(current_hp: int = 100, max_hp: int = 100) -> Character:
@@ -38,7 +38,7 @@ def _generation(
 def test_advance_forwards_exploration_events_untouched_when_nothing_happens() -> None:
     generation = _generation(kind_queue=[EncounterKind.NOTHING])
 
-    events = generation.advance()
+    events = advance_flat(generation)
 
     assert any(isinstance(event, SeedGrew) for event in events)
     assert NothingHappened() in events
@@ -48,7 +48,7 @@ def test_advance_forwards_exploration_events_untouched_when_nothing_happens() ->
 def test_enemy_encounter_resolves_a_battle_against_the_bestiary_profile() -> None:
     generation = _generation(kind_queue=[EncounterKind.ENEMY])
 
-    events = generation.advance()
+    events = advance_flat(generation)
 
     enemy_event = next(event for event in events if isinstance(event, EnemyEncountered))
     assert enemy_event.strain == Strain.BRAMBLE
@@ -62,7 +62,7 @@ def test_player_win_awards_the_strains_spores_and_writes_hp_back() -> None:
     character = _character(current_hp=100, max_hp=100)
     generation = _generation(character=character, stats=overwhelming, kind_queue=[EncounterKind.ENEMY])
 
-    generation.advance()
+    advance_flat(generation)
 
     assert generation.spores_gained == BESTIARY[Strain.BRAMBLE].spore_award
     assert character.current_hp == 100
@@ -74,7 +74,7 @@ def test_player_loss_kills_the_character_and_ends_the_generation() -> None:
     character = _character(current_hp=5, max_hp=5)
     generation = _generation(character=character, stats=fragile, kind_queue=[EncounterKind.ENEMY])
 
-    events = generation.advance()
+    events = advance_flat(generation)
 
     assert generation.died is True
     assert character.current_hp <= 0
@@ -85,9 +85,9 @@ def test_advance_after_death_is_a_no_op() -> None:
     fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     character = _character(current_hp=5, max_hp=5)
     generation = _generation(character=character, stats=fragile, kind_queue=[EncounterKind.ENEMY])
-    generation.advance()
+    advance_flat(generation)
 
-    assert generation.advance() == []
+    assert advance_flat(generation) == []
 
 
 def test_character_lifespan_effects_apply_to_the_player_combatant_in_battle() -> None:
@@ -96,7 +96,7 @@ def test_character_lifespan_effects_apply_to_the_player_combatant_in_battle() ->
     stats = Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(character=character, stats=stats, kind_queue=[EncounterKind.ENEMY])
 
-    events = generation.advance()
+    events = advance_flat(generation)
 
     first_hit = next(event for event in events if isinstance(event, HitLanded))
     bramble = BESTIARY[Strain.BRAMBLE]
@@ -107,7 +107,7 @@ def test_character_lifespan_effects_apply_to_the_player_combatant_in_battle() ->
 def test_pending_seeds_and_spores_gained_match_the_exploration_runs_accumulators() -> None:
     generation = _generation(kind_queue=[EncounterKind.NOTHING])
 
-    generation.advance()
+    advance_flat(generation)
 
     assert generation.pending_seeds == ()
     assert generation.spores_gained == 0
@@ -117,7 +117,7 @@ def test_plant_seed_passes_through_to_the_exploration_run() -> None:
     advances_to_ready = int(SEED_GROWTH_THRESHOLD // SEED_GROWTH_RATE_CAP)
     generation = _generation(kind_queue=[EncounterKind.NOTHING] * advances_to_ready)
     for _ in range(advances_to_ready):
-        generation.advance()
+        advance_flat(generation)
     assert generation.is_seed_ready is True
 
     events = generation.plant_seed()
@@ -138,11 +138,24 @@ def test_plant_seed_is_a_no_op_if_the_generation_has_already_died() -> None:
     kind_queue = [EncounterKind.NOTHING] * 3 + [EncounterKind.ENEMY]
     generation = _generation(character=character, stats=fragile, kind_queue=kind_queue)
     for _ in range(3):
-        generation.advance()
+        advance_flat(generation)
 
-    generation.advance()
+    advance_flat(generation)
 
     assert generation.is_seed_ready is True
     assert generation.died is True
     assert generation.plant_seed() == []
     assert generation.pending_seeds == ()
+
+
+def test_the_round_chunk_containing_a_lethal_hit_also_contains_battle_ended() -> None:
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=overwhelming, kind_queue=[EncounterKind.ENEMY])
+
+    chunks = list(generation.advance())
+
+    lethal_chunk = next(chunk for chunk in chunks if any(isinstance(event, Death) for event in chunk))
+    death_index = next(index for index, event in enumerate(lethal_chunk) if isinstance(event, Death))
+
+    assert any(isinstance(event, BattleEnded) for event in lethal_chunk)
+    assert not any(isinstance(event, ActionChosen | HitLanded) for event in lethal_chunk[death_index + 1 :])
