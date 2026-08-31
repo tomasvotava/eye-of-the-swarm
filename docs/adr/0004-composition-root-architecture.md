@@ -53,20 +53,36 @@ per-component issues" pattern the three prior ADRs used.
     skill-tree-resolved stats/actions, then drives `Battle` to completion, writes the winning
     side's HP back onto `Character`, and accumulates the Strain's Spore award. It stops advancing
     once `Character.current_hp <= 0` — the only path to 0 HP, since nothing on the exploration side
-    deals damage (only heals). Exposes `pending_seeds`, `spores_gained`, and `died: bool` read-only,
-    the same shape `ExplorationRun` already exposes its own accumulators.
+    deals damage (only heals). Exposes `pending_seeds`, `spores_gained`, `died: bool`,
+    `is_seed_ready`, and a `plant_seed()` pass-through to the underlying `ExplorationRun` —
+    the same shape `ExplorationRun` already exposes its own accumulators, plus the one decision
+    (plant now vs. keep exploring, PROJECT_BRIEF.md §5.2) a driver needs to make mid-life.
   - **`Game`** owns everything that crosses generation boundaries: the `SkillTree` and
-    `matured_turf_positions`. `Game.play_generation(...)` constructs a `Generation` — `Stats` via
-    `resolved_stats`, actions via `resolved_actions`, Lifespan effects via
-    `resolved_lifespan_effects` applied at birth, exploration modifiers via
-    `resolved_exploration_modifiers`, spawn screen = `max(matured_turf_positions, default=0)` —
-    runs it to death, then folds `pending_seeds` into `matured_turf_positions` and calls
-    `SkillTree.add_spores(spores_gained)`. `Game` does not loop generations automatically; the
-    caller invokes `play_generation()` again to continue, the same explicit-pacing pattern a future
-    UI/test harness needs to drive anyway.
-  - Both mutate their owned state directly and return `list[SessionEvent]` per call — the same
-    convention `Battle`/`ExplorationRun`/`SkillTree` already established (CLAUDE.md) — wrapping the
-    underlying domain events plus new session-level ones (e.g. `GenerationEnded`, `SeedsMatured`).
+    `matured_turf_positions`. It does **not** own a generation's screen-by-screen loop. Unlike a
+    combat action, planting has no natural callback/pull point in the domain — nothing asks the
+    player "plant here?", it's just a method (`Generation.plant_seed()`) the driver calls at its
+    own discretion, in its own loop. That only works if something outside `Game` owns the
+    per-screen stepping, so `Game` splits into two seams instead of a single "run a life to
+    completion" call:
+    - `Game.start_generation()` resolves `Stats` via `resolved_stats`, actions via
+      `resolved_actions`, Lifespan effects via `resolved_lifespan_effects` (applied at birth),
+      exploration modifiers via `resolved_exploration_modifiers`, and spawn screen =
+      `max(matured_turf_positions, default=0)`, then constructs and returns a `Generation` —
+      without advancing it. The caller drives it screen by screen (`generation.advance()`,
+      interleaving `generation.plant_seed()` whenever `generation.is_seed_ready`) at whatever pace
+      its own loop runs at — a future UI's per-frame loop, or a synchronous test/CLI harness in
+      the meantime. This mirrors the blocking-`ActionChooser` precedent ADR 0001 already
+      established for combat decisions, but needs no protocol at all: planting isn't a value the
+      domain blocks waiting for, it's a call the driver makes or doesn't.
+    - `Game.end_generation(generation)` is called once the caller has driven that `Generation` to
+      death (raises if it hasn't); it folds `pending_seeds` into `matured_turf_positions`
+      (emitting `SeedsMatured`) and calls `SkillTree.add_spores(spores_gained)`.
+    - `Game` does not loop generations automatically either; the caller calls
+      `start_generation()`/`end_generation()` again for the next life.
+  - `Generation` and `Game` both mutate their owned state directly and return `list[SessionEvent]`
+    per call — the same convention `Battle`/`ExplorationRun`/`SkillTree` already established
+    (CLAUDE.md) — wrapping the underlying domain events plus new session-level ones (e.g.
+    `GenerationEnded`, `SeedsMatured`).
 - **Choosers and `random.Random` are constructor parameters on `Game`/`Generation`**, the same
   dependency-injection pattern `Battle` already uses for `ActionChooser`. No pygame dependency
   anywhere in this package; a future interactive chooser is a separate adapter.
@@ -84,7 +100,11 @@ per-component issues" pattern the three prior ADRs used.
   in-memory state machine until then, matching `Battle`/`ExplorationRun`/`SkillTree`.
 - A future UI/rendering epic owns: a real interactive `ActionChooser` adapter, presenting
   `Generation`/`Game` state, and enforcing any "purchase between runs only" policy at the interface
-  level rather than in the domain/orchestration layer.
+  level rather than in the domain/orchestration layer. That adapter also has to reconcile
+  blocking-call `choose()` semantics with pygbag's cooperative-yield requirement (an `async def`
+  main loop that periodically `await`s to hand control back to the browser) — infrastructure
+  concern the pygame-free `ActionChooser` protocol itself shouldn't have to carry, left to that
+  epic's own protocol/DI design to resolve.
 - Adding a second `Strain` or `Biome` later is a `eye/bestiary.py` dict entry plus (for `Biome`)
   wiring into `EncounterGenerator`, not a restructure — the per-Strain Spore award and the
   single-member-enum shape were chosen with this in mind.
