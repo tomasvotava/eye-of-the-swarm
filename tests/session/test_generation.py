@@ -1,49 +1,18 @@
-import random
 from collections.abc import Sequence
-from typing import TypeVar
 
 from eye.bestiary import BESTIARY
 from eye.character import Character
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
 from eye.combat.events import HitLanded
-from eye.combat.stats import Combatant, Stats
+from eye.combat.stats import Stats
 from eye.combat.tuning import FIBROUS_ATTACK_MAGNITUDE, STRUGGLE_BASE_POWER
 from eye.exploration.encounters import EncounterKind, Strain
-from eye.exploration.events import EnemyEncountered, NothingHappened, SeedGrew
+from eye.exploration.events import EnemyEncountered, NothingHappened, SeedGrew, SeedPlanted
+from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.session.events import GenerationEnded
 from eye.session.generation import Generation
-
-_T = TypeVar("_T")
-
-
-class _ScriptedEncounterRandom(random.Random):
-    """Deterministic random.Random stand-in for the encounter-kind draw only. Every scenario here
-    gives each combat side exactly one available action, so the choices()/choice() calls GreedyAI
-    makes during battle are already deterministic on a real Random -- only the encounter-kind pick
-    (population of several weighted EncounterKind members) needs scripting."""
-
-    def __init__(self, kind_queue: Sequence[EncounterKind]) -> None:
-        super().__init__()
-        self._kind_queue = list(kind_queue)
-
-    def choices(  # type: ignore[override]
-        self,
-        population: Sequence[_T],
-        weights: Sequence[float] | None = None,
-        *,
-        cum_weights: Sequence[float] | None = None,
-        k: int = 1,
-    ) -> list[_T]:
-        if self._kind_queue:
-            kind = self._kind_queue.pop(0)
-            return [kind]  # type: ignore[list-item]
-        return super().choices(population, weights, cum_weights=cum_weights, k=k)
-
-
-class _FirstActionChooser:
-    def choose(self, actor: Combatant, opponent: Combatant, available: Sequence[ActionDefinition]) -> ActionDefinition:
-        return available[0]
+from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom
 
 
 def _character(current_hp: int = 100, max_hp: int = 100) -> Character:
@@ -59,8 +28,8 @@ def _generation(
         character=character or _character(),
         stats=stats or Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10, recoil=0.0),
         actions=(ActionDefinition(kind=ActionKind.STRUGGLE),),
-        player_chooser=_FirstActionChooser(),
-        rng=_ScriptedEncounterRandom(kind_queue),
+        player_chooser=FirstActionChooser(),
+        rng=ScriptedEncounterRandom(kind_queue),
         starting_screen=0,
         matured_turfs=(),
     )
@@ -142,3 +111,38 @@ def test_pending_seeds_and_spores_gained_match_the_exploration_runs_accumulators
 
     assert generation.pending_seeds == ()
     assert generation.spores_gained == 0
+
+
+def test_plant_seed_passes_through_to_the_exploration_run() -> None:
+    advances_to_ready = int(SEED_GROWTH_THRESHOLD // SEED_GROWTH_RATE_CAP)
+    generation = _generation(kind_queue=[EncounterKind.NOTHING] * advances_to_ready)
+    for _ in range(advances_to_ready):
+        generation.advance()
+    assert generation.is_seed_ready is True
+
+    events = generation.plant_seed()
+
+    assert events == [SeedPlanted(position=advances_to_ready)]
+    assert generation.pending_seeds == (advances_to_ready,)
+    assert generation.is_seed_ready is False
+
+
+def test_plant_seed_is_a_no_op_if_the_generation_has_already_died() -> None:
+    # Seed growth is applied before the encounter is resolved within advance(), so a single call
+    # can both cross the growth threshold and kill the character via that same call's battle --
+    # a driver checking is_seed_ready right after advance() (rather than before it) can reach
+    # plant_seed() on an already-dead generation, so this mirrors advance()'s own no-op-after-death
+    # contract rather than raising.
+    fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    character = _character(current_hp=5, max_hp=5)
+    kind_queue = [EncounterKind.NOTHING] * 3 + [EncounterKind.ENEMY]
+    generation = _generation(character=character, stats=fragile, kind_queue=kind_queue)
+    for _ in range(3):
+        generation.advance()
+
+    generation.advance()
+
+    assert generation.is_seed_ready is True
+    assert generation.died is True
+    assert generation.plant_seed() == []
+    assert generation.pending_seeds == ()

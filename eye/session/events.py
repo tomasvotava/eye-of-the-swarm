@@ -9,4 +9,15 @@ class GenerationEnded:
     pass
 
 
-type SessionEvent = ExplorationEvent | BattleEvent | GenerationEnded
+@dataclass(frozen=True, slots=True)
+class SeedsMatured:
+    positions: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SporesAwarded:
+    amount: int
+    spores_available: int
+
+
+type SessionEvent = ExplorationEvent | BattleEvent | GenerationEnded | SeedsMatured | SporesAwarded
