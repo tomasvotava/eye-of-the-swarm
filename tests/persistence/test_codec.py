@@ -1,4 +1,5 @@
 import random
+from collections.abc import Iterable
 
 import pytest
 
@@ -6,7 +7,7 @@ from eye.persistence.codec import GameSnapshot, SaveDataError, decode, encode
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
-from eye.skilltree.tree import Branch, SkillNodeId, SubBranch
+from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
 from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom
 
 
@@ -19,6 +20,10 @@ def _game(spores_available: int = 0, matured_turf_positions: tuple[int, ...] = (
     )
 
 
+def _decode(data: str, catalog: Iterable[SkillNode] = CATALOG.values()) -> GameSnapshot:
+    return decode(data, catalog)
+
+
 def test_round_trip_reconstructs_matching_skill_tree_and_matured_turf_positions() -> None:
     game = _game(spores_available=20, matured_turf_positions=(3, 7, 12))
     self_attack_tier0 = CATALOG[SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.ATTACK, tier=0)]
@@ -26,7 +31,7 @@ def test_round_trip_reconstructs_matching_skill_tree_and_matured_turf_positions(
     game.skill_tree.purchase(self_attack_tier0)
     game.skill_tree.purchase(swarm_defense_tier0)
 
-    snapshot = decode(encode(game))
+    snapshot = _decode(encode(game))
     rebuilt = Game(
         rng=random.Random(),
         player_chooser=FirstActionChooser(),
@@ -40,13 +45,13 @@ def test_round_trip_reconstructs_matching_skill_tree_and_matured_turf_positions(
 
 
 def test_encode_writes_schema_version_1() -> None:
-    snapshot = decode(encode(_game()))
+    snapshot = _decode(encode(_game()))
 
     assert snapshot.schema_version == 1
 
 
 def test_round_trip_with_no_purchases_and_no_matured_turf() -> None:
-    snapshot = decode(encode(_game()))
+    snapshot = _decode(encode(_game()))
 
     assert snapshot == GameSnapshot(
         schema_version=1, spores_available=0, purchased_nodes=frozenset(), matured_turf_positions=()
@@ -55,31 +60,31 @@ def test_round_trip_with_no_purchases_and_no_matured_turf() -> None:
 
 def test_decode_raises_on_malformed_json() -> None:
     with pytest.raises(SaveDataError):
-        decode("not json")
+        _decode("not json")
 
 
 def test_decode_raises_when_top_level_is_not_an_object() -> None:
     with pytest.raises(SaveDataError):
-        decode("[]")
+        _decode("[]")
 
 
 def test_decode_raises_on_missing_required_field() -> None:
     with pytest.raises(SaveDataError):
-        decode('{"schema_version": 1, "purchased_nodes": [], "matured_turf_positions": []}')
+        _decode('{"schema_version": 1, "purchased_nodes": [], "matured_turf_positions": []}')
 
 
 def test_decode_raises_when_spores_available_has_the_wrong_type() -> None:
     payload = '{"schema_version": 1, "spores_available": "10", "purchased_nodes": [], "matured_turf_positions": []}'
 
     with pytest.raises(SaveDataError):
-        decode(payload)
+        _decode(payload)
 
 
 def test_decode_raises_on_unrecognized_schema_version() -> None:
     payload = '{"schema_version": 2, "spores_available": 0, "purchased_nodes": [], "matured_turf_positions": []}'
 
     with pytest.raises(SaveDataError):
-        decode(payload)
+        _decode(payload)
 
 
 def test_decode_raises_on_unknown_branch_in_purchased_nodes() -> None:
@@ -90,7 +95,7 @@ def test_decode_raises_on_unknown_branch_in_purchased_nodes() -> None:
     )
 
     with pytest.raises(SaveDataError):
-        decode(payload)
+        _decode(payload)
 
 
 def test_decode_raises_on_unknown_sub_branch_in_purchased_nodes() -> None:
@@ -101,7 +106,31 @@ def test_decode_raises_on_unknown_sub_branch_in_purchased_nodes() -> None:
     )
 
     with pytest.raises(SaveDataError):
-        decode(payload)
+        _decode(payload)
+
+
+def test_decode_raises_for_a_purchased_node_that_does_not_exist_in_the_catalog() -> None:
+    payload = (
+        '{"schema_version": 1, "spores_available": 0, '
+        '"purchased_nodes": [{"branch": "SELF", "sub_branch": "ATTACK", "tier": 99}], '
+        '"matured_turf_positions": []}'
+    )
+
+    with pytest.raises(SaveDataError):
+        _decode(payload)
+
+
+def test_decode_accepts_a_purchased_node_present_in_an_injected_catalog() -> None:
+    node = SkillNode(id=SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.ATTACK, tier=0), cost=10)
+    payload = (
+        '{"schema_version": 1, "spores_available": 0, '
+        '"purchased_nodes": [{"branch": "SELF", "sub_branch": "ATTACK", "tier": 0}], '
+        '"matured_turf_positions": []}'
+    )
+
+    snapshot = decode(payload, catalog=[node])
+
+    assert snapshot.purchased_nodes == frozenset({node.id})
 
 
 def test_decode_raises_when_matured_turf_positions_contains_a_non_int() -> None:
@@ -110,4 +139,4 @@ def test_decode_raises_when_matured_turf_positions_contains_a_non_int() -> None:
     )
 
     with pytest.raises(SaveDataError):
-        decode(payload)
+        _decode(payload)
