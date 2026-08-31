@@ -103,20 +103,27 @@ adapters, which is exactly what the DI pattern already used throughout this code
     (`getItem`/`setItem`) matching the subset of the Web Storage API this needs. The adapter takes
     the storage object as a constructor parameter rather than importing `platform` itself, so it's
     unit-testable under plain CPython/pytest with a fake, without pygbag installed.
-- **Selection factory takes the filesystem path as a required parameter — it does not compute
-  one:**
+- **Selection factory takes the filesystem path as an optional parameter, required only when it's
+  actually needed:**
   ```python
-  def default_save_store(filesystem_path: Path) -> SaveStore:
+  def default_save_store(filesystem_path: Path | None = None) -> SaveStore:
       if sys.platform == "emscripten":
           import platform
           return LocalStorageSaveStore(platform.window.localStorage, key="eye-of-the-swarm-save")
+      if filesystem_path is None:
+          raise ValueError("filesystem_path is required outside emscripten")
       return FilesystemSaveStore(filesystem_path)
   ```
   Resolving a real default location (XDG config dir on Linux, `%AppData%\Roaming` on Windows,
   `~/Library/Application Support` on macOS, or something simpler like a cwd-relative path) is
   deliberately left to whichever future epic calls this — it's a UI/deployment concern, not a
   storage-format or platform-detection one, and this epic has no basis yet for picking a
-  convention it can't exercise end-to-end.
+  convention it can't exercise end-to-end. Making the parameter required unconditionally was
+  considered and rejected: under emscripten, "filesystem path" isn't a concept the caller should
+  have to invent a meaningless value for just to satisfy the signature. The requirement moves from
+  the type signature to a runtime guard clause instead — the same trade `Generation`/`Game`
+  already make for their own preconditions (`RuntimeError` on misuse rather than encoding the
+  constraint in types).
 
 ## Consequences
 
