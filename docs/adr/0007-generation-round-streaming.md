@@ -1,6 +1,6 @@
 # 0007 — Generation round-by-round battle event streaming
 
-**Status:** Accepted
+**Status:** Superseded by [0008](0008-driver-owned-battle-stepping.md)
 **Date:** 2026-08-31
 
 ## Context

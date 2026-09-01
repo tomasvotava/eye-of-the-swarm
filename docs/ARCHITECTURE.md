@@ -12,4 +12,5 @@ Design source: [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 | [0004](adr/0004-composition-root-architecture.md) | Composition root architecture | Accepted |
 | [0005](adr/0005-persistence-architecture.md) | Persistence architecture | Accepted |
 | [0006](adr/0006-tui-adapter-architecture.md) | TUI adapter architecture | Accepted |
-| [0007](adr/0007-generation-round-streaming.md) | Generation round-by-round battle event streaming | Accepted |
+| [0007](adr/0007-generation-round-streaming.md) | Generation round-by-round battle event streaming | Superseded by 0008 |
+| [0008](adr/0008-driver-owned-battle-stepping.md) | Driver-owned battle stepping | Accepted |
