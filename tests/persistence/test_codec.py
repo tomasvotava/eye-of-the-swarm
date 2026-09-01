@@ -8,13 +8,12 @@ from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
 from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
-from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom
+from tests.session.doubles import ScriptedEncounterRandom
 
 
 def _game(spores_available: int = 0, matured_turf_positions: tuple[int, ...] = ()) -> Game:
     return Game(
         rng=ScriptedEncounterRandom(()),
-        player_chooser=FirstActionChooser(),
         skill_tree=SkillTree(spores_available=spores_available),
         matured_turf_positions=matured_turf_positions,
     )
@@ -34,7 +33,6 @@ def test_round_trip_reconstructs_matching_skill_tree_and_matured_turf_positions(
     snapshot = _decode(encode(game))
     rebuilt = Game(
         rng=random.Random(),
-        player_chooser=FirstActionChooser(),
         skill_tree=SkillTree(spores_available=snapshot.spores_available, purchased_nodes=snapshot.purchased_nodes),
         matured_turf_positions=snapshot.matured_turf_positions,
     )
