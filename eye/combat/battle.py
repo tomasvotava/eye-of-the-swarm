@@ -110,6 +110,14 @@ class Battle:
             return None
         return self._enemy if player_dead else self._player
 
+    @property
+    def player(self) -> Combatant:
+        return self._player
+
+    @property
+    def enemy(self) -> Combatant:
+        return self._enemy
+
     def start(self) -> list[BattleEvent]:
         events: list[BattleEvent] = []
         for combatant in (self._player, self._enemy):
