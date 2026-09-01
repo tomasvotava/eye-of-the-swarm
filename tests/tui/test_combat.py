@@ -1,5 +1,4 @@
 import io
-from collections.abc import Iterator
 
 import pytest
 from rich.console import Console
