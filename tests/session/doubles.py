@@ -5,20 +5,30 @@ from typing import TypeVar
 from eye.combat.actions import ActionDefinition
 from eye.combat.stats import Combatant
 from eye.exploration.encounters import EncounterKind
+from eye.exploration.events import EnemyEncountered
 from eye.session.events import SessionEvent
-from eye.session.generation import Generation, drain
+from eye.session.generation import Generation
+from tests.combat.support import unfold
 
 _T = TypeVar("_T")
 
 
-def advance_flat(generation: Generation) -> list[SessionEvent]:
-    """Drain Generation.advance()'s round-stepping generator into a flat event list.
+def _pick_first_action(available: Sequence[ActionDefinition]) -> ActionDefinition:
+    return available[0]
 
-    Also forces the generator to run to completion for callers that only care about the side
-    effects (HP write-back, spore award, death) -- advance() is lazy, so a bare, un-iterated
-    call executes nothing.
-    """
-    return drain(generation.advance())
+
+def advance_flat(generation: Generation) -> list[SessionEvent]:
+    """Advance one screen; if it surfaces an enemy, drive that battle to completion picking the
+    first available action for every player swing, then finish it -- a fixed choice, mirroring
+    this package's other deterministic test doubles."""
+    events: list[SessionEvent] = list(generation.advance())
+    encounter = next((event for event in events if isinstance(event, EnemyEncountered)), None)
+    if encounter is not None:
+        battle = generation.start_battle(encounter)
+        events.extend(battle.start())
+        events.extend(unfold(battle, _pick_first_action))
+        events.extend(generation.finish_battle(battle))
+    return events
 
 
 class ScriptedEncounterRandom(random.Random):
