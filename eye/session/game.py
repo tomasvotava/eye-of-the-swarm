@@ -2,7 +2,6 @@ import random
 from collections.abc import Sequence
 
 from eye.character import Character
-from eye.combat.ai import ActionChooser
 from eye.combat.effects import ActiveEffect, EffectCategory
 from eye.player import BASE_PLAYER_ACTIONS, BASE_PLAYER_STATS
 from eye.session.events import SeedsMatured, SessionEvent, SporesAwarded
@@ -28,12 +27,10 @@ class Game:
     def __init__(
         self,
         rng: random.Random,
-        player_chooser: ActionChooser,
         skill_tree: SkillTree | None = None,
         matured_turf_positions: Sequence[int] = (),
     ) -> None:
         self._rng = rng
-        self._player_chooser = player_chooser
         self._skill_tree = skill_tree if skill_tree is not None else SkillTree()
         self._matured_turf_positions: tuple[int, ...] = tuple(matured_turf_positions)
         self._current_generation: Generation | None = None
@@ -65,7 +62,6 @@ class Game:
             character,
             stats,
             actions,
-            self._player_chooser,
             self._rng,
             spawn_screen,
             self._matured_turf_positions,
