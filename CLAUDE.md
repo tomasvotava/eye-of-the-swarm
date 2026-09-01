@@ -19,6 +19,13 @@ Read these before touching anything in this repo:
 
 All work is tracked as GitHub Issues, not in this repo's own docs:
 
+- **Before scoping a new body of work, review closed `Epic:`-titled issues**
+  (`gh issue list --state closed --search "Epic:"`) for the shape every prior one has followed:
+  brainstorm a design, write it up as a spec (a working artefact, not committed — see below),
+  distill it into an ADR, then file the Epic issue referencing that ADR (by reference if its PR
+  hasn't landed yet — `docs/adr/NNNN-*.md (PR #N, pending review)` — otherwise directly), with
+  sub-issues following once the ADR is Accepted. Don't re-derive this process from scratch or ask
+  what shape to use each time; follow the established one.
 - A body of related work is an **Epic** — an issue titled `Epic: <name>`, created first, with no
   parent of its own.
 - Implementation-level work is a **sub-issue** of its Epic, linked with GitHub's native
