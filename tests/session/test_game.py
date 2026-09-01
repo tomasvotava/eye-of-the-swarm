@@ -11,13 +11,12 @@ from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.player import BASE_PLAYER_STATS
 from eye.session.events import SeedsMatured, SporesAwarded
 from eye.session.game import Game
-from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom, advance_flat
+from tests.session.doubles import ScriptedEncounterRandom, advance_flat
 
 
 def _game(kind_queue: Sequence[EncounterKind] = (), matured_turf_positions: Sequence[int] = ()) -> Game:
     return Game(
         rng=ScriptedEncounterRandom(kind_queue),
-        player_chooser=FirstActionChooser(),
         matured_turf_positions=matured_turf_positions,
     )
 
