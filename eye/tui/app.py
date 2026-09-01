@@ -4,12 +4,12 @@ from collections.abc import Iterator
 
 from rich.console import Console
 
+from eye.exploration.events import EnemyEncountered
 from eye.persistence.port import SaveStore
 from eye.session.game import Game
 from eye.session.generation import Generation
-from eye.tui import render, save, skilltree_menu
+from eye.tui import combat, render, save, skilltree_menu
 from eye.tui._input import next_line
-from eye.tui.chooser import TUIActionChooser
 
 
 def main() -> None:
@@ -22,8 +22,7 @@ def run(
     rng: random.Random,
     save_store: SaveStore | None = None,
 ) -> None:
-    chooser = TUIActionChooser(console, input_source)
-    game = save.load_or_new(rng, chooser, save_store)
+    game = save.load_or_new(rng, save_store)
 
     try:
         _play(console, game, input_source, save_store)
@@ -48,8 +47,11 @@ def _play(console: Console, game: Game, input_source: Iterator[str], save_store:
 
 def _play_generation(console: Console, generation: Generation, input_source: Iterator[str]) -> None:
     while not generation.died:
-        for chunk in generation.advance():
-            render.events(console, chunk)
+        events = generation.advance()
+        render.events(console, events)
+        encounter = next((event for event in events if isinstance(event, EnemyEncountered)), None)
+        if encounter is not None:
+            combat.play_battle(console, generation, encounter, input_source)
         if generation.died:
             break
         if generation.is_seed_ready:
