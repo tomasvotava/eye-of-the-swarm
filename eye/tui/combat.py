@@ -3,7 +3,7 @@ from collections.abc import Iterator, Sequence
 from rich.console import Console
 
 from eye.combat.actions import ActionDefinition
-from eye.combat.battle import Battle, PlayerTurnNeedsAction, TurnPhase
+from eye.combat.battle import PlayerTurnNeedsAction, TurnPhase
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.session.generation import Generation

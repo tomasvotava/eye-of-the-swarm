@@ -8,7 +8,7 @@ from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.tree import Branch, SkillNodeId, SubBranch
 from eye.tui import save
-from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom
+from tests.session.doubles import ScriptedEncounterRandom
 
 _TIER0_SELF_ATTACK = SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.ATTACK, tier=0)
 
@@ -27,7 +27,6 @@ class _FakeSaveStore:
 def _game(matured_turf_positions: tuple[int, ...] = ()) -> Game:
     return Game(
         rng=ScriptedEncounterRandom(()),
-        player_chooser=FirstActionChooser(),
         matured_turf_positions=matured_turf_positions,
     )
 
@@ -35,7 +34,7 @@ def _game(matured_turf_positions: tuple[int, ...] = ()) -> Game:
 def test_load_or_new_returns_a_fresh_game_when_there_is_no_save() -> None:
     store = _FakeSaveStore(data=None)
 
-    game = save.load_or_new(random.Random(), FirstActionChooser(), save_store=store)
+    game = save.load_or_new(random.Random(), save_store=store)
 
     assert game.skill_tree.spores_available == 0
     assert game.matured_turf_positions == ()
@@ -47,7 +46,7 @@ def test_load_or_new_reconstructs_a_saved_game() -> None:
     original.skill_tree.purchase(CATALOG[_TIER0_SELF_ATTACK])
     store = _FakeSaveStore(data=encode(original))
 
-    loaded = save.load_or_new(random.Random(), FirstActionChooser(), save_store=store)
+    loaded = save.load_or_new(random.Random(), save_store=store)
 
     assert loaded.skill_tree.spores_available == original.skill_tree.spores_available
     assert loaded.skill_tree.purchased_nodes == original.skill_tree.purchased_nodes
@@ -58,7 +57,7 @@ def test_load_or_new_falls_back_to_a_fresh_game_on_corrupt_data_and_leaves_it_on
     store = _FakeSaveStore(data="not json")
 
     with pytest.warns(UserWarning, match="unreadable save data"):
-        game = save.load_or_new(random.Random(), FirstActionChooser(), save_store=store)
+        game = save.load_or_new(random.Random(), save_store=store)
 
     assert game.skill_tree.spores_available == 0
     assert store.load() == "not json"
@@ -76,7 +75,7 @@ def test_load_or_new_falls_back_to_a_fresh_game_when_a_purchased_node_is_stale()
     store = _FakeSaveStore(data=stale)
 
     with pytest.warns(UserWarning, match="unreadable save data"):
-        game = save.load_or_new(random.Random(), FirstActionChooser(), save_store=store)
+        game = save.load_or_new(random.Random(), save_store=store)
 
     assert game.skill_tree.spores_available == 0
 

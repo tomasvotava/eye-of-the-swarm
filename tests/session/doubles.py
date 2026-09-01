@@ -3,7 +3,6 @@ from collections.abc import Sequence
 from typing import TypeVar
 
 from eye.combat.actions import ActionDefinition
-from eye.combat.stats import Combatant
 from eye.exploration.encounters import EncounterKind
 from eye.exploration.events import EnemyEncountered
 from eye.session.events import SessionEvent
@@ -62,8 +61,3 @@ class ScriptedEncounterRandom(random.Random):
             kind = self._kind_queue.pop(0)
             return [kind]  # type: ignore[list-item]
         return super().choices(population, weights, cum_weights=cum_weights, k=k)
-
-
-class FirstActionChooser:
-    def choose(self, actor: Combatant, opponent: Combatant, available: Sequence[ActionDefinition]) -> ActionDefinition:
-        return available[0]
