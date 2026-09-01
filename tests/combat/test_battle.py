@@ -383,6 +383,15 @@ def test_winner_is_none_while_battle_is_ongoing() -> None:
     assert not battle.is_over
 
 
+def test_player_and_enemy_properties_expose_the_constructed_combatants() -> None:
+    player = _combatant("Player")
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    assert battle.player is player
+    assert battle.enemy is enemy
+
+
 def test_revive_consumes_only_the_battle_category_adrenaline_when_both_are_active() -> None:
     player = _combatant("Player")
     enemy = _combatant("Enemy")
