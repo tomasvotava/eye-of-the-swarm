@@ -15,7 +15,8 @@ class ActionChooser(Protocol):
 
 
 class ScriptedChooser:
-    """Pre-queued action stand-in for the player, until a pygame adapter blocks on input."""
+    """Pre-queued action stand-in for the enemy side in tests, in place of GreedyAI's randomized
+    choice -- the player no longer goes through any ActionChooser (see ADR 0008)."""
 
     def __init__(self, queue: Sequence[ActionDefinition]) -> None:
         self._queue = list(queue)
