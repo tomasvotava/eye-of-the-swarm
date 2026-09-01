@@ -1,28 +1,36 @@
 import random
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
 
-from eye.bestiary import BESTIARY
+from eye.bestiary import BESTIARY, StrainProfile
 from eye.character import Character
 from eye.combat.actions import ActionDefinition
-from eye.combat.ai import ActionChooser, GreedyAI
+from eye.combat.ai import GreedyAI
 from eye.combat.battle import Battle
 from eye.combat.effects import EffectRegistry
 from eye.combat.stats import Combatant, Stats
-from eye.exploration.events import EnemyEncountered, ExplorationEvent
+from eye.exploration.events import EnemyEncountered
 from eye.exploration.run import ExplorationRun
 from eye.session.events import GenerationEnded, SessionEvent
 from eye.session.tuning import ENEMY_AI_DIFFICULTY_T
 
 
-def drain(chunks: Iterator[list[SessionEvent]]) -> list[SessionEvent]:
-    """Flatten a `Generation.advance()` call's round-stepping generator into one ordered list."""
-    return [event for chunk in chunks for event in chunk]
+@dataclass(slots=True)
+class _InFlightBattle:
+    battle: Battle
+    player: Combatant
+    profile: StrainProfile
 
 
 class Generation:
-    """One life: an `ExplorationRun` driving the screen-by-screen loop, dropping into a `Battle`
-    whenever it surfaces an `EnemyEncountered`. Stops advancing once `character.current_hp <= 0`
-    -- the only path to 0 HP, since exploration itself never deals damage (docs/adr/0004).
+    """One life: an `ExplorationRun` driving the screen-by-screen loop. Stops advancing once
+    `character.current_hp <= 0` -- the only path to 0 HP, since exploration itself never deals
+    damage (docs/adr/0004) and every hit happens inside a driver-owned `Battle` (docs/adr/0008).
+
+    `advance()` surfaces an `EnemyEncountered` event like any other screen event; the driver is
+    responsible for noticing it and calling `start_battle()` / driving the returned `Battle` /
+    calling `finish_battle()` itself, the same way it already calls `plant_seed()` at its own
+    discretion.
     """
 
     def __init__(
@@ -30,7 +38,6 @@ class Generation:
         character: Character,
         stats: Stats,
         actions: tuple[ActionDefinition, ...],
-        player_chooser: ActionChooser,
         rng: random.Random,
         starting_screen: int,
         matured_turfs: Sequence[int],
@@ -40,7 +47,6 @@ class Generation:
         self._character = character
         self._stats = stats
         self._actions = actions
-        self._player_chooser = player_chooser
         self._rng = rng
         self._exploration = ExplorationRun(
             character,
@@ -51,6 +57,7 @@ class Generation:
             base_proximity_discount,
         )
         self._battle_spores_gained = 0
+        self._in_flight: _InFlightBattle | None = None
 
     @property
     def died(self) -> bool:
@@ -73,22 +80,17 @@ class Generation:
             return []
         return list(self._exploration.plant_seed())
 
-    def advance(self) -> Iterator[list[SessionEvent]]:
+    def advance(self) -> list[SessionEvent]:
         if self.died:
-            return
-        exploration_events = self._exploration.advance()
-        screen_events: list[SessionEvent] = list(exploration_events)
-        yield screen_events
-        enemy_encountered = self._enemy_encountered(exploration_events)
-        if enemy_encountered is not None:
-            yield from self._resolve_battle(enemy_encountered)
-        if self.died:
-            yield [GenerationEnded()]
+            return []
+        if self._in_flight is not None:
+            raise RuntimeError("advance() called while a battle is still in flight; call finish_battle() first")
+        return list(self._exploration.advance())
 
-    def _enemy_encountered(self, events: Sequence[ExplorationEvent]) -> EnemyEncountered | None:
-        return next((event for event in events if isinstance(event, EnemyEncountered)), None)
+    def start_battle(self, encounter: EnemyEncountered) -> Battle:
+        if self._in_flight is not None:
+            raise RuntimeError("start_battle() called while a previous battle is still in flight")
 
-    def _resolve_battle(self, encounter: EnemyEncountered) -> Iterator[list[SessionEvent]]:
         profile = BESTIARY[encounter.strain]
         distance_from_turf = self._exploration.distance_to_nearest_matured_turf
 
@@ -108,14 +110,23 @@ class Generation:
             available_actions=profile.actions,
         )
         enemy_chooser = GreedyAI(ENEMY_AI_DIFFICULTY_T, self._rng, distance_from_turf)
-        battle = Battle(player, enemy, self._player_chooser, enemy_chooser, self._rng, distance_from_turf)
+        battle = Battle(player, enemy, enemy_chooser, self._rng, distance_from_turf)
 
-        start_events: list[SessionEvent] = list(battle.start())
-        yield start_events
-        while not battle.is_over:
-            round_events: list[SessionEvent] = list(battle.take_round())
-            yield round_events
+        self._in_flight = _InFlightBattle(battle=battle, player=player, profile=profile)
+        return battle
 
-        self._character.current_hp = player.current_hp
-        if battle.winner is player:
-            self._battle_spores_gained += profile.spore_award
+    def finish_battle(self, battle: Battle) -> list[SessionEvent]:
+        if self._in_flight is None:
+            raise RuntimeError("finish_battle() called with no battle in flight")
+        if battle is not self._in_flight.battle:
+            raise RuntimeError("finish_battle() called with a battle this Generation did not start")
+        if not battle.is_over:
+            raise RuntimeError("finish_battle() called before the battle is over")
+
+        in_flight = self._in_flight
+        self._in_flight = None
+        self._character.current_hp = in_flight.player.current_hp
+        if battle.winner is in_flight.player:
+            self._battle_spores_gained += in_flight.profile.spore_award
+
+        return [GenerationEnded()] if self.died else []
