@@ -4,7 +4,6 @@ from pathlib import Path
 
 import platformdirs
 
-from eye.combat.ai import ActionChooser
 from eye.persistence.codec import SaveDataError, decode, encode
 from eye.persistence.port import SaveStore
 from eye.persistence.select import default_save_store
@@ -16,20 +15,20 @@ _APP_NAME = "eye-of-the-swarm"
 _SAVE_FILENAME = "save.json"
 
 
-def load_or_new(rng: random.Random, chooser: ActionChooser, save_store: SaveStore | None = None) -> Game:
+def load_or_new(rng: random.Random, save_store: SaveStore | None = None) -> Game:
     store = _resolve_store(save_store)
     raw = store.load()
     if raw is None:
-        return Game(rng, chooser)
+        return Game(rng)
 
     try:
         snapshot = decode(raw, CATALOG.values())
     except SaveDataError as exc:
         warnings.warn(f"ignoring unreadable save data: {exc}", stacklevel=2)
-        return Game(rng, chooser)
+        return Game(rng)
 
     skill_tree = SkillTree(spores_available=snapshot.spores_available, purchased_nodes=snapshot.purchased_nodes)
-    return Game(rng, chooser, skill_tree=skill_tree, matured_turf_positions=snapshot.matured_turf_positions)
+    return Game(rng, skill_tree=skill_tree, matured_turf_positions=snapshot.matured_turf_positions)
 
 
 def persist(game: Game, save_store: SaveStore | None = None) -> None:
