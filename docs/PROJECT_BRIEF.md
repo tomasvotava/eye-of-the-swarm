@@ -62,6 +62,8 @@ The moment you plant, a new Seed immediately starts growing (slowly, since you'r
 
 **Decided:** all pending Seeds mature simultaneously on death — planting is always safe, there's no risk of losing progress by planting more than once in a single life. Since the exploration format (§6) is a linear path, the spawn-point question is resolved too: the furthest matured Seed is the new spawn point for the next generation.
 
+**Decision timing:** the decision to plant is made *before* the next screen's encounter is revealed. A screen's contents (enemy, pickup, or nothing, §6) are only known once you've moved onto it and triggered it — at that point the plant decision for reaching it has already been resolved by however you chose to act on the previous screen. There is no way to preview a screen and then retroactively choose to plant instead of entering it.
+
 ### 5.3 Skill Tree — Self vs. Hive
 Two main branches, each with roughly three sub-branches (Attack, Defense, Utility):
 
