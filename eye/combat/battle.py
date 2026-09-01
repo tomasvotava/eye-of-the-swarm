@@ -1,6 +1,7 @@
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import Enum, auto
 
 from eye.combat.actions import ActionDefinition, resolve_hit
 from eye.combat.ai import ActionChooser
@@ -47,30 +48,55 @@ class ActionAvailability:
     is_available: bool
 
 
+class TurnPhase(Enum):
+    AWAITING_QUERY = auto()
+    AWAITING_PLAYER_ACTION = auto()
+    AWAITING_ENEMY_TURN = auto()
+    FINISHED = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class PlayerTurnNeedsAction:
+    pre_turn_events: list[BattleEvent]
+    available: Sequence[ActionDefinition]
+
+
+@dataclass(frozen=True, slots=True)
+class PlayerTurnConcluded:
+    events: list[BattleEvent]
+
+
+type PlayerTurnQuery = PlayerTurnNeedsAction | PlayerTurnConcluded
+
+
 class Battle:
     """Round-resolution state machine for a single 1v1 encounter.
 
-    take_round() mutates the player/enemy Combatants directly as it resolves each step and
-    returns the resulting BattleEvent log in chronological order -- the events are a record
-    of what already happened, for playback/animation, not instructions for the caller to
-    apply.
+    The enemy's turn resolves in one automatic call (`resolve_enemy_turn()`) since its
+    `GreedyAI` chooser never blocks on external input. The player's turn is driven by the
+    caller through `query_player_turn()` / `resolve_player_turn()` instead, one swing at a
+    time -- see `turn_phase` for which call to make next. Every resolving call mutates the
+    player/enemy Combatants directly and returns the resulting BattleEvent log in
+    chronological order -- the events are a record of what already happened, for
+    playback/animation, not instructions for the caller to apply.
     """
 
     def __init__(
         self,
         player: Combatant,
         enemy: Combatant,
-        player_chooser: ActionChooser,
         enemy_chooser: ActionChooser,
         rng: random.Random,
         distance_from_turf: float,
     ) -> None:
         self._player = player
         self._enemy = enemy
-        self._player_chooser = player_chooser
         self._enemy_chooser = enemy_chooser
         self._rng = rng
         self._distance_from_turf = distance_from_turf
+        self._pending_player_query: PlayerTurnQuery | None = None
+        self._extra_action_index: int | None = None
+        self._player_turn_done = False
 
     @property
     def is_over(self) -> bool:
@@ -101,43 +127,140 @@ class Battle:
             EffectExpired(target=combatant, effect=EffectName.RESONANCE),
         ]
 
-    def take_round(self) -> list[BattleEvent]:
+    def _conclude_if_over(self, events: list[BattleEvent]) -> None:
         if self.is_over:
-            return []
+            events.extend(self._clear_battle_effects())
+            events.append(BattleEnded(winner=self.winner))
+
+    def _resolve_pre_turn(self, actor: Combatant) -> tuple[list[BattleEvent], bool]:
         events: list[BattleEvent] = []
-        for actor, opponent in ((self._player, self._enemy), (self._enemy, self._player)):
-            if self.is_over:
-                break
-            events.extend(self._take_turn(actor, opponent))
+        wilty_fired = False
+        turn_skipped = False
+
+        if actor.effects.has(EffectName.WILTY) and self._roll(WILTY_TRIGGER_CHANCE):
+            wilty_fired = True
+            actor.current_hp = 0
+            death_events, _ = self._handle_potential_death(actor)
+            events.extend(death_events)
+
+        if (
+            not wilty_fired
+            and actor.current_hp > 0
+            and actor.effects.has(EffectName.VEGETATIVE)
+            and self._roll(VEGETATIVE_TRIGGER_CHANCE)
+        ):
+            events.append(TurnSkipped(combatant=actor))
+            events.extend(self._end_of_turn_ticks(actor, actor_got_turn=False))
+            turn_skipped = True
+
+        needs_action = actor.current_hp > 0 and not turn_skipped
+        return events, needs_action
+
+    def query_player_turn(self) -> PlayerTurnQuery:
+        if self.is_over:
+            raise RuntimeError("query_player_turn() called after the battle is over")
+        if self._pending_player_query is not None:
+            return self._pending_player_query
+        if self._player_turn_done:
+            raise RuntimeError("query_player_turn() called again after this round's player turn already concluded")
+
+        if self._extra_action_index is None:
+            pre_turn_events, needs_action = self._resolve_pre_turn(self._player)
+            if not needs_action:
+                self._conclude_if_over(pre_turn_events)
+                self._player_turn_done = True
+                return PlayerTurnConcluded(events=pre_turn_events)
+            query: PlayerTurnQuery = PlayerTurnNeedsAction(
+                pre_turn_events=pre_turn_events, available=self._available_actions(self._player)
+            )
+        else:
+            query = PlayerTurnNeedsAction(pre_turn_events=[], available=self._available_actions(self._player))
+
+        self._pending_player_query = query
+        return query
+
+    def _resolve_player_swing(self, action: ActionDefinition) -> list[BattleEvent]:
+        chosen = action
+        was_swapped = self._player.effects.has(EffectName.CLOUDED_JUDGEMENT)
+        if was_swapped:
+            chosen = self._rng.choice(self._available_actions(self._player))
+        return self._resolve_swing(self._player, self._enemy, chosen, was_swapped_by_clouded_judgement=was_swapped)
+
+    def resolve_player_turn(self, action: ActionDefinition) -> list[BattleEvent]:
+        query = self._pending_player_query
+        if not isinstance(query, PlayerTurnNeedsAction):
+            raise RuntimeError("resolve_player_turn() called without a pending PlayerTurnNeedsAction query")
+        if action not in query.available:
+            raise ValueError(f"{action!r} is not among this turn's available actions")
+        self._pending_player_query = None
+
+        events = self._resolve_player_swing(action)
+        if self.is_over:
+            self._conclude_if_over(events)
+            self._player_turn_done = True
+            self._extra_action_index = None
+            return events
+
+        extra_action_index = 0 if self._extra_action_index is None else self._extra_action_index
+        if (
+            extra_action_index < MAX_EXTRA_ACTIONS_PER_TURN
+            and self._player.effects.has(EffectName.UPROOTED)
+            and self._roll(uprooted_chance(extra_action_index))
+        ):
+            events.append(ExtraActionTriggered(actor=self._player, extra_action_index=extra_action_index))
+            self._extra_action_index = extra_action_index + 1
+            return events
+
+        events.extend(self._end_of_turn_ticks(self._player, actor_got_turn=True))
+        self._conclude_if_over(events)
+        self._player_turn_done = True
+        self._extra_action_index = None
+        return events
+
+    def _take_enemy_turn(self) -> list[BattleEvent]:
+        events: list[BattleEvent] = []
+
+        pre_turn_events, needs_action = self._resolve_pre_turn(self._enemy)
+        events.extend(pre_turn_events)
+        if not needs_action:
+            return events
+
+        events.extend(self._run_actions(self._enemy, self._player))
+        if self.is_over:
+            return events
+
+        events.extend(self._end_of_turn_ticks(self._enemy, actor_got_turn=True))
+        return events
+
+    def resolve_enemy_turn(self) -> list[BattleEvent]:
+        if self.is_over:
+            raise RuntimeError("resolve_enemy_turn() called after the battle is over")
+        if isinstance(self._pending_player_query, PlayerTurnNeedsAction):
+            raise RuntimeError("resolve_enemy_turn() called with a pending player action still unresolved")
+        if not self._player_turn_done:
+            raise RuntimeError("resolve_enemy_turn() called before the player's turn concluded this round")
+
+        events = self._take_enemy_turn()
+
+        self._player_turn_done = False
+        self._pending_player_query = None
+        self._extra_action_index = None
+
         if not self.is_over:
             events.extend(self._expire_battle_effects())
         else:
-            events.extend(self._clear_battle_effects())
-            events.append(BattleEnded(winner=self.winner))
+            self._conclude_if_over(events)
         return events
 
-    def _take_turn(self, actor: Combatant, opponent: Combatant) -> list[BattleEvent]:
-        events: list[BattleEvent] = []
-
-        revived = False
-        if actor.effects.has(EffectName.WILTY) and self._roll(WILTY_TRIGGER_CHANCE):
-            actor.current_hp = 0
-            death_events, revived = self._handle_potential_death(actor)
-            events.extend(death_events)
-            if not revived:
-                return events
-
-        if not revived and actor.effects.has(EffectName.VEGETATIVE) and self._roll(VEGETATIVE_TRIGGER_CHANCE):
-            events.append(TurnSkipped(combatant=actor))
-            events.extend(self._end_of_turn_ticks(actor, actor_got_turn=False))
-            return events
-
-        events.extend(self._run_actions(actor, opponent))
+    @property
+    def turn_phase(self) -> TurnPhase:
         if self.is_over:
-            return events
-
-        events.extend(self._end_of_turn_ticks(actor, actor_got_turn=True))
-        return events
+            return TurnPhase.FINISHED
+        if isinstance(self._pending_player_query, PlayerTurnNeedsAction):
+            return TurnPhase.AWAITING_PLAYER_ACTION
+        if self._player_turn_done:
+            return TurnPhase.AWAITING_ENEMY_TURN
+        return TurnPhase.AWAITING_QUERY
 
     def _run_actions(self, actor: Combatant, opponent: Combatant) -> list[BattleEvent]:
         events: list[BattleEvent] = []
@@ -154,14 +277,18 @@ class Battle:
             extra_action_index += 1
 
     def _act(self, actor: Combatant, opponent: Combatant) -> list[BattleEvent]:
-        events: list[BattleEvent] = []
         available = self._available_actions(actor)
+        chosen = self._enemy_chooser.choose(actor, opponent, available)
+        return self._resolve_swing(actor, opponent, chosen, was_swapped_by_clouded_judgement=False)
 
-        chosen = self._choose_action(actor, opponent, available)
-        was_swapped = actor is self._player and actor.effects.has(EffectName.CLOUDED_JUDGEMENT)
-        if was_swapped:
-            chosen = self._rng.choice(available)
-        events.append(ActionChosen(actor=actor, action=chosen.kind, was_swapped_by_clouded_judgement=was_swapped))
+    def _resolve_swing(
+        self, actor: Combatant, opponent: Combatant, chosen: ActionDefinition, *, was_swapped_by_clouded_judgement: bool
+    ) -> list[BattleEvent]:
+        events: list[BattleEvent] = [
+            ActionChosen(
+                actor=actor, action=chosen.kind, was_swapped_by_clouded_judgement=was_swapped_by_clouded_judgement
+            )
+        ]
 
         for hit_index in range(chosen.hit_count):
             events.extend(self._resolve_one_hit(actor, opponent, chosen, hit_index))
@@ -332,12 +459,6 @@ class Battle:
 
     def _available_actions(self, actor: Combatant) -> Sequence[ActionDefinition]:
         return [action for action in actor.available_actions if self._is_action_available(actor, action)]
-
-    def _choose_action(
-        self, actor: Combatant, opponent: Combatant, available: Sequence[ActionDefinition]
-    ) -> ActionDefinition:
-        chooser = self._player_chooser if actor is self._player else self._enemy_chooser
-        return chooser.choose(actor, opponent, available)
 
     def _meter_fill_amount(self, actor: Combatant) -> int:
         rate = actor.base_stats.meter_fill_rate
