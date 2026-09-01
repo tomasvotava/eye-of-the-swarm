@@ -87,6 +87,17 @@ screen-by-screen loop; the driver does. Combat never got the same treatment, bec
     shape floated during design, kept as sugar over the granular API for tests and any future
     headless simulation/tuning use, not the domain's primary interface, and free to change without
     touching the seam a real driver uses.
+  - `Battle` also exposes a read-only `turn_phase` property (an enum: awaiting a player query,
+    awaiting a player action on an already-issued query, awaiting the enemy's automatic turn, or
+    finished) derived purely from existing internal state — no dice rolled, safe to call any
+    number of times. This exists for a driver shape the TUI's blocking `while not battle.is_over`
+    loop doesn't need but a future pygame adapter will: a frame-based main loop can't block inside
+    one control class waiting on input, so whatever object has focus on a given frame (which may
+    not be the same object instance across frames, if scenes are swapped) has to be able to answer
+    "what should happen right now" by reading `Battle`'s state rather than by resuming a suspended
+    local loop. `turn_phase` names exactly which of `query_player_turn()` /
+    `resolve_player_turn()` / `resolve_enemy_turn()` to call next, making that driver shape
+    possible without additional protocol.
 - **`Game`/`Generation` drop the player `ActionChooser` constructor parameter entirely.**
   `Game.__init__` no longer takes `player_chooser`; nothing at the composition-root level threads a
   player-side chooser anywhere. `eye/tui/save.py`'s `load_or_new(rng, chooser, save_store)` loses
@@ -130,15 +141,18 @@ screen-by-screen loop; the driver does. Combat never got the same treatment, bec
 
 ## Consequences
 
-- A future pygame combat-screen adapter drives `Battle` exactly the way the TUI now does: call the
-  query, render and await input, call resolve, repeat. This composes naturally with an async main
-  loop because the suspension point — waiting for player input — lives entirely in the driver's own
-  code, not inside any domain call. This closes the open problem ADR 0001/0004/0007 each deferred to
+- A future pygame combat-screen adapter drives `Battle` the same way the TUI does, just on a
+  different clock: the TUI blocks synchronously inside its own combat sub-loop, while a pygame
+  main loop instead polls `turn_phase` once per frame from whatever control class currently has
+  focus and calls the corresponding method when its condition is met (a click landed, an
+  automatic turn is due). Either shape works because the suspension point — waiting for player
+  input — lives entirely in the driver's own code and state, not inside any domain call or a
+  callback the domain invokes. This closes the open problem ADR 0001/0004/0007 each deferred to
   the next epic, without introducing generators, coroutines, or a decision-request protocol to do
   it.
 - `eye/combat/battle.py`'s public surface changes for the first time since ADR 0001 (Accepted):
-  `take_round()` is replaced by the player query/resolve pair plus a single automatic enemy-turn
-  call; `player_chooser` leaves the constructor.
+  `take_round()` is replaced by the player query/resolve pair, a single automatic enemy-turn call,
+  and the read-only `turn_phase` status property; `player_chooser` leaves the constructor.
 - `Battle`'s and `Generation`'s existing tests need real restructuring: anything built around
   `ScriptedChooser` queuing player actions and draining `take_round()`/`advance()` to completion
   moves to explicit per-round query/resolve calls (or the new test-only simulate helper), which is
