@@ -99,6 +99,28 @@ screen-by-screen loop; the driver does. Combat never got the same treatment, bec
   print, `_input.py`'s parsing) is reused from where it already lives, just called inline from
   `app.py`'s combat loop instead of from inside an injected chooser object. Exact module
   organization (a new `eye/tui/combat.py`, or inline in `app.py`) is an implementation call.
+- **`Generation` tracks in-flight battle state explicitly and raises on misuse, rather than
+  relying on caller discipline.** Handing the driver a bare `Battle` to step at will (previous
+  bullet) removes the old internal drain loop, but nothing yet stops a driver from calling
+  `advance()` while a battle it started is still unfinished, or from mismanaging `finish_battle()`
+  — the same class of silent-stale-state failure #99 was, just with a new place to reintroduce it.
+  `Generation` gains an internal reference to the battle it last handed out via `start_battle()`,
+  cleared only by a matching `finish_battle()` call:
+  - `start_battle()` raises if a previously-returned battle hasn't been finished yet — a driver
+    can't open a second battle before closing the first.
+  - `advance()` raises if a battle is currently in flight — screen advancement can't proceed until
+    `finish_battle()` closes out the current one.
+  - `finish_battle()` raises if there's no in-flight battle, if passed a `Battle` instance other
+    than the one `start_battle()` returned (a driver passing the wrong object), or if
+    `battle.is_over` is `False` (the guard already named above, backed by this same state).
+  - This is a plain state check + raise on the existing methods, not a context manager. A
+    context-manager guard would force the driver to interleave its own render/await-input/resolve
+    combat sub-loop with `ExitStack`-style bookkeeping just to satisfy the guard — reintroducing
+    the ceremony this whole design removes. A raise on misuse is the minimal guardrail that
+    doesn't do that.
+  - Ships with regression tests covering each raise path: `advance()` with a battle in flight,
+    `start_battle()` called again before `finish_battle()`, `finish_battle()` given a not-yet-over
+    battle, and `finish_battle()` given a stale/foreign `Battle` or called a second time.
 - **This amends ADR 0001's chooser section** (the player side of "player and enemy action selection
   share one `ActionChooser` protocol" no longer holds — only the enemy side does now) **and closes
   the open item ADR 0004's Consequences left for a future UI epic** ("reconcile blocking-call
