@@ -1,18 +1,24 @@
+import random
 from collections.abc import Sequence
+
+import pytest
 
 from eye.bestiary import BESTIARY
 from eye.character import Character
 from eye.combat.actions import ActionDefinition, ActionKind
+from eye.combat.ai import ScriptedChooser
+from eye.combat.battle import Battle, PlayerTurnNeedsAction
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
-from eye.combat.events import ActionChosen, BattleEnded, Death, HitLanded
-from eye.combat.stats import Stats
+from eye.combat.events import HitLanded
+from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import FIBROUS_ATTACK_MAGNITUDE, STRUGGLE_BASE_POWER
 from eye.exploration.encounters import EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered, NothingHappened, SeedGrew, SeedPlanted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.session.events import GenerationEnded
 from eye.session.generation import Generation
-from tests.session.doubles import FirstActionChooser, ScriptedEncounterRandom, advance_flat
+from tests.combat.support import unfold
+from tests.session.doubles import ScriptedEncounterRandom, advance_flat
 
 
 def _character(current_hp: int = 100, max_hp: int = 100) -> Character:
@@ -28,7 +34,6 @@ def _generation(
         character=character or _character(),
         stats=stats or Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10, recoil=0.0),
         actions=(ActionDefinition(kind=ActionKind.STRUGGLE),),
-        player_chooser=FirstActionChooser(),
         rng=ScriptedEncounterRandom(kind_queue),
         starting_screen=0,
         matured_turfs=(),
@@ -148,14 +153,74 @@ def test_plant_seed_is_a_no_op_if_the_generation_has_already_died() -> None:
     assert generation.pending_seeds == ()
 
 
-def test_the_round_chunk_containing_a_lethal_hit_also_contains_battle_ended() -> None:
-    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
-    generation = _generation(stats=overwhelming, kind_queue=[EncounterKind.ENEMY])
+def test_stopping_mid_battle_leaves_character_state_untouched() -> None:
+    character = _character(current_hp=100, max_hp=100)
+    generation = _generation(character=character, kind_queue=[EncounterKind.ENEMY])
+    events = list(generation.advance())
+    encounter = next(event for event in events if isinstance(event, EnemyEncountered))
+    battle = generation.start_battle(encounter)
+    battle.start()
+    query = battle.query_player_turn()
+    assert isinstance(query, PlayerTurnNeedsAction)
+    battle.resolve_player_turn(query.available[0])  # one swing only -- driver stops here
 
-    chunks = list(generation.advance())
+    assert character.current_hp == 100
+    assert generation.died is False
 
-    lethal_chunk = next(chunk for chunk in chunks if any(isinstance(event, Death) for event in chunk))
-    death_index = next(index for index, event in enumerate(lethal_chunk) if isinstance(event, Death))
 
-    assert any(isinstance(event, BattleEnded) for event in lethal_chunk)
-    assert not any(isinstance(event, ActionChosen | HitLanded) for event in lethal_chunk[death_index + 1 :])
+def test_advance_raises_while_a_battle_is_in_flight() -> None:
+    generation = _generation(kind_queue=[EncounterKind.ENEMY])
+    events = list(generation.advance())
+    encounter = next(event for event in events if isinstance(event, EnemyEncountered))
+    generation.start_battle(encounter)
+
+    with pytest.raises(RuntimeError):
+        generation.advance()
+
+
+def test_start_battle_raises_while_a_previous_battle_is_still_in_flight() -> None:
+    generation = _generation(kind_queue=[EncounterKind.ENEMY])
+    events = list(generation.advance())
+    encounter = next(event for event in events if isinstance(event, EnemyEncountered))
+    generation.start_battle(encounter)
+
+    with pytest.raises(RuntimeError):
+        generation.start_battle(encounter)
+
+
+def test_finish_battle_raises_before_the_battle_is_over() -> None:
+    generation = _generation(kind_queue=[EncounterKind.ENEMY])
+    events = list(generation.advance())
+    encounter = next(event for event in events if isinstance(event, EnemyEncountered))
+    battle = generation.start_battle(encounter)
+
+    with pytest.raises(RuntimeError):
+        generation.finish_battle(battle)
+
+
+def test_finish_battle_raises_when_called_a_second_time() -> None:
+    generation = _generation(kind_queue=[EncounterKind.ENEMY])
+    events = list(generation.advance())
+    encounter = next(event for event in events if isinstance(event, EnemyEncountered))
+    battle = generation.start_battle(encounter)
+    battle.start()
+    unfold(battle, lambda available: available[0])
+    generation.finish_battle(battle)
+
+    with pytest.raises(RuntimeError):
+        generation.finish_battle(battle)
+
+
+def test_finish_battle_raises_for_a_battle_this_generation_did_not_start() -> None:
+    generation = _generation(kind_queue=[EncounterKind.ENEMY])
+    events = list(generation.advance())
+    encounter = next(event for event in events if isinstance(event, EnemyEncountered))
+    generation.start_battle(encounter)  # left unfinished
+
+    foreign_stats = Stats(max_hp=1, attack=0, defense=0, meter_capacity=1, meter_fill_rate=1, recoil=0.0)
+    foreign_player = Combatant(name="Foreign", base_stats=foreign_stats, current_hp=1)
+    foreign_enemy = Combatant(name="ForeignEnemy", base_stats=foreign_stats, current_hp=0)
+    foreign_battle = Battle(foreign_player, foreign_enemy, ScriptedChooser([]), random.Random(), 0.0)
+
+    with pytest.raises(RuntimeError):
+        generation.finish_battle(foreign_battle)
