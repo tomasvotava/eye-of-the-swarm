@@ -1,7 +1,7 @@
 import pygame
 
 from eye.combat.effects import EffectName
-from eye.gui.widgets import TextBuffIcon, TextSkillTreeLeaf
+from eye.gui.widgets import SkillNodeState, TextBuffIcon, TextSkillTreeLeaf
 from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
 
 
@@ -28,8 +28,12 @@ def test_text_buff_icon_render_does_not_raise_for_a_debuff() -> None:
 
 
 def test_text_skill_tree_leaf_render_does_not_raise_when_locked() -> None:
-    TextSkillTreeLeaf().render(_surface(), pygame.Rect(0, 0, 64, 16), _node(), locked=True)
+    TextSkillTreeLeaf().render(_surface(), pygame.Rect(0, 0, 64, 16), _node(), SkillNodeState.LOCKED)
 
 
-def test_text_skill_tree_leaf_render_does_not_raise_when_unlocked() -> None:
-    TextSkillTreeLeaf().render(_surface(), pygame.Rect(0, 0, 64, 16), _node(), locked=False)
+def test_text_skill_tree_leaf_render_does_not_raise_when_available() -> None:
+    TextSkillTreeLeaf().render(_surface(), pygame.Rect(0, 0, 64, 16), _node(), SkillNodeState.AVAILABLE)
+
+
+def test_text_skill_tree_leaf_render_does_not_raise_when_purchased() -> None:
+    TextSkillTreeLeaf().render(_surface(), pygame.Rect(0, 0, 64, 16), _node(), SkillNodeState.PURCHASED)

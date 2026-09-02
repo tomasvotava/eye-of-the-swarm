@@ -5,8 +5,10 @@ import pytest
 
 from eye.gui.assets import build_placeholder_atlas
 from eye.gui.scenes.exploration import ExplorationScene
-from eye.gui.scenes.skilltree import _NODES, KEY_ACTIONS, SkillTreeAction, SkillTreeScene
+from eye.gui.scenes.skilltree import _ROWS, KEY_ACTIONS, SkillTreeAction, SkillTreeScene, _node_state
+from eye.gui.widgets import SkillNodeState
 from eye.session.game import Game
+from eye.skilltree.state import SkillTree
 
 
 def _scene(spores: int = 0) -> tuple[SkillTreeScene, Game]:
@@ -20,11 +22,32 @@ def _press(scene: SkillTreeScene, key: int) -> None:
 
 
 def test_key_actions_maps_the_expected_controls() -> None:
+    assert KEY_ACTIONS[pygame.K_LEFT] is SkillTreeAction.MOVE_LEFT
+    assert KEY_ACTIONS[pygame.K_RIGHT] is SkillTreeAction.MOVE_RIGHT
     assert KEY_ACTIONS[pygame.K_UP] is SkillTreeAction.MOVE_UP
     assert KEY_ACTIONS[pygame.K_DOWN] is SkillTreeAction.MOVE_DOWN
     assert KEY_ACTIONS[pygame.K_RETURN] is SkillTreeAction.PURCHASE
     assert KEY_ACTIONS[pygame.K_SPACE] is SkillTreeAction.PURCHASE
     assert KEY_ACTIONS[pygame.K_c] is SkillTreeAction.CONTINUE
+
+
+def test_rows_group_the_catalog_by_branch_and_sub_branch_in_tier_order() -> None:
+    for row in _ROWS:
+        assert [node.id.tier for node in row] == sorted(node.id.tier for node in row)
+        assert len({(node.id.branch, node.id.sub_branch) for node in row}) == 1
+
+
+def test_node_state_reflects_purchased_available_and_locked() -> None:
+    skill_tree = SkillTree()
+    tier0, tier1 = _ROWS[0][0], _ROWS[0][1]
+
+    assert _node_state(skill_tree, tier1) is SkillNodeState.LOCKED  # prerequisite missing
+
+    skill_tree.add_spores(tier0.cost)
+    assert _node_state(skill_tree, tier0) is SkillNodeState.AVAILABLE
+
+    skill_tree.purchase(tier0)
+    assert _node_state(skill_tree, tier0) is SkillNodeState.PURCHASED
 
 
 def test_update_with_no_pending_action_returns_none() -> None:
@@ -50,7 +73,7 @@ def test_non_keydown_event_is_ignored() -> None:
 
 
 def test_purchase_action_buys_the_selected_node_when_affordable() -> None:
-    node = _NODES[0]
+    node = _ROWS[0][0]
     scene, game = _scene(spores=node.cost)
 
     _press(scene, pygame.K_RETURN)
@@ -61,7 +84,7 @@ def test_purchase_action_buys_the_selected_node_when_affordable() -> None:
 
 
 def test_purchase_action_is_a_no_op_without_enough_spores() -> None:
-    node = _NODES[0]
+    node = _ROWS[0][0]
     scene, game = _scene(spores=node.cost - 1)
 
     _press(scene, pygame.K_SPACE)
@@ -71,13 +94,11 @@ def test_purchase_action_is_a_no_op_without_enough_spores() -> None:
     assert game.skill_tree.spores_available == node.cost - 1
 
 
-def test_purchase_action_is_a_no_op_when_the_prerequisite_tier_is_missing() -> None:
-    # _NODES[1] is the second node in its (branch, sub_branch) group, i.e. tier 1 -- purchasing it
-    # before its tier-0 prerequisite must fail even with enough spores banked.
-    node = _NODES[1]
+def test_move_right_then_purchase_is_a_no_op_when_the_prerequisite_tier_is_missing() -> None:
+    node = _ROWS[0][1]  # tier 1 of the first row -- requires tier 0, purchased separately
     scene, game = _scene(spores=node.cost)
 
-    _press(scene, pygame.K_DOWN)
+    _press(scene, pygame.K_RIGHT)
     scene.update(0.016)
     _press(scene, pygame.K_RETURN)
     scene.update(0.016)
@@ -85,10 +106,25 @@ def test_purchase_action_is_a_no_op_when_the_prerequisite_tier_is_missing() -> N
     assert not game.skill_tree.is_purchased(node.id)
 
 
-def test_move_up_from_the_first_node_wraps_to_the_last_and_back() -> None:
-    # MOVE_UP from index 0 must wrap to len(_NODES) - 1 rather than go negative; following it with
-    # MOVE_DOWN should land back on the first node, confirmed by purchasing it.
-    node = _NODES[0]
+def test_move_left_from_the_first_tier_wraps_to_the_last_and_back() -> None:
+    # MOVE_LEFT from column 0 must wrap to the row's last tier rather than go negative; following
+    # it with MOVE_RIGHT should land back on tier 0, confirmed by purchasing it.
+    node = _ROWS[0][0]
+    scene, game = _scene(spores=node.cost)
+
+    _press(scene, pygame.K_LEFT)
+    scene.update(0.016)
+    _press(scene, pygame.K_RIGHT)
+    scene.update(0.016)
+    _press(scene, pygame.K_RETURN)
+    scene.update(0.016)
+
+    assert game.skill_tree.is_purchased(node.id)
+
+
+def test_move_up_from_the_first_row_wraps_to_the_last_and_back() -> None:
+    # Same wraparound guarantee as tier navigation, but across rows (sub-branches).
+    node = _ROWS[0][0]
     scene, game = _scene(spores=node.cost)
 
     _press(scene, pygame.K_UP)
