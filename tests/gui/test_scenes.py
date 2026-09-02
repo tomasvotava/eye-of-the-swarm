@@ -5,11 +5,11 @@ from eye.gui.scene import Scene
 
 class _StubScene:
     def __init__(self) -> None:
-        self.handled_events: list[pygame.event.Event] = []
+        self.handled_pygame_events: list[pygame.event.Event] = []
         self.updates: list[float] = []
 
-    def handle_event(self, event: pygame.event.Event) -> None:
-        self.handled_events.append(event)
+    def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
+        self.handled_pygame_events.append(pygame_event)
 
     def update(self, dt: float) -> Scene | None:
         self.updates.append(dt)
@@ -23,12 +23,12 @@ def test_stub_scene_satisfies_scene_protocol() -> None:
     scene: Scene = _StubScene()
 
     event = pygame.event.Event(pygame.QUIT)
-    scene.handle_event(event)
+    scene.handle_pygame_event(event)
     next_scene = scene.update(0.016)
     scene.draw(pygame.Surface((1, 1)))
 
     assert isinstance(scene, _StubScene)
-    assert scene.handled_events == [event]
+    assert scene.handled_pygame_events == [event]
     assert scene.updates == [0.016]
     assert next_scene is None
 
