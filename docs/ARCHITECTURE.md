@@ -16,3 +16,5 @@ Design source: [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 | [0008](adr/0008-driver-owned-battle-stepping.md) | Driver-owned battle stepping | Accepted |
 | [0009](adr/0009-gui-driver-epic1-architecture.md) | GUI driver, Epic 1: scaffolding and full minimal loop | Accepted |
 | [0010](adr/0010-gui-game-driver-architecture.md) | GUI driver: `GameDriver` split from `App` | Accepted |
+| [0011](adr/0011-sprite-asset-pipeline-and-animation-framework.md) | Sprite asset pipeline & animation framework | Accepted |
+| [0012](adr/0012-screen-walking-movement.md) | Screen-walking movement | Accepted |
