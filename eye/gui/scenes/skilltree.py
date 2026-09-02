@@ -11,10 +11,12 @@ from itertools import groupby
 import pygame
 import pygame.typing
 
+from eye.gui import save
 from eye.gui.assets import SpriteAtlas
 from eye.gui.scene import Scene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, TextSkillTreeLeaf
+from eye.persistence.port import SaveStore
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
@@ -89,11 +91,13 @@ class SkillTreeScene:
         self,
         game: Game,
         atlas: SpriteAtlas,
+        save_store: SaveStore,
         leaf_factory: Callable[[], SkillTreeLeaf] = TextSkillTreeLeaf,
     ) -> None:
         self._game = game
         self._atlas = atlas
         self._leaf = leaf_factory()
+        self._save_store = save_store
         self._row = 0
         self._col = 0
         self._pending_action: SkillTreeAction | None = None
@@ -137,11 +141,12 @@ class SkillTreeScene:
         except RuntimeError as exc:
             self._last_message = str(exc)
             return
+        save.persist(self._game, self._save_store)
         self._last_message = f"Purchased {node.name or node.id}."
 
     def _handle_continue(self) -> Scene:
         generation = self._game.start_generation()
-        return ExplorationScene(generation, self._game, self._atlas)
+        return ExplorationScene(generation, self._game, self._atlas, save_store=self._save_store)
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
