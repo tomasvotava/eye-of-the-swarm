@@ -51,8 +51,11 @@ wiring, the same way the TUI wired it via `platformdirs`.
     save.py              # save-path resolution + persist()/load_or_new() wrapper
     app.py               # window/clock, main loop, scene switching
   ```
-  Each `Scene` implements a small protocol: `handle_event(event) -> None`,
-  `update(dt) -> Scene | None`, `draw(surface) -> None`. `update()` returns the next `Scene` to
+  Each `Scene` implements a small protocol: `handle_pygame_event(pygame_event) -> None`,
+  `update(dt) -> Scene | None`, `draw(surface) -> None` — named `handle_pygame_event`/`pygame_event`
+  rather than `handle_event`/`event` so a scene body isn't reading both a `pygame.event.Event` and
+  a domain `...Event` (`ExplorationEvent`, `SessionEvent`, `BattleEvent`, ...) under the same
+  unqualified name. `update()` returns the next `Scene` to
   switch to, already constructed, or `None` to stay — this is how a scene signals a transition;
   there's no separate callback or shared mutable "pending transition" field. `app.py` owns the
   pygame window and clock, the async main loop, and a single "current scene" reference: each frame
@@ -124,8 +127,8 @@ wiring, the same way the TUI wired it via `platformdirs`.
     `Generation.advance()` returns `[]` once `died` is true.
 - **Input is keyboard-only for this Epic** — number/arrow keys select menu entries, mirroring the
   TUI's numbered-menu precedent. Mouse/click support is deferred, not blocking, and isolated
-  entirely inside each scene's `handle_event()`, so adding it later touches no other scene or the
-  app loop.
+  entirely inside each scene's `handle_pygame_event()`, so adding it later touches no other scene
+  or the app loop.
 - **Tests run headless via `SDL_VIDEODRIVER=dummy`** (set before `pygame.init()`), the standard
   pygame CI-without-a-display pattern. Assertions target scene-transition state and the calls made
   into `Game`/`Generation`/`Battle` — which scene is active after an `EnemyEncountered` event,

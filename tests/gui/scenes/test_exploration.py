@@ -21,7 +21,7 @@ def _scene(kind_queue: Sequence[EncounterKind] = ()) -> tuple[ExplorationScene, 
 
 
 def _press(scene: ExplorationScene, key: int) -> None:
-    scene.handle_event(pygame.event.Event(pygame.KEYDOWN, key=key))
+    scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=key))
 
 
 def test_key_actions_maps_the_expected_controls() -> None:
@@ -49,7 +49,7 @@ def test_unmapped_key_is_ignored() -> None:
 def test_non_keydown_event_is_ignored() -> None:
     scene, _ = _scene()
 
-    scene.handle_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_SPACE))
+    scene.handle_pygame_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_SPACE))
 
     assert scene.update(0.016) is None
 
