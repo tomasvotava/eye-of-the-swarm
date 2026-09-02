@@ -8,6 +8,7 @@ from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.skilltree import _ROWS, KEY_ACTIONS, SkillTreeAction, SkillTreeScene, _node_state
 from eye.gui.widgets import SkillNodeState
 from eye.session.game import Game
+from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
 
 
@@ -35,6 +36,17 @@ def test_rows_group_the_catalog_by_branch_and_sub_branch_in_tier_order() -> None
     for row in _ROWS:
         assert [node.id.tier for node in row] == sorted(node.id.tier for node in row)
         assert len({(node.id.branch, node.id.sub_branch) for node in row}) == 1
+
+
+def test_rows_do_not_fragment_a_branch_sub_branch_group_across_multiple_rows() -> None:
+    # _ROWS is built with itertools.groupby, which only merges *contiguous* runs of equal key --
+    # it stays correct only as long as _NODES is sorted by (branch, sub_branch) first. If that
+    # sort were ever dropped, the same (branch, sub_branch) pair would split across separate rows
+    # instead of raising, so assert directly against that failure mode rather than just the
+    # current output.
+    keys = [(row[0].id.branch, row[0].id.sub_branch) for row in _ROWS]
+    assert len(keys) == len(set(keys))
+    assert sum(len(row) for row in _ROWS) == len(CATALOG)
 
 
 def test_node_state_reflects_purchased_available_and_locked() -> None:
