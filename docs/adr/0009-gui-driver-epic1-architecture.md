@@ -148,6 +148,14 @@ wiring, the same way the TUI wired it via `platformdirs`.
   content (§8) all remain open, each addable later without restructuring `eye/gui/` — input
   handling is isolated per-scene, and `SpriteKey` is extensible without changing `SpriteAtlas`
   itself.
+- **PROJECT_BRIEF.md §5.2's plant-decision-timing invariant** (you can't preview a screen and
+  retroactively plant for the one before it) holds in this Epic only as a side effect of
+  `ExplorationRun.advance()` being atomic: moving to the next screen and resolving its encounter
+  happen in one call, so `plant_seed()` (which always plants at the current screen) never has a
+  window to apply to a screen already left behind. The platformer-movement stretch goal (§6) would
+  split "arrived at the next screen" from "touched its trigger" into separate steps, which removes
+  that atomicity — a future epic implementing it must re-derive where the plant-decision window
+  closes rather than assume this Epic's enforcement mechanism still holds.
 - `eye/main.py`'s current movement-stub content is fully replaced; nothing in this Epic depends on
   it surviving.
 - Full design rationale (the exploration-only vs. full-minimal-loop scoping question, and the
