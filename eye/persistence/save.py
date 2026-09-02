@@ -35,6 +35,15 @@ def persist(game: Game, save_store: SaveStore | None = None) -> None:
     _resolve_store(save_store).save(encode(game))
 
 
+def default_store() -> SaveStore:
+    """Construct the `SaveStore` that `load_or_new()`/`persist()` fall back to when called with
+    `save_store=None`, for a caller that must hold one concrete instance up front (e.g. the GUI
+    driver, which threads the same store through every scene) rather than letting each call
+    resolve it anew.
+    """
+    return _resolve_store(None)
+
+
 def _resolve_store(save_store: SaveStore | None) -> SaveStore:
     return save_store if save_store is not None else default_save_store(_default_save_path())
 

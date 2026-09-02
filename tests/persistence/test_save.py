@@ -4,6 +4,7 @@ import random
 import pytest
 
 from eye.persistence import save
+from eye.persistence.adapters.filesystem import FilesystemSaveStore
 from eye.persistence.codec import SCHEMA_VERSION, encode
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
@@ -85,3 +86,10 @@ def test_default_save_path_resolves_under_a_platformdirs_user_data_dir() -> None
 
     assert path.name == "save.json"
     assert "eye-of-the-swarm" in path.parent.as_posix()
+
+
+def test_default_store_targets_the_same_path_as_the_default_save_location() -> None:
+    store = save.default_store()
+
+    assert isinstance(store, FilesystemSaveStore)
+    assert store._path == save._default_save_path()
