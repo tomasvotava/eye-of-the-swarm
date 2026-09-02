@@ -36,11 +36,13 @@ from eye.combat.events import (
 )
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
+from eye.gui import save
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.scene import Scene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.gui.widgets import BuffIcon, TextBuffIcon
+from eye.persistence.port import SaveStore
 from eye.session.game import Game
 from eye.session.generation import Generation
 
@@ -154,12 +156,14 @@ class CombatScene:
         game: Game,
         encounter: EnemyEncountered,
         atlas: SpriteAtlas,
+        save_store: SaveStore,
         buff_icon_factory: Callable[[EffectName], BuffIcon] = TextBuffIcon,
     ) -> None:
         self._generation = generation
         self._game = game
         self._atlas = atlas
         self._buff_icon_factory = buff_icon_factory
+        self._save_store = save_store
         self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
         self._battle: Battle = generation.start_battle(encounter)
         self._pending_query: PlayerTurnNeedsAction | None = None
@@ -215,9 +219,10 @@ class CombatScene:
     def _conclude(self) -> Scene:
         self._generation.finish_battle(self._battle)
         if not self._generation.died:
-            return ExplorationScene(self._generation, self._game, self._atlas)
+            return ExplorationScene(self._generation, self._game, self._atlas, save_store=self._save_store)
         self._game.end_generation(self._generation)
-        return SkillTreeScene(self._game, self._atlas)
+        save.persist(self._game, self._save_store)
+        return SkillTreeScene(self._game, self._atlas, save_store=self._save_store)
 
     def _record(self, events: Sequence[BattleEvent]) -> None:
         for event in events:
