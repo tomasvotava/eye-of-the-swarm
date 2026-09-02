@@ -96,11 +96,10 @@ class ExplorationScene:
         if encounter is not None:
             # Deferred import: ExplorationScene and CombatScene reference each other (ADR 0009 --
             # combat returns a fresh ExplorationScene on a win), so this can't be a module-level
-            # import until both modules exist. Drop the ignore once eye.gui.scenes.combat does.
-            from eye.gui.scenes.combat import CombatScene  # type: ignore[import-not-found]
+            # import without a circular import.
+            from eye.gui.scenes.combat import CombatScene
 
-            combat_scene: Scene = CombatScene(self._generation, self._game, encounter, self._atlas)
-            return combat_scene
+            return CombatScene(self._generation, self._game, encounter, self._atlas)
 
         screen_event = next(
             (event for event in events if isinstance(event, EffectGranted | ResourceGranted | NothingHappened)), None
