@@ -1,6 +1,6 @@
 # The Eye of the Swarm — Design Brief
 
-**Status:** Early concept / pre-production
+**Status:** v1 (core loop, GUI) complete; v2 (presentation & feel) in design
 **Event:** pygame Summer Jam
 **Jam topic:** "Swarm"
 **Duration:** 17 days
@@ -178,7 +178,100 @@ Recommend keeping the first pass to a single Strain (enemy archetype, §6), a si
 
 - Final tone: sinister invasive plant vs. sympathetic natural growth (art-driven decision).
 - How many distinct Biomes the path is divided into (visually and by Strain difficulty), and
-  whether Biome affects which Strains can spawn there.
+  whether Biome affects which Strains can spawn there. **Planned for v2 (§9.3): three**, art
+  direction permitting — not locked until the art proves feasible.
 - Whether "Struggle" stays purely mechanical or gets a narrative-flavored name once the world's tone is set.
 - Whether basic platformer movement (§6 stretch goal) makes it into the jam build or gets pushed to post-jam.
 - Exact numeric tuning for buff/debuff magnitudes, durations, "may" chance percentages, and AI difficulty T values (§5.6, §5.7) — playtesting-driven, not fixed by this brief.
+- Whether door choice (§9.2) ever gains real mechanical influence over encounter selection — v2
+  keeps it cosmetic only; giving it teeth would need a domain change and isn't currently planned.
+
+## 9. v2 — Presentation Layer (Post-v1.0.0)
+
+v1 closes out §7's priority list 1–4 (core combat, Seed/Turf loop, skill tree, rebirth framing)
+plus a first playable GUI. Every idea below is a *presentation* change: how the existing engine's
+state is walked through, revealed, and narrated to the player. None of it changes `Battle`,
+`ExplorationRun`, `SkillTree`, or their events — the domain/GUI boundary this project already
+follows (`CLAUDE.md`) holds for v2 too. Where an idea *would* require touching a domain, it's
+flagged and left as an open question (§8) rather than folded in here.
+
+### 9.1 Screen-by-screen walking
+
+Today, entering a screen and resolving its encounter happen on the same input — §6's "walk right
+until you touch the thing" is currently instantaneous, one keypress calls `advance()` and the
+result is shown immediately. v2 makes that walk visible: the player character enters from the
+screen's left edge, the encounter (enemy, pickup, or empty) is visible ahead at a fixed position,
+and the player chooses when to walk toward it. `advance()` still fires exactly once, at the moment
+the player sprite reaches the encounter — the domain's mutate-on-`.advance()` contract (§6) is
+unchanged; only the frames between "screen appears" and "encounter touched" are new. The player
+cannot choose not to reach the encounter — there's no way to avoid it, only to choose when to
+arrive.
+
+### 9.2 Door choice (cosmetic tension)
+
+**Decided: cosmetic only.** Each screen may render its encounter behind one of several doors.
+Picking a door doesn't touch `advance()`'s existing random roll — every door leads to the same,
+already-decided outcome. The player experiences agency ("I dodged it by picking the left door")
+the mechanics never actually granted; the tension is real, the control is not. Because encounter
+selection is untouched, this needs no domain change. Whether a *real* door mechanic is worth
+building later is an open question (§8), not part of this plan.
+
+### 9.3 Biome progression
+
+As screen count rises (distance from the hive's turf, §5.1/§6), background art gradually shifts
+from the swarm's home biome toward the next — planned for a small, fixed number of biomes (three,
+art direction permitting, §8), with a gradual transition rather than a hard cut: the closing
+screens of one biome thin out its scenery as the opening screens of the next introduce theirs.
+Purely a GUI-side function of screen count — the domain already tracks distance from turf, no new
+domain state is needed.
+
+### 9.4 Distance-from-home / distance-from-turf display
+
+The player should always be able to see two distances: how far they've walked from home (screen
+count) and how far they are from the nearest matured turf (§5.1's proximity scaling). Both values
+already exist in domain state (`Generation`/`ExplorationRun`) — this is a GUI-only display
+question. **Not yet decided:** the visual form (a number, a bar, a fading vine, etc.) — left open
+deliberately, per the brief's own note (§0) that mechanically-locked ideas can stay narratively
+undecided.
+
+### 9.5 Battle event animation
+
+Currently a full combat round resolves within a single `update()` call, with all of that round's
+events dumped into the log at once (`CombatScene._record`). v2 reveals events one at a time — a
+debuff roll, a struck hit, an applied effect, recoil damage — each with a short pause before the
+next.
+
+**Decided:** auto-timed reveal — each event shows for a fixed pause before the next appears,
+rather than waiting on a keypress. Exact pacing is playtesting-tuned, per this project's existing
+"every magic number lives in `tuning.py`" convention (`CLAUDE.md`). `Battle`'s event-per-call
+contract (ADR 0008) already supports this; nothing about the domain changes, only how many frames
+`CombatScene` takes to walk through one call's events.
+
+### 9.6 Skill tree icon presentation
+
+Each obtainable skill renders as a ~32×32px icon (replacing the current `SkillTreeLeaf`
+placeholder) with its name and effect list beneath it, plus a description the skill carries.
+Skills need a description field to carry this — a presentation-only addition alongside their
+existing name/effects.
+
+### 9.7 Buff/debuff descriptions + inspector overlay
+
+Every buff/debuff (§5.6) needs a player-facing description, and the player should be able to
+inspect any active icon at any time via an overlay listing all current buff/debuff icons with
+their descriptions. Descriptions are presentation text, not domain state — likely a GUI-side
+lookup keyed by `EffectName`, mirroring how `BuffIcon`/`TextBuffIcon` already work.
+
+### 9.8 In-game narration ("tutorial" without a tutorial)
+
+No dedicated tutorial mode. Instead, a lightweight message-and-continue mechanic ("You venture
+from your swarm's land into biomes unknown — press → to venture further," "You've found a pile of
+spores. Might be useful.") lets the game speak to the player at key first-playthrough moments,
+folding instruction into story instead of breaking away for it. Presentation-only: an
+overlay/queue the GUI shows at scripted trigger points, no domain involvement.
+
+### 9.9 Art & audio asset pipeline
+
+Sprites, backgrounds, animation frames, and music/sound are in production and will land
+incrementally. The existing `SpriteAtlas` abstraction (ADR 0009) and its dev-only viewer are the
+intended landing point — v2 work should keep placeholder art swappable through that seam rather
+than hardcoding asset assumptions into scene code.
