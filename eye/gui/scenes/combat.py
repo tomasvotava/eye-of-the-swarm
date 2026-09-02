@@ -1,7 +1,7 @@
 """CombatScene: the first real consumer of `Battle.turn_phase` (ADR 0008/0009). A frame-based main
 loop can't block on player input the way the TUI's `play_battle` does, so `update()` drives
 whatever step `battle.turn_phase` is ready for on each call -- resolving automatic steps on its
-own and surfacing a numbered action menu only once the player actually needs to choose. On
+own and surfacing an action menu only once the player actually needs to choose. On
 `battle.is_over`, hands off to a fresh `ExplorationScene` on a win or a `SkillTreeScene` on death,
 per PROJECT_BRIEF.md's generational-handoff framing (§4).
 """
@@ -57,10 +57,12 @@ _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _BAR_BG_COLOR: pygame.typing.ColorLike = "dimgray"
 _HP_COLOR: pygame.typing.ColorLike = "firebrick"
 _METER_COLOR: pygame.typing.ColorLike = "gold"
+_CURSOR_COLOR: pygame.typing.ColorLike = "slategray"  # matches SkillTreeScene's cursor highlight
 
-# Numbered-key action select, mirroring the TUI's numbered-menu convention (ADR 0009) -- unlike
+# Direct numbered-key select, mirroring the TUI's numbered-menu convention (ADR 0009) -- unlike
 # ExplorationScene/SkillTreeScene, the action set here is a variable-length list from the domain,
-# not a fixed enum, so a static key->action-kind mapping doesn't fit.
+# not a fixed enum, so a static key->action-kind mapping doesn't fit. Up/Down + Enter (handled
+# directly in handle_pygame_event()) offer the same choice via a cursor instead.
 ACTION_KEYS: tuple[int, ...] = (
     pygame.K_1,
     pygame.K_2,
@@ -95,6 +97,17 @@ def _duration(category: EffectCategory, remaining_turns: int | None) -> str:
     if remaining_turns is None:
         return " until the battle ends"
     return f" for {remaining_turns} turn{'s' if remaining_turns != 1 else ''}"
+
+
+def _resolve_enemy_sprite_key(strain_name: str) -> SpriteKey:
+    # Assumes a same-named SpriteKey per Strain (true for v1's only member, BRAMBLE) -- a future
+    # multi-Strain epic (PROJECT_BRIEF.md §8) must keep the two enums' names in sync or give this
+    # a real Strain -> SpriteKey mapping instead. Falls back to the "missing texture" placeholder
+    # rather than crashing the scene if the two ever drift apart.
+    try:
+        return SpriteKey[strain_name]
+    except KeyError:
+        return SpriteKey.UNKNOWN
 
 
 def _describe_event(event: BattleEvent) -> str:
@@ -147,24 +160,28 @@ class CombatScene:
         self._game = game
         self._atlas = atlas
         self._buff_icon_factory = buff_icon_factory
-        # Assumes a same-named SpriteKey per Strain (true for v1's only member, BRAMBLE) -- a
-        # future multi-Strain epic (PROJECT_BRIEF.md §8) must keep the two enums' names in sync or
-        # give this lookup a real Strain -> SpriteKey mapping instead.
-        self._enemy_sprite_key = SpriteKey[encounter.strain.name]
+        self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
         self._battle: Battle = generation.start_battle(encounter)
         self._pending_query: PlayerTurnNeedsAction | None = None
         self._pending_action_index: int | None = None
+        self._cursor_index = 0
         self._log: deque[str] = deque(maxlen=_LOG_LINES)
         self._record(self._battle.start())
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN or self._pending_query is None:
             return
-        if pygame_event.key not in ACTION_KEYS:
-            return
-        index = ACTION_KEYS.index(pygame_event.key)
-        if index < len(self._pending_query.available):
-            self._pending_action_index = index
+        available = self._pending_query.available
+        if pygame_event.key in ACTION_KEYS:
+            index = ACTION_KEYS.index(pygame_event.key)
+            if index < len(available):
+                self._pending_action_index = index
+        elif pygame_event.key == pygame.K_UP:
+            self._cursor_index = (self._cursor_index - 1) % len(available)
+        elif pygame_event.key == pygame.K_DOWN:
+            self._cursor_index = (self._cursor_index + 1) % len(available)
+        elif pygame_event.key == pygame.K_RETURN:
+            self._pending_action_index = self._cursor_index
 
     def update(self, dt: float) -> Scene | None:
         if self._battle.is_over:
@@ -183,6 +200,7 @@ class CombatScene:
         if isinstance(query, PlayerTurnNeedsAction):
             self._record(query.pre_turn_events)
             self._pending_query = query
+            self._cursor_index = 0
         else:
             self._record(query.events)
 
@@ -250,11 +268,17 @@ class CombatScene:
         if self._pending_query is None:
             return
         font = _get_font()
-        menu_height = len(self._pending_query.available) * _FONT_SIZE
+        available = self._pending_query.available
+        menu_height = (len(available) + 1) * _FONT_SIZE  # +1 for the control hint below the rows
         top = surface.get_height() - _LOG_LINES * _FONT_SIZE - menu_height - _MARGIN
-        for index, action in enumerate(self._pending_query.available):
+        for index, action in enumerate(available):
+            row = pygame.Rect(_MARGIN, top + index * _FONT_SIZE, _BAR_WIDTH, _FONT_SIZE)
+            if index == self._cursor_index:
+                pygame.draw.rect(surface, _CURSOR_COLOR, row)
             label = f"{index + 1}) {action.name or action.kind.name.replace('_', ' ').title()}"
-            surface.blit(font.render(label, True, _TEXT_COLOR), (_MARGIN, top + index * _FONT_SIZE))
+            surface.blit(font.render(label, True, _TEXT_COLOR), row.topleft)
+        hint = font.render("1-9: choose   Up/Down + Enter: choose", True, _TEXT_COLOR)
+        surface.blit(hint, (_MARGIN, top + len(available) * _FONT_SIZE))
 
     def _draw_log(self, surface: pygame.Surface) -> None:
         font = _get_font()
