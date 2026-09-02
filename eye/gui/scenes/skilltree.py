@@ -1,7 +1,11 @@
 """SkillTreeScene: the between-generations spend screen (ADR 0009, PROJECT_BRIEF.md §5.3). Lays
 out the catalog as a grid -- one row per (branch, sub_branch), tiers left to right within a row --
-and lets the player purchase along a 2D cursor before continuing. `game.start_generation()` is
-what actually begins the next life; this scene only decides when that happens.
+and lets the player purchase along a 2D cursor before continuing. Requests a `Continue` transition
+when the player is done spending; `GameDriver` (ADR 0010) is the one that calls
+`game.start_generation()` and constructs the next `ExplorationScene`. `on_purchase` is invoked
+after every successful purchase so `GameDriver` can persist -- mirroring
+`eye/tui/skilltree_menu.py::run()`'s own `on_purchase` hook -- without this scene needing to know
+`eye.persistence` exists.
 """
 
 from collections.abc import Callable
@@ -12,11 +16,8 @@ import pygame
 import pygame.typing
 
 from eye.gui.assets import SpriteAtlas
-from eye.gui.scene import Scene
-from eye.gui.scenes.exploration import ExplorationScene
+from eye.gui.play_scene import Continue, PlaySceneTransition
 from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, TextSkillTreeLeaf
-from eye.persistence import save
-from eye.persistence.port import SaveStore
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
@@ -91,13 +92,13 @@ class SkillTreeScene:
         self,
         game: Game,
         atlas: SpriteAtlas,
-        save_store: SaveStore,
+        on_purchase: Callable[[], None],
         leaf_factory: Callable[[], SkillTreeLeaf] = TextSkillTreeLeaf,
     ) -> None:
         self._game = game
         self._atlas = atlas
         self._leaf = leaf_factory()
-        self._save_store = save_store
+        self._on_purchase = on_purchase
         self._row = 0
         self._col = 0
         self._pending_action: SkillTreeAction | None = None
@@ -110,7 +111,7 @@ class SkillTreeScene:
         if action is not None:
             self._pending_action = action
 
-    def update(self, dt: float) -> Scene | None:
+    def update(self, dt: float) -> PlaySceneTransition | None:
         if self._pending_action is None:
             return None
         action = self._pending_action
@@ -141,12 +142,11 @@ class SkillTreeScene:
         except RuntimeError as exc:
             self._last_message = str(exc)
             return
-        save.persist(self._game, self._save_store)
+        self._on_purchase()
         self._last_message = f"Purchased {node.name or node.id}."
 
-    def _handle_continue(self) -> Scene:
-        generation = self._game.start_generation()
-        return ExplorationScene(generation, self._game, self._atlas, save_store=self._save_store)
+    def _handle_continue(self) -> PlaySceneTransition:
+        return Continue()
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")

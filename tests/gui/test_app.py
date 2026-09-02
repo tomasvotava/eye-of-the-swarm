@@ -1,11 +1,10 @@
 import pygame
 import pytest
 
-from eye.gui.app import _DEV_ASSET_VIEWER_ENV_VAR, App, _dev_asset_viewer_requested
+from eye.gui.app import _DEV_ASSET_VIEWER_ENV_VAR, App, _dev_asset_viewer_requested, _initial_scene
+from eye.gui.game_driver import GameDriver
+from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
-from eye.gui.scenes.exploration import ExplorationScene
-from eye.persistence.codec import encode
-from eye.session.game import Game
 from tests.persistence.doubles import FakeSaveStore
 from tests.session.doubles import ScriptedEncounterRandom
 
@@ -28,17 +27,20 @@ class _StubScene:
         self.drawn = True
 
 
-def _app(save_store: FakeSaveStore | None = None) -> App:
-    store = save_store if save_store is not None else FakeSaveStore()
-    return App(pygame.Surface((64, 48)), pygame.Clock(), store, ScriptedEncounterRandom(()))
+def _app(initial_scene: Scene | None = None) -> App:
+    return App(pygame.Surface((64, 48)), pygame.Clock(), initial_scene or _StubScene())
 
 
-def test_app_starts_a_fresh_generation_in_an_exploration_scene() -> None:
-    app = _app()
+def test_initial_scene_returns_a_game_driver_by_default() -> None:
+    scene = _initial_scene(FakeSaveStore(), ScriptedEncounterRandom(()), dev_asset_viewer=False)
 
-    assert isinstance(app.scene, ExplorationScene)
-    assert app.scene._generation.died is False
-    assert app.running
+    assert isinstance(scene, GameDriver)
+
+
+def test_initial_scene_returns_the_dev_asset_viewer_when_requested() -> None:
+    scene = _initial_scene(FakeSaveStore(), ScriptedEncounterRandom(()), dev_asset_viewer=True)
+
+    assert isinstance(scene, DevAssetViewerScene)
 
 
 def test_dev_asset_viewer_requested_reflects_the_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,38 +51,28 @@ def test_dev_asset_viewer_requested_reflects_the_env_var(monkeypatch: pytest.Mon
     assert _dev_asset_viewer_requested() is True
 
 
-def test_app_boots_into_the_dev_asset_viewer_when_requested() -> None:
-    app = App(
-        pygame.Surface((64, 48)), pygame.Clock(), FakeSaveStore(), ScriptedEncounterRandom(()), dev_asset_viewer=True
-    )
+def test_app_starts_on_the_scene_it_was_given() -> None:
+    scene = _StubScene()
 
-    assert isinstance(app.scene, DevAssetViewerScene)
+    app = _app(scene)
 
-
-def test_app_loads_the_saved_game_before_starting_the_generation() -> None:
-    saved = Game(ScriptedEncounterRandom(()), matured_turf_positions=(3, 7))
-    store = FakeSaveStore(data=encode(saved))
-
-    scene = _app(store).scene
-
-    assert isinstance(scene, ExplorationScene)
-    assert scene._game.matured_turf_positions == (3, 7)
+    assert app.scene is scene
+    assert app.running
 
 
 def test_quit_event_stops_the_app_without_reaching_the_scene() -> None:
-    app = _app()
-    app._scene = _StubScene()
+    stub = _StubScene()
+    app = _app(stub)
 
     app.handle_event(pygame.event.Event(pygame.QUIT))
 
     assert app.running is False
-    assert app._scene.handled_pygame_events == []
+    assert stub.handled_pygame_events == []
 
 
 def test_non_quit_events_are_forwarded_to_the_current_scene() -> None:
-    app = _app()
     stub = _StubScene()
-    app._scene = stub
+    app = _app(stub)
 
     event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE)
     app.handle_event(event)
@@ -90,9 +82,8 @@ def test_non_quit_events_are_forwarded_to_the_current_scene() -> None:
 
 
 def test_step_draws_the_scene_and_stays_on_it_when_update_returns_none() -> None:
-    app = _app()
     stub = _StubScene()
-    app._scene = stub
+    app = _app(stub)
 
     app.step(0.016)
 
@@ -102,10 +93,9 @@ def test_step_draws_the_scene_and_stays_on_it_when_update_returns_none() -> None
 
 
 def test_step_swaps_to_the_scene_returned_by_update() -> None:
-    app = _app()
     stub = _StubScene()
     stub.next_scene = _StubScene()
-    app._scene = stub
+    app = _app(stub)
 
     app.step(0.016)
 

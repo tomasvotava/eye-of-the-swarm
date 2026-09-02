@@ -1,9 +1,10 @@
 """CombatScene: the first real consumer of `Battle.turn_phase` (ADR 0008/0009). A frame-based main
 loop can't block on player input the way the TUI's `play_battle` does, so `update()` drives
 whatever step `battle.turn_phase` is ready for on each call -- resolving automatic steps on its
-own and surfacing an action menu only once the player actually needs to choose. On
-`battle.is_over`, hands off to a fresh `ExplorationScene` on a win or a `SkillTreeScene` on death,
-per PROJECT_BRIEF.md's generational-handoff framing (§4).
+own and surfacing an action menu only once the player actually needs to choose. On `battle.is_over`
+it reports a bare `BattleConcluded()` and takes no further action -- `GameDriver` (ADR 0010) is the
+one that reads `generation.died` and decides whether that means a return to exploration or a trip
+to the skill tree, mirroring `eye/tui/combat.py::play_battle()`, which never decides that either.
 """
 
 from collections import deque
@@ -37,13 +38,8 @@ from eye.combat.events import (
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.assets import SpriteAtlas, SpriteKey
-from eye.gui.scene import Scene
-from eye.gui.scenes.exploration import ExplorationScene
-from eye.gui.scenes.skilltree import SkillTreeScene
+from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.widgets import BuffIcon, TextBuffIcon
-from eye.persistence import save
-from eye.persistence.port import SaveStore
-from eye.session.game import Game
 from eye.session.generation import Generation
 
 _FONT_SIZE = 20
@@ -153,17 +149,13 @@ class CombatScene:
     def __init__(
         self,
         generation: Generation,
-        game: Game,
         encounter: EnemyEncountered,
         atlas: SpriteAtlas,
-        save_store: SaveStore,
         buff_icon_factory: Callable[[EffectName], BuffIcon] = TextBuffIcon,
     ) -> None:
         self._generation = generation
-        self._game = game
         self._atlas = atlas
         self._buff_icon_factory = buff_icon_factory
-        self._save_store = save_store
         self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
         self._battle: Battle = generation.start_battle(encounter)
         self._pending_query: PlayerTurnNeedsAction | None = None
@@ -187,7 +179,7 @@ class CombatScene:
         elif pygame_event.key == pygame.K_RETURN:
             self._pending_action_index = self._cursor_index
 
-    def update(self, dt: float) -> Scene | None:
+    def update(self, dt: float) -> PlaySceneTransition | None:
         if self._battle.is_over:
             return self._conclude()
         phase = self._battle.turn_phase
@@ -216,13 +208,9 @@ class CombatScene:
         self._pending_action_index = None
         self._record(self._battle.resolve_player_turn(action))
 
-    def _conclude(self) -> Scene:
+    def _conclude(self) -> PlaySceneTransition:
         self._generation.finish_battle(self._battle)
-        if not self._generation.died:
-            return ExplorationScene(self._generation, self._game, self._atlas, save_store=self._save_store)
-        self._game.end_generation(self._generation)
-        save.persist(self._game, self._save_store)
-        return SkillTreeScene(self._game, self._atlas, save_store=self._save_store)
+        return BattleConcluded()
 
     def _record(self, events: Sequence[BattleEvent]) -> None:
         for event in events:
