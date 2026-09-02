@@ -5,10 +5,11 @@ from collections.abc import Iterator
 from rich.console import Console
 
 from eye.exploration.events import EnemyEncountered
+from eye.persistence import save
 from eye.persistence.port import SaveStore
 from eye.session.game import Game
 from eye.session.generation import Generation
-from eye.tui import combat, render, save, skilltree_menu
+from eye.tui import combat, render, skilltree_menu
 from eye.tui._input import next_line
 
 

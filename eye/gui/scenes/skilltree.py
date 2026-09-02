@@ -11,11 +11,11 @@ from itertools import groupby
 import pygame
 import pygame.typing
 
-from eye.gui import save
 from eye.gui.assets import SpriteAtlas
 from eye.gui.scene import Scene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, TextSkillTreeLeaf
+from eye.persistence import save
 from eye.persistence.port import SaveStore
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
