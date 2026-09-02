@@ -1,0 +1,9 @@
+from typing import Protocol
+
+import pygame
+
+
+class Scene(Protocol):
+    def handle_event(self, event: pygame.event.Event) -> None: ...
+    def update(self, dt: float) -> Scene | None: ...
+    def draw(self, surface: pygame.Surface) -> None: ...
