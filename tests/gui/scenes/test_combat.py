@@ -20,7 +20,7 @@ from eye.persistence.codec import decode
 from eye.session.game import Game
 from eye.session.generation import Generation
 from eye.skilltree.catalog import CATALOG
-from tests.gui.doubles import FakeSaveStore
+from tests.persistence.doubles import FakeSaveStore
 from tests.session.doubles import ScriptedEncounterRandom
 
 _STATS = Stats(max_hp=20, attack=5, defense=2, meter_capacity=100, meter_fill_rate=1)

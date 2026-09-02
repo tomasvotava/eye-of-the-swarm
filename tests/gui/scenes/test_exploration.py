@@ -10,7 +10,7 @@ from eye.gui.scenes.combat import CombatScene
 from eye.gui.scenes.exploration import KEY_ACTIONS, ExplorationAction, ExplorationScene
 from eye.session.game import Game
 from eye.session.generation import Generation
-from tests.gui.doubles import FakeSaveStore
+from tests.persistence.doubles import FakeSaveStore
 from tests.session.doubles import ScriptedEncounterRandom
 
 _ADVANCES_TO_READY_SEED = int(SEED_GROWTH_THRESHOLD // SEED_GROWTH_RATE_CAP)
