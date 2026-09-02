@@ -11,7 +11,7 @@ from eye.persistence.codec import decode
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
-from tests.gui.doubles import FakeSaveStore
+from tests.persistence.doubles import FakeSaveStore
 
 
 def _scene(spores: int = 0, save_store: FakeSaveStore | None = None) -> tuple[SkillTreeScene, Game]:

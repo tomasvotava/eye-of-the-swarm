@@ -36,12 +36,12 @@ from eye.combat.events import (
 )
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
-from eye.gui import save
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.scene import Scene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.gui.widgets import BuffIcon, TextBuffIcon
+from eye.persistence import save
 from eye.persistence.port import SaveStore
 from eye.session.game import Game
 from eye.session.generation import Generation

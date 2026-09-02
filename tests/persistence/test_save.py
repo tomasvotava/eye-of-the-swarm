@@ -3,12 +3,12 @@ import random
 
 import pytest
 
-from eye.gui import save
+from eye.persistence import save
 from eye.persistence.codec import SCHEMA_VERSION, encode
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.tree import Branch, SkillNodeId, SubBranch
-from tests.gui.doubles import FakeSaveStore
+from tests.persistence.doubles import FakeSaveStore
 from tests.session.doubles import ScriptedEncounterRandom
 
 _TIER0_SELF_ATTACK = SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.ATTACK, tier=0)
