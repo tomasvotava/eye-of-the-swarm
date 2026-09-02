@@ -1,7 +1,11 @@
-"""app.py: window/clock owner and the async main loop (ADR 0009). `App` holds a single
+"""app.py: window/clock owner and the async main loop (ADR 0009/0010). `App` holds a single
 current-`Scene` reference, swapped from each frame's `update()` return value, and `run()` wraps it
 in a `while running: ... await asyncio.sleep(0)` loop so the same code runs unmodified under
-pygbag's cooperative scheduler.
+pygbag's cooperative scheduler. `App` itself takes an already-built initial `Scene` and knows
+nothing about what any scene is or does -- `Game`, `Generation`, and `eye.persistence` are all
+`GameDriver`'s concern (ADR 0010), not this module's class. `run()` is where the two top-level
+screens this Epic ships (`DevAssetViewerScene`, `GameDriver`) actually get chosen; a future
+splash/menu epic adds screens here without touching `App`.
 """
 
 import asyncio
@@ -11,10 +15,9 @@ import random
 import pygame
 
 from eye.gui.assets import build_placeholder_atlas
+from eye.gui.game_driver import GameDriver
 from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
-from eye.gui.scenes.exploration import ExplorationScene
-from eye.persistence import save
 from eye.persistence.port import SaveStore
 
 _WINDOW_SIZE = (1280, 720)
@@ -31,27 +34,16 @@ def _dev_asset_viewer_requested() -> bool:
 
 
 class App:
-    """Owns the current `Scene` and steps it. Takes an already-created `screen`/`clock` rather
-    than constructing them itself, so tests can drive it against a headless `Surface` without a
-    real display -- window/display setup is `run()`'s job, not this class's.
+    """Owns the current `Scene` and steps it. Takes an already-created `screen`/`clock`/
+    `initial_scene` rather than constructing any of them itself, so tests can drive it against a
+    headless `Surface` and an arbitrary `Scene` double without a real display or a real game --
+    picking what to play is `run()`'s job, not this class's.
     """
 
-    def __init__(
-        self,
-        screen: pygame.Surface,
-        clock: pygame.Clock,
-        save_store: SaveStore,
-        rng: random.Random,
-        dev_asset_viewer: bool = False,
-    ) -> None:
+    def __init__(self, screen: pygame.Surface, clock: pygame.Clock, initial_scene: Scene) -> None:
         self._screen = screen
         self._clock = clock
-        atlas = build_placeholder_atlas()
-        if dev_asset_viewer:
-            self._scene: Scene = DevAssetViewerScene(atlas)
-        else:
-            game = save.load_or_new(rng, save_store)
-            self._scene = ExplorationScene(game.start_generation(), game, atlas, save_store=save_store)
+        self._scene = initial_scene
         self._running = True
 
     @property
@@ -78,20 +70,25 @@ class App:
         return self._clock.tick(_MAX_FPS) / 1000
 
 
+def _initial_scene(save_store: SaveStore | None, rng: random.Random, dev_asset_viewer: bool) -> Scene:
+    atlas = build_placeholder_atlas()
+    if dev_asset_viewer:
+        return DevAssetViewerScene(atlas)
+    return GameDriver(atlas, rng, save_store)
+
+
 async def run(save_store: SaveStore | None = None, rng: random.Random | None = None) -> None:
     pygame.init()
     screen = pygame.display.set_mode(_WINDOW_SIZE)
     pygame.display.set_caption(_TITLE)
     clock = pygame.Clock()
 
-    store = save_store if save_store is not None else save.default_store()
-    app = App(
-        screen,
-        clock,
-        store,
+    scene = _initial_scene(
+        save_store,
         rng if rng is not None else random.Random(),  # noqa: S311 -- game RNG, not cryptographic
         dev_asset_viewer=_dev_asset_viewer_requested(),
     )
+    app = App(screen, clock, scene)
 
     dt = 0.0
     while app.running:
