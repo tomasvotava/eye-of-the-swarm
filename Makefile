@@ -1,4 +1,4 @@
-.PHONY: serve run play
+.PHONY: serve run play dev-assets
 
 run:
 	uv run python -m eye.main
@@ -8,3 +8,6 @@ serve:
 
 play:
 	uv run python -m eye.tui
+
+dev-assets:
+	EYE_DEV_ASSET_VIEWER=1 uv run python -m eye.main

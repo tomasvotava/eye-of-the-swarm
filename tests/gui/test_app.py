@@ -1,6 +1,8 @@
 import pygame
+import pytest
 
-from eye.gui.app import App
+from eye.gui.app import _DEV_ASSET_VIEWER_ENV_VAR, App, _dev_asset_viewer_requested
+from eye.gui.scenes.dev_assets import DevAssetViewerScene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.persistence.codec import encode
 from eye.session.game import Game
@@ -37,6 +39,22 @@ def test_app_starts_a_fresh_generation_in_an_exploration_scene() -> None:
     assert isinstance(app.scene, ExplorationScene)
     assert app.scene._generation.died is False
     assert app.running
+
+
+def test_dev_asset_viewer_requested_reflects_the_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(_DEV_ASSET_VIEWER_ENV_VAR, raising=False)
+    assert _dev_asset_viewer_requested() is False
+
+    monkeypatch.setenv(_DEV_ASSET_VIEWER_ENV_VAR, "1")
+    assert _dev_asset_viewer_requested() is True
+
+
+def test_app_boots_into_the_dev_asset_viewer_when_requested() -> None:
+    app = App(
+        pygame.Surface((64, 48)), pygame.Clock(), FakeSaveStore(), ScriptedEncounterRandom(()), dev_asset_viewer=True
+    )
+
+    assert isinstance(app.scene, DevAssetViewerScene)
 
 
 def test_app_loads_the_saved_game_before_starting_the_generation() -> None:
