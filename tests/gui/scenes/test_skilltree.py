@@ -7,15 +7,17 @@ from eye.gui.assets import build_placeholder_atlas
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.skilltree import _ROWS, KEY_ACTIONS, SkillTreeAction, SkillTreeScene, _node_state
 from eye.gui.widgets import SkillNodeState
+from eye.persistence.codec import decode
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
+from tests.gui.doubles import FakeSaveStore
 
 
-def _scene(spores: int = 0) -> tuple[SkillTreeScene, Game]:
+def _scene(spores: int = 0, save_store: FakeSaveStore | None = None) -> tuple[SkillTreeScene, Game]:
     game = Game(random.Random())
     game.skill_tree.add_spores(spores)
-    return SkillTreeScene(game, build_placeholder_atlas()), game
+    return SkillTreeScene(game, build_placeholder_atlas(), save_store=save_store or FakeSaveStore()), game
 
 
 def _press(scene: SkillTreeScene, key: int) -> None:
@@ -95,6 +97,20 @@ def test_purchase_action_buys_the_selected_node_when_affordable() -> None:
     assert game.skill_tree.spores_available == 0
 
 
+def test_purchase_action_persists_the_game_to_the_save_store() -> None:
+    node = _ROWS[0][0]
+    store = FakeSaveStore()
+    scene, game = _scene(spores=node.cost, save_store=store)
+
+    _press(scene, pygame.K_RETURN)
+    scene.update(0.016)
+
+    raw = store.load()
+    assert raw is not None
+    snapshot = decode(raw, CATALOG.values())
+    assert snapshot.purchased_nodes == game.skill_tree.purchased_nodes
+
+
 def test_purchase_action_is_a_no_op_without_enough_spores() -> None:
     node = _ROWS[0][0]
     scene, game = _scene(spores=node.cost - 1)
@@ -157,6 +173,18 @@ def test_continue_action_starts_a_new_generation_and_returns_an_exploration_scen
 
     assert isinstance(next_scene, ExplorationScene)
     assert game.matured_turf_positions == ()
+
+
+def test_continue_action_threads_the_save_store_to_the_next_scene() -> None:
+    store = FakeSaveStore()
+    scene, _ = _scene(save_store=store)
+
+    _press(scene, pygame.K_c)
+    next_scene = scene.update(0.016)
+
+    assert isinstance(next_scene, ExplorationScene)
+    assert next_scene._save_store is store
+    assert store.load() is None  # starting a new generation alone produces no NodePurchased to persist
 
 
 @pytest.mark.parametrize("surface_size", [(64, 64), (800, 600)])

@@ -16,8 +16,11 @@ from eye.gui.assets import SpriteKey, build_placeholder_atlas
 from eye.gui.scenes.combat import ACTION_KEYS, CombatScene, _resolve_enemy_sprite_key
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.skilltree import SkillTreeScene
+from eye.persistence.codec import decode
 from eye.session.game import Game
 from eye.session.generation import Generation
+from eye.skilltree.catalog import CATALOG
+from tests.gui.doubles import FakeSaveStore
 from tests.session.doubles import ScriptedEncounterRandom
 
 _STATS = Stats(max_hp=20, attack=5, defense=2, meter_capacity=100, meter_fill_rate=1)
@@ -76,7 +79,7 @@ def test_construction_starts_the_battle_and_prefills_the_resonance_meter() -> No
     game = _game_owning(generation)
     encounter = _encounter(generation)
 
-    scene = CombatScene(generation, game, encounter, build_placeholder_atlas())
+    scene = CombatScene(generation, game, encounter, build_placeholder_atlas(), save_store=FakeSaveStore())
 
     expected = round(_STATS.meter_capacity * RESONANCE_METER_PREFILL_RATIO)
     assert scene._battle.player.current_meter == expected
@@ -85,7 +88,7 @@ def test_construction_starts_the_battle_and_prefills_the_resonance_meter() -> No
 def test_handle_pygame_event_ignores_non_keydown() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
     scene.update(0.016)  # advance to AWAITING_PLAYER_ACTION
 
     scene.handle_pygame_event(pygame.event.Event(pygame.KEYUP, key=ACTION_KEYS[0]))
@@ -96,7 +99,7 @@ def test_handle_pygame_event_ignores_non_keydown() -> None:
 def test_handle_pygame_event_ignores_a_key_when_no_action_is_pending() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
 
     _press(scene, ACTION_KEYS[0])  # no update() yet, so no PlayerTurnNeedsAction is pending
 
@@ -106,7 +109,7 @@ def test_handle_pygame_event_ignores_a_key_when_no_action_is_pending() -> None:
 def test_handle_pygame_event_ignores_an_index_beyond_the_available_actions() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
     scene.update(0.016)  # advance to AWAITING_PLAYER_ACTION with exactly two available actions
 
     _press(scene, ACTION_KEYS[2])
@@ -117,7 +120,7 @@ def test_handle_pygame_event_ignores_an_index_beyond_the_available_actions() -> 
 def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
     scene.update(0.016)
 
     _press(scene, ACTION_KEYS[1])
@@ -128,7 +131,7 @@ def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
 def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
     scene.update(0.016)
 
     _press(scene, pygame.K_DOWN)
@@ -141,7 +144,7 @@ def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
 def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
     scene.update(0.016)
 
     _press(scene, pygame.K_UP)
@@ -152,7 +155,7 @@ def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
 def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
     scene.update(0.016)
 
     _press(scene, pygame.K_DOWN)
@@ -164,7 +167,7 @@ def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
 def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
     scene.update(0.016)  # first AWAITING_PLAYER_ACTION query, cursor at 0
     _press(scene, pygame.K_DOWN)
     assert scene._cursor_index == 1
@@ -191,7 +194,7 @@ def test_resolve_enemy_sprite_key_falls_back_to_unknown_for_an_unmatched_name() 
 def test_update_resolves_automatic_phases_without_input() -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
 
     scene.update(0.016)
 
@@ -202,7 +205,7 @@ def test_win_finishes_the_battle_and_returns_a_fresh_exploration_scene() -> None
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
 
     next_scene = _drive_to_transition(scene)
 
@@ -216,7 +219,8 @@ def test_loss_ends_the_generation_and_returns_a_skill_tree_scene() -> None:
     character = Character(current_hp=5, max_hp=5)
     generation = _generation(stats=fragile, character=character)
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    store = FakeSaveStore()
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=store)
 
     next_scene = _drive_to_transition(scene)
 
@@ -225,11 +229,43 @@ def test_loss_ends_the_generation_and_returns_a_skill_tree_scene() -> None:
     game.start_generation()  # raises if end_generation() didn't clear Game's current generation
 
 
+def test_loss_persists_the_game_and_threads_the_save_store_to_the_next_scene() -> None:
+    fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    character = Character(current_hp=5, max_hp=5)
+    generation = _generation(stats=fragile, character=character)
+    game = _game_owning(generation)
+    store = FakeSaveStore()
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=store)
+
+    next_scene = _drive_to_transition(scene)
+
+    assert isinstance(next_scene, SkillTreeScene)
+    raw = store.load()
+    assert raw is not None
+    snapshot = decode(raw, CATALOG.values())
+    assert snapshot.spores_available == game.skill_tree.spores_available
+    assert next_scene._save_store is store
+
+
+def test_win_threads_the_save_store_to_the_next_exploration_scene() -> None:
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=overwhelming)
+    game = _game_owning(generation)
+    store = FakeSaveStore()
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=store)
+
+    next_scene = _drive_to_transition(scene)
+
+    assert isinstance(next_scene, ExplorationScene)
+    assert next_scene._save_store is store
+    assert store.load() is None  # a win alone produces no SeedsMatured/SporesAwarded to persist
+
+
 @pytest.mark.parametrize("surface_size", [(64, 64), (800, 600)])
 def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
     generation = _generation()
     game = _game_owning(generation)
-    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
     scene.update(0.016)  # reach AWAITING_PLAYER_ACTION so the action menu also renders
 
     scene.draw(pygame.Surface(surface_size))

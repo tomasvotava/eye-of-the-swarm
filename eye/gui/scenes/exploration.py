@@ -12,6 +12,7 @@ import pygame.typing
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.scene import Scene
+from eye.persistence.port import SaveStore
 from eye.session.game import Game
 from eye.session.generation import Generation
 
@@ -56,10 +57,11 @@ def _describe_screen_event(event: _ScreenEvent) -> str:
 
 
 class ExplorationScene:
-    def __init__(self, generation: Generation, game: Game, atlas: SpriteAtlas) -> None:
+    def __init__(self, generation: Generation, game: Game, atlas: SpriteAtlas, save_store: SaveStore) -> None:
         self._generation = generation
         self._game = game
         self._atlas = atlas
+        self._save_store = save_store
         self._pending_action: ExplorationAction | None = None
         self._last_message = "You explore outward from the hive."
 
@@ -99,7 +101,7 @@ class ExplorationScene:
             # import without a circular import.
             from eye.gui.scenes.combat import CombatScene
 
-            return CombatScene(self._generation, self._game, encounter, self._atlas)
+            return CombatScene(self._generation, self._game, encounter, self._atlas, save_store=self._save_store)
 
         screen_event = next(
             (event for event in events if isinstance(event, EffectGranted | ResourceGranted | NothingHappened)), None
