@@ -201,11 +201,14 @@ Today, entering a screen and resolving its encounter happen on the same input �
 until you touch the thing" is currently instantaneous, one keypress calls `advance()` and the
 result is shown immediately. v2 makes that walk visible: the player character enters from the
 screen's left edge, the encounter (enemy, pickup, or empty) is visible ahead at a fixed position,
-and the player chooses when to walk toward it. `advance()` still fires exactly once, at the moment
-the player sprite reaches the encounter — the domain's mutate-on-`.advance()` contract (§6) is
-unchanged; only the frames between "screen appears" and "encounter touched" are new. The player
-cannot choose not to reach the encounter — there's no way to avoid it, only to choose when to
-arrive.
+and the player chooses when to walk toward it. `advance()` still fires exactly once per screen —
+still as early as it does today, when the screen loads, since that's the only way to know what to
+render there before the player moves a step — the domain's mutate-on-`.advance()` contract (§6) is
+unchanged. What's new is that the result is withheld from the player until their sprite reaches
+the encounter: the walk is a presentational delay between a decision already made and its reveal,
+not a trigger for it. The player cannot choose not to reach the encounter — there's no way to
+avoid it, only to choose when to arrive — so withholding the reveal doesn't change what happens,
+only when the player learns it.
 
 ### 9.2 Door choice (cosmetic tension)
 
