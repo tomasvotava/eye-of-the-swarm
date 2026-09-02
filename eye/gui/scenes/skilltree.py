@@ -1,11 +1,12 @@
-"""SkillTreeScene: the between-generations spend screen (ADR 0009, PROJECT_BRIEF.md §5.3). Lists
-every catalog node via `SkillTreeLeaf`, lets the player purchase along a cursor, and hands off to a
-fresh `ExplorationScene` once they continue -- `game.start_generation()` is what actually begins
-the next life; this scene only decides when that happens.
+"""SkillTreeScene: the between-generations spend screen (ADR 0009, PROJECT_BRIEF.md §5.3). Lays
+out the catalog as a grid -- one row per (branch, sub_branch), tiers left to right within a row --
+and lets the player purchase along a 2D cursor before continuing. `game.start_generation()` is
+what actually begins the next life; this scene only decides when that happens.
 """
 
 from collections.abc import Callable
 from enum import Enum, auto
+from itertools import groupby
 
 import pygame
 import pygame.typing
@@ -13,23 +14,35 @@ import pygame.typing
 from eye.gui.assets import SpriteAtlas
 from eye.gui.scene import Scene
 from eye.gui.scenes.exploration import ExplorationScene
-from eye.gui.widgets import SkillTreeLeaf, TextSkillTreeLeaf
+from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, TextSkillTreeLeaf
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
+from eye.skilltree.state import SkillTree
 from eye.skilltree.tree import SkillNode
 
 _FONT_SIZE = 20
-_ROW_HEIGHT = 24
+_ROW_LABEL_WIDTH = 160
+_CELL_WIDTH = 170
+_ROW_HEIGHT = 28
+_ROW_GAP = 6
+_BRANCH_GAP = 16  # extra vertical gap where a row's branch differs from the previous row's
 _MARGIN = 8
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _CURSOR_COLOR: pygame.typing.ColorLike = "slategray"
 
+# Rows in catalog order, each row already tier-ordered: one row per (branch, sub_branch), grouped
+# rather than assumed-fixed-width, since a row's tier count is a catalog fact, not a layout one.
 _NODES: tuple[SkillNode, ...] = tuple(
     sorted(CATALOG.values(), key=lambda node: (node.id.branch.name, node.id.sub_branch.name, node.id.tier))
+)
+_ROWS: tuple[tuple[SkillNode, ...], ...] = tuple(
+    tuple(group) for _, group in groupby(_NODES, key=lambda node: (node.id.branch, node.id.sub_branch))
 )
 
 
 class SkillTreeAction(Enum):
+    MOVE_LEFT = auto()
+    MOVE_RIGHT = auto()
     MOVE_UP = auto()
     MOVE_DOWN = auto()
     PURCHASE = auto()
@@ -38,6 +51,8 @@ class SkillTreeAction(Enum):
 
 # pygame key -> SkillTreeAction. Edit this mapping to reassign controls.
 KEY_ACTIONS: dict[int, SkillTreeAction] = {
+    pygame.K_LEFT: SkillTreeAction.MOVE_LEFT,
+    pygame.K_RIGHT: SkillTreeAction.MOVE_RIGHT,
     pygame.K_UP: SkillTreeAction.MOVE_UP,
     pygame.K_DOWN: SkillTreeAction.MOVE_DOWN,
     pygame.K_RETURN: SkillTreeAction.PURCHASE,
@@ -57,6 +72,18 @@ def _get_font() -> pygame.font.Font:
     return _font
 
 
+def _node_state(skill_tree: SkillTree, node: SkillNode) -> SkillNodeState:
+    if skill_tree.is_purchased(node.id):
+        return SkillNodeState.PURCHASED
+    if skill_tree.can_purchase(node):
+        return SkillNodeState.AVAILABLE
+    return SkillNodeState.LOCKED
+
+
+def _row_label(node: SkillNode) -> str:
+    return f"{node.id.branch.name.title()} / {node.id.sub_branch.name.title()}"
+
+
 class SkillTreeScene:
     def __init__(
         self,
@@ -67,7 +94,8 @@ class SkillTreeScene:
         self._game = game
         self._atlas = atlas
         self._leaf = leaf_factory()
-        self._cursor = 0
+        self._row = 0
+        self._col = 0
         self._pending_action: SkillTreeAction | None = None
         self._last_message = "Spend spores before the next generation begins."
 
@@ -84,18 +112,26 @@ class SkillTreeScene:
         action = self._pending_action
         self._pending_action = None
 
-        if action is SkillTreeAction.MOVE_UP:
-            self._cursor = (self._cursor - 1) % len(_NODES)
+        if action is SkillTreeAction.MOVE_LEFT:
+            self._col = (self._col - 1) % len(_ROWS[self._row])
+        elif action is SkillTreeAction.MOVE_RIGHT:
+            self._col = (self._col + 1) % len(_ROWS[self._row])
+        elif action is SkillTreeAction.MOVE_UP:
+            self._move_row(-1)
         elif action is SkillTreeAction.MOVE_DOWN:
-            self._cursor = (self._cursor + 1) % len(_NODES)
+            self._move_row(1)
         elif action is SkillTreeAction.PURCHASE:
             self._handle_purchase()
         elif action is SkillTreeAction.CONTINUE:
             return self._handle_continue()
         return None
 
+    def _move_row(self, delta: int) -> None:
+        self._row = (self._row + delta) % len(_ROWS)
+        self._col = min(self._col, len(_ROWS[self._row]) - 1)
+
     def _handle_purchase(self) -> None:
-        node = _NODES[self._cursor]
+        node = _ROWS[self._row][self._col]
         try:
             self._game.skill_tree.purchase(node)
         except RuntimeError as exc:
@@ -109,25 +145,33 @@ class SkillTreeScene:
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
-        self._draw_nodes(surface)
+        self._draw_grid(surface)
         self._draw_hud(surface)
 
-    def _draw_nodes(self, surface: pygame.Surface) -> None:
+    def _draw_grid(self, surface: pygame.Surface) -> None:
         skill_tree = self._game.skill_tree
-        row_width = surface.get_width() - 2 * _MARGIN
-        for index, node in enumerate(_NODES):
-            rect = pygame.Rect(_MARGIN, _MARGIN + index * _ROW_HEIGHT, row_width, _ROW_HEIGHT)
-            if index == self._cursor:
-                pygame.draw.rect(surface, _CURSOR_COLOR, rect)
-            locked = not (skill_tree.is_purchased(node.id) or skill_tree.can_purchase(node))
-            self._leaf.render(surface, rect, node, locked)
+        font = _get_font()
+        top = _MARGIN
+        previous_branch = None
+        for row_index, row in enumerate(_ROWS):
+            branch = row[0].id.branch
+            if previous_branch is not None and branch is not previous_branch:
+                top += _BRANCH_GAP
+            surface.blit(font.render(_row_label(row[0]), True, _TEXT_COLOR), (_MARGIN, top))
+            for col_index, node in enumerate(row):
+                rect = pygame.Rect(_MARGIN + _ROW_LABEL_WIDTH + col_index * _CELL_WIDTH, top, _CELL_WIDTH, _ROW_HEIGHT)
+                if row_index == self._row and col_index == self._col:
+                    pygame.draw.rect(surface, _CURSOR_COLOR, rect)
+                self._leaf.render(surface, rect, node, _node_state(skill_tree, node))
+            top += _ROW_HEIGHT + _ROW_GAP
+            previous_branch = branch
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
         font = _get_font()
         lines = [
             f"Spores available: {self._game.skill_tree.spores_available}",
             self._last_message,
-            "Up/Down: select   Enter/Space: purchase   C: continue",
+            "Left/Right: tier   Up/Down: sub-branch   Enter/Space: purchase   C: continue",
         ]
         top = surface.get_height() - len(lines) * _FONT_SIZE - _MARGIN
         for index, line in enumerate(lines):
