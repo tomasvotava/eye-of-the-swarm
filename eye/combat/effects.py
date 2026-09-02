@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -29,6 +30,30 @@ class EffectName(Enum):
     WILTY = auto()
     VEGETATIVE = auto()
     RESONANCE = auto()
+
+
+class EffectPolarity(Enum):
+    BUFF = auto()
+    DEBUFF = auto()
+
+
+# PROJECT_BRIEF.md §5.6 labels every effect as a buff or a debuff; this is that classification
+# encoded once as domain data, shared by every consumer rather than duplicated per caller.
+EFFECT_POLARITY: Mapping[EffectName, EffectPolarity] = {
+    EffectName.TOXICITY: EffectPolarity.DEBUFF,
+    EffectName.NOURISHED: EffectPolarity.BUFF,
+    EffectName.CLOUDED_JUDGEMENT: EffectPolarity.DEBUFF,
+    EffectName.LIGNEOUS_PERIDERM: EffectPolarity.BUFF,
+    EffectName.SPLINTERED: EffectPolarity.DEBUFF,
+    EffectName.SPIKY_SKIN: EffectPolarity.BUFF,
+    EffectName.ADRENALINE: EffectPolarity.BUFF,
+    EffectName.FIBROUS: EffectPolarity.BUFF,
+    EffectName.RUNT: EffectPolarity.DEBUFF,
+    EffectName.UPROOTED: EffectPolarity.BUFF,
+    EffectName.WILTY: EffectPolarity.DEBUFF,
+    EffectName.VEGETATIVE: EffectPolarity.DEBUFF,
+    EffectName.RESONANCE: EffectPolarity.BUFF,
+}
 
 
 # Trigger-type effects (Toxicity, Nourished, Spiky Skin, Adrenaline, Clouded Judgement,

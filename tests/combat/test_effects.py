@@ -1,4 +1,11 @@
-from eye.combat.effects import ActiveEffect, EffectCategory, EffectName, EffectRegistry
+from eye.combat.effects import (
+    EFFECT_POLARITY,
+    ActiveEffect,
+    EffectCategory,
+    EffectName,
+    EffectPolarity,
+    EffectRegistry,
+)
 from eye.combat.stats import Stat
 from eye.combat.tuning import FIBROUS_ATTACK_MAGNITUDE
 
@@ -142,3 +149,12 @@ def test_clear_battle_effects_returns_the_cleared_effect_names() -> None:
     cleared = registry.clear_battle_effects()
 
     assert cleared == [EffectName.RUNT]
+
+
+def test_effect_polarity_has_an_entry_for_every_effect_name() -> None:
+    assert set(EFFECT_POLARITY) == set(EffectName)
+
+
+def test_effect_polarity_classifies_a_known_buff_and_debuff() -> None:
+    assert EFFECT_POLARITY[EffectName.FIBROUS] is EffectPolarity.BUFF
+    assert EFFECT_POLARITY[EffectName.TOXICITY] is EffectPolarity.DEBUFF
