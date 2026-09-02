@@ -1,10 +1,9 @@
-"""CombatScene: the first real consumer of `Battle.turn_phase` (ADR 0008/0009). Drives a battle
-one phase at a time from `update()`, mirroring the TUI's `play_battle` precedent but through the
-non-blocking query/resolve seam instead of a blocking loop: `AWAITING_QUERY` and
-`AWAITING_ENEMY_TURN` resolve automatically frame by frame, `AWAITING_PLAYER_ACTION` waits for a
-numbered-key press (mirroring the TUI's numbered-menu convention). On `battle.is_over`, hands off
-to a fresh `ExplorationScene` on a win or a `SkillTreeScene` on death, per PROJECT_BRIEF.md's
-generational-handoff framing (§4).
+"""CombatScene: the first real consumer of `Battle.turn_phase` (ADR 0008/0009). A frame-based main
+loop can't block on player input the way the TUI's `play_battle` does, so `update()` drives
+whatever step `battle.turn_phase` is ready for on each call -- resolving automatic steps on its
+own and surfacing a numbered action menu only once the player actually needs to choose. On
+`battle.is_over`, hands off to a fresh `ExplorationScene` on a win or a `SkillTreeScene` on death,
+per PROJECT_BRIEF.md's generational-handoff framing (§4).
 """
 
 from collections import deque
