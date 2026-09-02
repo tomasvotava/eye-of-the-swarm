@@ -1,11 +1,12 @@
-import os
-
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+from collections.abc import Iterator
 
 import pygame
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def _pygame_display() -> None:
-    pygame.display.init()
+@pytest.fixture(scope="session", autouse=True)
+def _headless_pygame_display() -> Iterator[None]:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+        pygame.display.init()
+        yield
