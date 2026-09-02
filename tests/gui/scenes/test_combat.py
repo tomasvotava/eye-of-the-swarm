@@ -13,9 +13,8 @@ from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
 from eye.exploration.encounters import EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
 from eye.gui.assets import SpriteKey, build_placeholder_atlas
+from eye.gui.scene import EnterExploration, EnterSkillTree, SceneTransition
 from eye.gui.scenes.combat import ACTION_KEYS, CombatScene, _resolve_enemy_sprite_key
-from eye.gui.scenes.exploration import ExplorationScene
-from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.persistence.codec import decode
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -62,12 +61,11 @@ def _press(scene: CombatScene, key: int) -> None:
     scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=key))
 
 
-def _drive_to_transition(scene: CombatScene, max_frames: int = 200) -> ExplorationScene | SkillTreeScene:
+def _drive_to_transition(scene: CombatScene, max_frames: int = 200) -> SceneTransition:
     for _ in range(max_frames):
         _press(scene, ACTION_KEYS[0])
         result = scene.update(0.016)
         if result is not None:
-            assert isinstance(result, ExplorationScene | SkillTreeScene)
             return result
     raise AssertionError("battle did not conclude within max_frames")
 
@@ -201,20 +199,22 @@ def test_update_resolves_automatic_phases_without_input() -> None:
     assert scene._battle.turn_phase is TurnPhase.AWAITING_PLAYER_ACTION
 
 
-def test_win_finishes_the_battle_and_returns_a_fresh_exploration_scene() -> None:
+def test_win_finishes_the_battle_and_returns_an_enter_exploration_transition() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
     game = _game_owning(generation)
     scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=FakeSaveStore())
 
-    next_scene = _drive_to_transition(scene)
+    transition = _drive_to_transition(scene)
 
-    assert isinstance(next_scene, ExplorationScene)
+    assert isinstance(transition, EnterExploration)
+    assert transition.generation is generation
+    assert transition.game is game
     assert generation.died is False
     assert generation.spores_gained == BESTIARY[Strain.BRAMBLE].spore_award
 
 
-def test_loss_ends_the_generation_and_returns_a_skill_tree_scene() -> None:
+def test_loss_ends_the_generation_and_returns_an_enter_skill_tree_transition() -> None:
     fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     character = Character(current_hp=5, max_hp=5)
     generation = _generation(stats=fragile, character=character)
@@ -222,14 +222,15 @@ def test_loss_ends_the_generation_and_returns_a_skill_tree_scene() -> None:
     store = FakeSaveStore()
     scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=store)
 
-    next_scene = _drive_to_transition(scene)
+    transition = _drive_to_transition(scene)
 
-    assert isinstance(next_scene, SkillTreeScene)
+    assert isinstance(transition, EnterSkillTree)
+    assert transition.game is game
     assert generation.died is True
     game.start_generation()  # raises if end_generation() didn't clear Game's current generation
 
 
-def test_loss_persists_the_game_and_threads_the_save_store_to_the_next_scene() -> None:
+def test_loss_persists_the_game_before_returning_the_transition() -> None:
     fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     character = Character(current_hp=5, max_hp=5)
     generation = _generation(stats=fragile, character=character)
@@ -237,27 +238,25 @@ def test_loss_persists_the_game_and_threads_the_save_store_to_the_next_scene() -
     store = FakeSaveStore()
     scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=store)
 
-    next_scene = _drive_to_transition(scene)
+    transition = _drive_to_transition(scene)
 
-    assert isinstance(next_scene, SkillTreeScene)
+    assert isinstance(transition, EnterSkillTree)
     raw = store.load()
     assert raw is not None
     snapshot = decode(raw, CATALOG.values())
     assert snapshot.spores_available == game.skill_tree.spores_available
-    assert next_scene._save_store is store
 
 
-def test_win_threads_the_save_store_to_the_next_exploration_scene() -> None:
+def test_win_alone_does_not_persist() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
     game = _game_owning(generation)
     store = FakeSaveStore()
     scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas(), save_store=store)
 
-    next_scene = _drive_to_transition(scene)
+    transition = _drive_to_transition(scene)
 
-    assert isinstance(next_scene, ExplorationScene)
-    assert next_scene._save_store is store
+    assert isinstance(transition, EnterExploration)
     assert store.load() is None  # a win alone produces no SeedsMatured/SporesAwarded to persist
 
 

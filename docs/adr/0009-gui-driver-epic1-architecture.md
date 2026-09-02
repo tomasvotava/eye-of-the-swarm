@@ -52,19 +52,38 @@ wiring, the same way the TUI wired it via `platformdirs`.
     app.py               # window/clock, main loop, scene switching
   ```
   Each `Scene` implements a small protocol: `handle_pygame_event(pygame_event) -> None`,
-  `update(dt) -> Scene | None`, `draw(surface) -> None` — named `handle_pygame_event`/`pygame_event`
-  rather than `handle_event`/`event` so a scene body isn't reading both a `pygame.event.Event` and
-  a domain `...Event` (`ExplorationEvent`, `SessionEvent`, `BattleEvent`, ...) under the same
-  unqualified name. `update()` returns the next `Scene` to
-  switch to, already constructed, or `None` to stay — this is how a scene signals a transition;
-  there's no separate callback or shared mutable "pending transition" field. `app.py` owns the
-  pygame window and clock, the async main loop, and a single "current scene" reference: each frame
-  it calls `current_scene.update(dt)` and, if the result isn't `None`, replaces `current_scene`
-  with it before drawing. No generic scene stack — nesting never goes deeper than one level:
-  `ExplorationScene.update()` returns a `CombatScene` on `EnemyEncountered`; `CombatScene.update()`
-  returns a fresh `ExplorationScene` once the battle is resolved and the generation survived, or a
-  `SkillTreeScene` if it didn't (see below); `SkillTreeScene.update()` returns a fresh
-  `ExplorationScene` once `game.start_generation()` starts the next life.
+  `update(dt) -> SceneTransition | None`, `draw(surface) -> None` — named `handle_pygame_event`/
+  `pygame_event` rather than `handle_event`/`event` so a scene body isn't reading both a
+  `pygame.event.Event` and a domain `...Event` (`ExplorationEvent`, `SessionEvent`, `BattleEvent`,
+  ...) under the same unqualified name. No generic scene stack — nesting never goes deeper than
+  one level: exploration hands off to combat on `EnemyEncountered`; combat hands off to a fresh
+  exploration once the battle is resolved and the generation survived, or to the skill tree if it
+  didn't (see below); the skill tree hands off to a fresh exploration once
+  `game.start_generation()` starts the next life.
+  - **`update()` returns a transition request, not a constructed `Scene`.** `SceneTransition`
+    (`eye/gui/scene.py`, alongside the `Scene` protocol — that module imports no concrete scene,
+    so it can't take part in an import cycle) is a closed union of small frozen dataclasses named
+    for the target and carrying only the domain data that target genuinely needs beyond common
+    infrastructure: `EnterCombat(generation, game, encounter)`, `EnterExploration(generation,
+    game)`, `EnterSkillTree(game)`. A scene that decides to transition returns one of these instead
+    of importing and constructing its sibling scene's class directly. `app.py` is the only module
+    that imports every concrete `Scene` implementation; its `_resolve_transition()` pattern-matches
+    the request's type and constructs the corresponding scene. This replaced an earlier design
+    (this ADR's original text) where `update()` returned the next `Scene` already constructed,
+    which required `exploration.py` and `combat.py` to import each other to build one another's
+    scene — a real cycle, broken only by a function-local deferred import — and forced every scene
+    to know its every possible target's full constructor, not just what the transition needs.
+    Raised in PR #135's review and resolved under issue #136.
+  - **`app.py` owns the pygame window/clock, the async main loop, a single "current scene"
+    reference, and now also the `SpriteAtlas` and `SaveStore` instances, injecting them into
+    whatever scene `_resolve_transition()` constructs.** Each frame it calls `current_scene.update(dt)`
+    and, if the result isn't `None`, resolves it into a new scene before drawing. Individual scenes
+    still take `atlas`/`save_store` as constructor parameters (DI, same convention as below) when
+    they use them directly — `atlas` in every scene (for `draw()`), `save_store` only in scenes
+    that call `save.persist()` themselves (`CombatScene` on a death, `SkillTreeScene` on a
+    purchase) — but no scene holds `save_store` merely to pass it to the next one; that was the
+    smell in the original design, where e.g. `ExplorationScene` carried a `save_store` it never
+    used, solely to thread it into the `CombatScene` it built.
 - **`save.py` mirrors `eye/tui/save.py`**: `default_save_store()` plus `platformdirs` for the
   desktop path, no path needed under emscripten. Same trigger policy as the TUI — persist after
   every event that changes cross-generation state (`SessionEvent`s `SeedsMatured`/`SporesAwarded`,
@@ -120,11 +139,11 @@ wiring, the same way the TUI wired it via `platformdirs`.
   - awaiting the enemy's turn → call `battle.resolve_enemy_turn()` automatically, no input needed.
   - `battle.is_over` → call `generation.finish_battle(battle)`, then branch on
     `generation.died` (the only path to 0 HP is combat, per ADR 0004 — exploration only heals):
-    if `False`, return a fresh `ExplorationScene`; if `True`, call `game.end_generation(generation)`
-    and return a `SkillTreeScene` instead — mirroring the TUI's `_play_generation`, which routes a
-    dead generation straight to the skill-tree menu rather than back into exploration. Returning to
-    `ExplorationScene` unconditionally here would soft-lock on a dead character, since
-    `Generation.advance()` returns `[]` once `died` is true.
+    if `False`, return an `EnterExploration` transition request; if `True`, call
+    `game.end_generation(generation)` and return `EnterSkillTree` instead — mirroring the TUI's
+    `_play_generation`, which routes a dead generation straight to the skill-tree menu rather than
+    back into exploration. Requesting `EnterExploration` unconditionally here would soft-lock on a
+    dead character, since `Generation.advance()` returns `[]` once `died` is true.
 - **Input is keyboard-only for this Epic** — number/arrow keys select menu entries, mirroring the
   TUI's numbered-menu precedent. Mouse/click support is deferred, not blocking, and isolated
   entirely inside each scene's `handle_pygame_event()`, so adding it later touches no other scene

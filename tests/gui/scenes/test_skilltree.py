@@ -4,7 +4,7 @@ import pygame
 import pytest
 
 from eye.gui.assets import build_placeholder_atlas
-from eye.gui.scenes.exploration import ExplorationScene
+from eye.gui.scene import EnterExploration
 from eye.gui.scenes.skilltree import _ROWS, KEY_ACTIONS, SkillTreeAction, SkillTreeScene, _node_state
 from eye.gui.widgets import SkillNodeState
 from eye.persistence.codec import decode
@@ -165,25 +165,24 @@ def test_move_up_from_the_first_row_wraps_to_the_last_and_back() -> None:
     assert game.skill_tree.is_purchased(node.id)
 
 
-def test_continue_action_starts_a_new_generation_and_returns_an_exploration_scene() -> None:
+def test_continue_action_starts_a_new_generation_and_returns_an_enter_exploration_transition() -> None:
     scene, game = _scene()
 
     _press(scene, pygame.K_c)
-    next_scene = scene.update(0.016)
+    transition = scene.update(0.016)
 
-    assert isinstance(next_scene, ExplorationScene)
+    assert isinstance(transition, EnterExploration)
+    assert transition.game is game
     assert game.matured_turf_positions == ()
 
 
-def test_continue_action_threads_the_save_store_to_the_next_scene() -> None:
+def test_continue_action_alone_does_not_persist() -> None:
     store = FakeSaveStore()
     scene, _ = _scene(save_store=store)
 
     _press(scene, pygame.K_c)
-    next_scene = scene.update(0.016)
+    scene.update(0.016)
 
-    assert isinstance(next_scene, ExplorationScene)
-    assert next_scene._save_store is store
     assert store.load() is None  # starting a new generation alone produces no NodePurchased to persist
 
 

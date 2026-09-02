@@ -4,25 +4,22 @@ import pygame
 import pytest
 
 from eye.exploration.encounters import EncounterKind
+from eye.exploration.events import EnemyEncountered
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.gui.assets import build_placeholder_atlas
-from eye.gui.scenes.combat import CombatScene
+from eye.gui.scene import EnterCombat
 from eye.gui.scenes.exploration import KEY_ACTIONS, ExplorationAction, ExplorationScene
 from eye.session.game import Game
 from eye.session.generation import Generation
-from tests.persistence.doubles import FakeSaveStore
 from tests.session.doubles import ScriptedEncounterRandom
 
 _ADVANCES_TO_READY_SEED = int(SEED_GROWTH_THRESHOLD // SEED_GROWTH_RATE_CAP)
 
 
-def _scene(
-    kind_queue: Sequence[EncounterKind] = (), save_store: FakeSaveStore | None = None
-) -> tuple[ExplorationScene, Generation]:
+def _scene(kind_queue: Sequence[EncounterKind] = ()) -> tuple[ExplorationScene, Generation]:
     game = Game(ScriptedEncounterRandom(kind_queue))
     generation = game.start_generation()
-    store = save_store if save_store is not None else FakeSaveStore()
-    return ExplorationScene(generation, game, build_placeholder_atlas(), save_store=store), generation
+    return ExplorationScene(generation, game, build_placeholder_atlas()), generation
 
 
 def _press(scene: ExplorationScene, key: int) -> None:
@@ -93,15 +90,17 @@ def test_plant_seed_action_plants_once_the_seed_is_ready() -> None:
     assert generation.pending_seeds != ()
 
 
-def test_advance_action_threads_the_save_store_to_a_combat_scene_on_encounter() -> None:
-    store = FakeSaveStore()
-    scene, _ = _scene([EncounterKind.ENEMY], save_store=store)
+def test_advance_action_returns_an_enter_combat_transition_on_encounter() -> None:
+    scene, generation = _scene([EncounterKind.ENEMY])
+    game = scene._game
 
     _press(scene, pygame.K_SPACE)
-    next_scene = scene.update(0.016)
+    transition = scene.update(0.016)
 
-    assert isinstance(next_scene, CombatScene)
-    assert next_scene._save_store is store
+    assert isinstance(transition, EnterCombat)
+    assert transition.generation is generation
+    assert transition.game is game
+    assert isinstance(transition.encounter, EnemyEncountered)
 
 
 @pytest.mark.parametrize("surface_size", [(64, 64), (800, 600)])

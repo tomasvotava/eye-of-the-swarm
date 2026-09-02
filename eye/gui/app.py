@@ -1,19 +1,25 @@
 """app.py: window/clock owner and the async main loop (ADR 0009). `App` holds a single
-current-`Scene` reference, swapped from each frame's `update()` return value, and `run()` wraps it
-in a `while running: ... await asyncio.sleep(0)` loop so the same code runs unmodified under
-pygbag's cooperative scheduler.
+current-`Scene` reference, swapped by resolving each frame's `update()` return value, and `run()`
+wraps it in a `while running: ... await asyncio.sleep(0)` loop so the same code runs unmodified
+under pygbag's cooperative scheduler. It's also the composition root for the GUI layer (ADR 0009):
+the only module that imports every concrete `Scene` implementation, so no scene module needs to
+import another -- and the owner of the `SpriteAtlas`/`SaveStore` instances every scene is built
+with, so no scene threads `save_store` to a sibling it doesn't otherwise need.
 """
 
 import asyncio
 import os
 import random
+from typing import assert_never
 
 import pygame
 
 from eye.gui.assets import build_placeholder_atlas
-from eye.gui.scene import Scene
+from eye.gui.scene import EnterCombat, EnterExploration, EnterSkillTree, Scene, SceneTransition
+from eye.gui.scenes.combat import CombatScene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
 from eye.gui.scenes.exploration import ExplorationScene
+from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.persistence import save
 from eye.persistence.port import SaveStore
 
@@ -46,12 +52,13 @@ class App:
     ) -> None:
         self._screen = screen
         self._clock = clock
-        atlas = build_placeholder_atlas()
+        self._atlas = build_placeholder_atlas()
+        self._save_store = save_store
         if dev_asset_viewer:
-            self._scene: Scene = DevAssetViewerScene(atlas)
+            self._scene: Scene = DevAssetViewerScene(self._atlas)
         else:
             game = save.load_or_new(rng, save_store)
-            self._scene = ExplorationScene(game.start_generation(), game, atlas, save_store=save_store)
+            self._scene = ExplorationScene(game.start_generation(), game, self._atlas)
         self._running = True
 
     @property
@@ -69,10 +76,21 @@ class App:
         self._scene.handle_pygame_event(event)
 
     def step(self, dt: float) -> None:
-        next_scene = self._scene.update(dt)
-        if next_scene is not None:
-            self._scene = next_scene
+        transition = self._scene.update(dt)
+        if transition is not None:
+            self._scene = self._resolve_transition(transition)
         self._scene.draw(self._screen)
+
+    def _resolve_transition(self, transition: SceneTransition) -> Scene:
+        match transition:
+            case EnterCombat(generation=generation, game=game, encounter=encounter):
+                return CombatScene(generation, game, encounter, self._atlas, save_store=self._save_store)
+            case EnterExploration(generation=generation, game=game):
+                return ExplorationScene(generation, game, self._atlas)
+            case EnterSkillTree(game=game):
+                return SkillTreeScene(game, self._atlas, save_store=self._save_store)
+            case _:
+                assert_never(transition)
 
     def tick(self) -> float:
         return self._clock.tick(_MAX_FPS) / 1000

@@ -12,8 +12,7 @@ import pygame
 import pygame.typing
 
 from eye.gui.assets import SpriteAtlas
-from eye.gui.scene import Scene
-from eye.gui.scenes.exploration import ExplorationScene
+from eye.gui.scene import EnterExploration, SceneTransition
 from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, TextSkillTreeLeaf
 from eye.persistence import save
 from eye.persistence.port import SaveStore
@@ -110,7 +109,7 @@ class SkillTreeScene:
         if action is not None:
             self._pending_action = action
 
-    def update(self, dt: float) -> Scene | None:
+    def update(self, dt: float) -> SceneTransition | None:
         if self._pending_action is None:
             return None
         action = self._pending_action
@@ -144,9 +143,9 @@ class SkillTreeScene:
         save.persist(self._game, self._save_store)
         self._last_message = f"Purchased {node.name or node.id}."
 
-    def _handle_continue(self) -> Scene:
+    def _handle_continue(self) -> SceneTransition:
         generation = self._game.start_generation()
-        return ExplorationScene(generation, self._game, self._atlas, save_store=self._save_store)
+        return EnterExploration(generation=generation, game=self._game)
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")

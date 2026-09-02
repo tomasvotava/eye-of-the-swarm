@@ -1,6 +1,8 @@
 import pygame
 
-from eye.gui.scene import Scene
+from eye.gui.scene import EnterSkillTree, Scene, SceneTransition
+from eye.session.game import Game
+from tests.session.doubles import ScriptedEncounterRandom
 
 
 class _StubScene:
@@ -11,7 +13,7 @@ class _StubScene:
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         self.handled_pygame_events.append(pygame_event)
 
-    def update(self, dt: float) -> Scene | None:
+    def update(self, dt: float) -> SceneTransition | None:
         self.updates.append(dt)
         return None
 
@@ -35,13 +37,13 @@ def test_stub_scene_satisfies_scene_protocol() -> None:
 
 def test_update_can_signal_a_scene_transition() -> None:
     class _TransitioningScene(_StubScene):
-        def update(self, dt: float) -> Scene | None:
+        def update(self, dt: float) -> SceneTransition | None:
             super().update(dt)
-            return _StubScene()
+            return EnterSkillTree(game=Game(ScriptedEncounterRandom(())))
 
-    next_scene = _TransitioningScene().update(0.016)
+    next_transition = _TransitioningScene().update(0.016)
 
-    assert isinstance(next_scene, _StubScene)
+    assert isinstance(next_transition, EnterSkillTree)
 
 
 def test_headless_surface_construction() -> None:

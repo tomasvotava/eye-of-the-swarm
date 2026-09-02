@@ -10,7 +10,7 @@ import pygame
 import pygame.typing
 
 from eye.gui.assets import SpriteAtlas, SpriteKey
-from eye.gui.scene import Scene
+from eye.gui.scene import SceneTransition
 
 _FONT_SIZE = 20
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
@@ -60,7 +60,7 @@ class DevAssetViewerScene:
         if action is not None:
             self._pending_action = action
 
-    def update(self, dt: float) -> Scene | None:
+    def update(self, dt: float) -> SceneTransition | None:
         if self._pending_action is None:
             return None
         action = self._pending_action

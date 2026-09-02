@@ -1,7 +1,8 @@
 """ExplorationScene: the screen-by-screen driver for the Seed/Turf loop (ADR 0009,
 PROJECT_BRIEF.md §6). Advances `Generation.advance()` on keypress, offers `plant_seed()` once the
-current Seed is ready, and hands off to a `CombatScene` the moment an `EnemyEncountered` event
-surfaces -- the only trigger among those in `eye.exploration.encounters` that needs its own screen.
+current Seed is ready, and requests an `EnterCombat` transition the moment an `EnemyEncountered`
+event surfaces -- the only trigger among those in `eye.exploration.encounters` that needs its own
+screen.
 """
 
 from enum import Enum, auto
@@ -11,8 +12,7 @@ import pygame.typing
 
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.assets import SpriteAtlas, SpriteKey
-from eye.gui.scene import Scene
-from eye.persistence.port import SaveStore
+from eye.gui.scene import EnterCombat, SceneTransition
 from eye.session.game import Game
 from eye.session.generation import Generation
 
@@ -57,11 +57,10 @@ def _describe_screen_event(event: _ScreenEvent) -> str:
 
 
 class ExplorationScene:
-    def __init__(self, generation: Generation, game: Game, atlas: SpriteAtlas, save_store: SaveStore) -> None:
+    def __init__(self, generation: Generation, game: Game, atlas: SpriteAtlas) -> None:
         self._generation = generation
         self._game = game
         self._atlas = atlas
-        self._save_store = save_store
         self._pending_action: ExplorationAction | None = None
         self._last_message = "You explore outward from the hive."
 
@@ -72,7 +71,7 @@ class ExplorationScene:
         if action is not None:
             self._pending_action = action
 
-    def update(self, dt: float) -> Scene | None:
+    def update(self, dt: float) -> SceneTransition | None:
         if self._pending_action is None:
             return None
         action = self._pending_action
@@ -91,17 +90,12 @@ class ExplorationScene:
         if planted is not None:
             self._last_message = f"You plant a seed at screen {planted.position}."
 
-    def _handle_advance(self) -> Scene | None:
+    def _handle_advance(self) -> SceneTransition | None:
         events = self._generation.advance()
 
         encounter = next((event for event in events if isinstance(event, EnemyEncountered)), None)
         if encounter is not None:
-            # Deferred import: ExplorationScene and CombatScene reference each other (ADR 0009 --
-            # combat returns a fresh ExplorationScene on a win), so this can't be a module-level
-            # import without a circular import.
-            from eye.gui.scenes.combat import CombatScene
-
-            return CombatScene(self._generation, self._game, encounter, self._atlas, save_store=self._save_store)
+            return EnterCombat(generation=self._generation, game=self._game, encounter=encounter)
 
         screen_event = next(
             (event for event in events if isinstance(event, EffectGranted | ResourceGranted | NothingHappened)), None

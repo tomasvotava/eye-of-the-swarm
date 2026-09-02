@@ -2,7 +2,7 @@
 loop can't block on player input the way the TUI's `play_battle` does, so `update()` drives
 whatever step `battle.turn_phase` is ready for on each call -- resolving automatic steps on its
 own and surfacing an action menu only once the player actually needs to choose. On
-`battle.is_over`, hands off to a fresh `ExplorationScene` on a win or a `SkillTreeScene` on death,
+`battle.is_over`, requests an `EnterExploration` transition on a win or `EnterSkillTree` on death,
 per PROJECT_BRIEF.md's generational-handoff framing (§4).
 """
 
@@ -37,9 +37,7 @@ from eye.combat.events import (
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.assets import SpriteAtlas, SpriteKey
-from eye.gui.scene import Scene
-from eye.gui.scenes.exploration import ExplorationScene
-from eye.gui.scenes.skilltree import SkillTreeScene
+from eye.gui.scene import EnterExploration, EnterSkillTree, SceneTransition
 from eye.gui.widgets import BuffIcon, TextBuffIcon
 from eye.persistence import save
 from eye.persistence.port import SaveStore
@@ -187,7 +185,7 @@ class CombatScene:
         elif pygame_event.key == pygame.K_RETURN:
             self._pending_action_index = self._cursor_index
 
-    def update(self, dt: float) -> Scene | None:
+    def update(self, dt: float) -> SceneTransition | None:
         if self._battle.is_over:
             return self._conclude()
         phase = self._battle.turn_phase
@@ -216,13 +214,13 @@ class CombatScene:
         self._pending_action_index = None
         self._record(self._battle.resolve_player_turn(action))
 
-    def _conclude(self) -> Scene:
+    def _conclude(self) -> SceneTransition:
         self._generation.finish_battle(self._battle)
         if not self._generation.died:
-            return ExplorationScene(self._generation, self._game, self._atlas, save_store=self._save_store)
+            return EnterExploration(generation=self._generation, game=self._game)
         self._game.end_generation(self._generation)
         save.persist(self._game, self._save_store)
-        return SkillTreeScene(self._game, self._atlas, save_store=self._save_store)
+        return EnterSkillTree(game=self._game)
 
     def _record(self, events: Sequence[BattleEvent]) -> None:
         for event in events:

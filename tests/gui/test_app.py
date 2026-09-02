@@ -1,9 +1,14 @@
 import pygame
 import pytest
 
+from eye.exploration.encounters import EncounterKind
+from eye.exploration.events import EnemyEncountered
 from eye.gui.app import _DEV_ASSET_VIEWER_ENV_VAR, App, _dev_asset_viewer_requested
+from eye.gui.scene import EnterCombat, EnterExploration, EnterSkillTree, SceneTransition
+from eye.gui.scenes.combat import CombatScene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
 from eye.gui.scenes.exploration import ExplorationScene
+from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.persistence.codec import encode
 from eye.session.game import Game
 from tests.persistence.doubles import FakeSaveStore
@@ -15,14 +20,14 @@ class _StubScene:
         self.handled_pygame_events: list[pygame.event.Event] = []
         self.updates: list[float] = []
         self.drawn = False
-        self.next_scene: _StubScene | None = None
+        self.next_transition: SceneTransition | None = None
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         self.handled_pygame_events.append(pygame_event)
 
-    def update(self, dt: float) -> _StubScene | None:
+    def update(self, dt: float) -> SceneTransition | None:
         self.updates.append(dt)
-        return self.next_scene
+        return self.next_transition
 
     def draw(self, surface: pygame.Surface) -> None:
         self.drawn = True
@@ -101,16 +106,54 @@ def test_step_draws_the_scene_and_stays_on_it_when_update_returns_none() -> None
     assert app.scene is stub
 
 
-def test_step_swaps_to_the_scene_returned_by_update() -> None:
+def test_step_resolves_a_returned_transition_into_the_matching_scene() -> None:
     app = _app()
     stub = _StubScene()
-    stub.next_scene = _StubScene()
+    game = Game(ScriptedEncounterRandom(()))
+    stub.next_transition = EnterSkillTree(game=game)
     app._scene = stub
 
     app.step(0.016)
 
-    assert app.scene is stub.next_scene
-    assert app.scene.drawn
+    assert isinstance(app.scene, SkillTreeScene)
+
+
+def test_resolve_transition_builds_an_exploration_scene_from_the_apps_own_atlas() -> None:
+    app = _app()
+    game = Game(ScriptedEncounterRandom(()))
+    generation = game.start_generation()
+
+    scene = app._resolve_transition(EnterExploration(generation=generation, game=game))
+
+    assert isinstance(scene, ExplorationScene)
+    assert scene._generation is generation
+    assert scene._game is game
+    assert scene._atlas is app._atlas
+
+
+def test_resolve_transition_builds_a_skill_tree_scene_using_the_apps_own_save_store() -> None:
+    store = FakeSaveStore()
+    app = _app(store)
+    game = Game(ScriptedEncounterRandom(()))
+
+    scene = app._resolve_transition(EnterSkillTree(game=game))
+
+    assert isinstance(scene, SkillTreeScene)
+    assert scene._game is game
+    assert scene._save_store is store
+
+
+def test_resolve_transition_builds_a_combat_scene_using_the_apps_own_save_store() -> None:
+    store = FakeSaveStore()
+    app = _app(store)
+    game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY]))
+    generation = game.start_generation()
+    encounter = next(event for event in generation.advance() if isinstance(event, EnemyEncountered))
+
+    scene = app._resolve_transition(EnterCombat(generation=generation, game=game, encounter=encounter))
+
+    assert isinstance(scene, CombatScene)
+    assert scene._save_store is store
 
 
 def test_tick_returns_a_non_negative_frame_delta() -> None:
