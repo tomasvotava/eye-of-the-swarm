@@ -12,8 +12,8 @@ from eye.combat.stats import Stats
 from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
 from eye.exploration.encounters import EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
-from eye.gui.assets import build_placeholder_atlas
-from eye.gui.scenes.combat import ACTION_KEYS, CombatScene
+from eye.gui.assets import SpriteKey, build_placeholder_atlas
+from eye.gui.scenes.combat import ACTION_KEYS, CombatScene, _resolve_enemy_sprite_key
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.session.game import Game
@@ -21,7 +21,12 @@ from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
 _STATS = Stats(max_hp=20, attack=5, defense=2, meter_capacity=100, meter_fill_rate=1)
-_ACTIONS = (ActionDefinition(kind=ActionKind.STRUGGLE, name="Struggle"),)
+# Two entries (both STRUGGLE-kind, so win/loss math is unaffected by which one gets picked) so
+# cursor navigation across more than one row is actually exercised.
+_ACTIONS = (
+    ActionDefinition(kind=ActionKind.STRUGGLE, name="Struggle"),
+    ActionDefinition(kind=ActionKind.STRUGGLE, name="Wild Swing"),
+)
 
 
 def _generation(stats: Stats = _STATS, character: Character | None = None) -> Generation:
@@ -102,9 +107,9 @@ def test_handle_pygame_event_ignores_an_index_beyond_the_available_actions() -> 
     generation = _generation()
     game = _game_owning(generation)
     scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
-    scene.update(0.016)  # advance to AWAITING_PLAYER_ACTION with exactly one available action
+    scene.update(0.016)  # advance to AWAITING_PLAYER_ACTION with exactly two available actions
 
-    _press(scene, ACTION_KEYS[1])
+    _press(scene, ACTION_KEYS[2])
 
     assert scene._pending_action_index is None
 
@@ -115,9 +120,72 @@ def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
     scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
     scene.update(0.016)
 
-    _press(scene, ACTION_KEYS[0])
+    _press(scene, ACTION_KEYS[1])
 
-    assert scene._pending_action_index == 0
+    assert scene._pending_action_index == 1
+
+
+def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
+    generation = _generation()
+    game = _game_owning(generation)
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)
+
+    _press(scene, pygame.K_DOWN)
+    assert scene._cursor_index == 1
+
+    _press(scene, pygame.K_DOWN)
+    assert scene._cursor_index == 0
+
+
+def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
+    generation = _generation()
+    game = _game_owning(generation)
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)
+
+    _press(scene, pygame.K_UP)
+
+    assert scene._cursor_index == 1  # wraps from 0 to the last available index
+
+
+def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
+    generation = _generation()
+    game = _game_owning(generation)
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)
+
+    _press(scene, pygame.K_DOWN)
+    _press(scene, pygame.K_RETURN)
+
+    assert scene._pending_action_index == 1
+
+
+def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
+    generation = _generation()
+    game = _game_owning(generation)
+    scene = CombatScene(generation, game, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)  # first AWAITING_PLAYER_ACTION query, cursor at 0
+    _press(scene, pygame.K_DOWN)
+    assert scene._cursor_index == 1
+    _press(scene, pygame.K_RETURN)
+
+    for _ in range(10):
+        scene.update(0.016)
+        if scene._pending_query is not None:
+            break
+    else:
+        raise AssertionError("did not reach the next player-action query")
+
+    assert scene._cursor_index == 0
+
+
+def test_resolve_enemy_sprite_key_matches_a_same_named_sprite_key() -> None:
+    assert _resolve_enemy_sprite_key("BRAMBLE") is SpriteKey.BRAMBLE
+
+
+def test_resolve_enemy_sprite_key_falls_back_to_unknown_for_an_unmatched_name() -> None:
+    assert _resolve_enemy_sprite_key("NOT_A_REAL_STRAIN") is SpriteKey.UNKNOWN
 
 
 def test_update_resolves_automatic_phases_without_input() -> None:
