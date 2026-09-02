@@ -20,6 +20,10 @@ class SpriteKey(StrEnum):
     SEED = "seed"
     TURF = "turf"
     BACKGROUND = "background"
+    # Fallback for a lookup that couldn't resolve a more specific key (e.g. a Strain with no
+    # same-named sprite) -- the conventional "missing texture" placeholder, not tied to any one
+    # entity, so callers have somewhere to fall back to instead of crashing.
+    UNKNOWN = "unknown"
 
 
 class SpriteAtlas:
@@ -42,6 +46,7 @@ _PLACEHOLDER_SHAPES: Mapping[SpriteKey, _PlaceholderShape] = {
     SpriteKey.SEED: _PlaceholderShape(color="gold", is_circle=True),
     SpriteKey.TURF: _PlaceholderShape(color="forestgreen", is_circle=False),
     SpriteKey.BACKGROUND: _PlaceholderShape(color="saddlebrown", is_circle=False),
+    SpriteKey.UNKNOWN: _PlaceholderShape(color="magenta", is_circle=False),
 }
 
 
