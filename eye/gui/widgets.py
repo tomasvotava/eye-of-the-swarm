@@ -4,6 +4,7 @@ and `SkillTreeLeaf` are `Protocol`s so a future art epic can swap in a richer im
 `TextBuffIcon`/`TextSkillTreeLeaf` are this epic's only implementations, drawing plain text.
 """
 
+from enum import Enum, auto
 from typing import Protocol
 
 import pygame
@@ -15,7 +16,8 @@ _FONT_SIZE = 20
 _BUFF_COLOR: pygame.typing.ColorLike = "mediumseagreen"
 _DEBUFF_COLOR: pygame.typing.ColorLike = "indianred"
 _LOCKED_COLOR: pygame.typing.ColorLike = "dimgray"
-_UNLOCKED_COLOR: pygame.typing.ColorLike = "gold"
+_AVAILABLE_COLOR: pygame.typing.ColorLike = "gold"
+_PURCHASED_COLOR: pygame.typing.ColorLike = "limegreen"
 
 _font: pygame.font.Font | None = None
 
@@ -34,8 +36,14 @@ class BuffIcon(Protocol):
     def render(self, surface: pygame.Surface, pos: pygame.Vector2) -> None: ...
 
 
+class SkillNodeState(Enum):
+    LOCKED = auto()  # prerequisite tier missing, or too few spores
+    AVAILABLE = auto()  # not yet purchased, but purchasable now
+    PURCHASED = auto()
+
+
 class SkillTreeLeaf(Protocol):
-    def render(self, surface: pygame.Surface, rect: pygame.Rect, node: SkillNode, locked: bool) -> None: ...
+    def render(self, surface: pygame.Surface, rect: pygame.Rect, node: SkillNode, state: SkillNodeState) -> None: ...
 
 
 def _effect_label(effect: EffectName) -> str:
@@ -51,7 +59,13 @@ class TextBuffIcon:
         surface.blit(_get_font().render(_effect_label(self.effect), True, color), pos)
 
 
+_STATE_COLORS: dict[SkillNodeState, pygame.typing.ColorLike] = {
+    SkillNodeState.LOCKED: _LOCKED_COLOR,
+    SkillNodeState.AVAILABLE: _AVAILABLE_COLOR,
+    SkillNodeState.PURCHASED: _PURCHASED_COLOR,
+}
+
+
 class TextSkillTreeLeaf:
-    def render(self, surface: pygame.Surface, rect: pygame.Rect, node: SkillNode, locked: bool) -> None:
-        color = _LOCKED_COLOR if locked else _UNLOCKED_COLOR
-        surface.blit(_get_font().render(f"{node.name} ({node.cost})", True, color), rect.topleft)
+    def render(self, surface: pygame.Surface, rect: pygame.Rect, node: SkillNode, state: SkillNodeState) -> None:
+        surface.blit(_get_font().render(f"{node.name} ({node.cost})", True, _STATE_COLORS[state]), rect.topleft)
