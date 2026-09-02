@@ -63,10 +63,10 @@ class ExplorationScene:
         self._pending_action: ExplorationAction | None = None
         self._last_message = "You explore outward from the hive."
 
-    def handle_event(self, event: pygame.event.Event) -> None:
-        if event.type != pygame.KEYDOWN:
+    def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
+        if pygame_event.type != pygame.KEYDOWN:
             return
-        action = KEY_ACTIONS.get(event.key)
+        action = KEY_ACTIONS.get(pygame_event.key)
         if action is not None:
             self._pending_action = action
 
