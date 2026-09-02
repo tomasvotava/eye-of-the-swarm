@@ -63,21 +63,43 @@ def _drive_battle_to_conclusion(driver: GameDriver, max_frames: int = 200) -> No
     raise AssertionError("battle did not conclude within max_frames")
 
 
-def test_construction_starts_a_fresh_generation_in_an_exploration_scene() -> None:
+def test_construction_starts_a_fresh_generation_in_an_exploration_scene_for_a_brand_new_game() -> None:
     driver = _driver()
 
     assert isinstance(driver._scene, ExplorationScene)
     assert driver._scene._generation.died is False
 
 
-def test_construction_loads_the_saved_game_before_starting_the_generation() -> None:
+def test_construction_boots_into_the_skill_tree_when_a_save_already_exists() -> None:
     saved = Game(ScriptedEncounterRandom(()), matured_turf_positions=(3, 7))
     store = FakeSaveStore(data=encode(saved))
 
     driver = _driver(save_store=store)
 
+    assert isinstance(driver._scene, SkillTreeScene)
+    assert driver._game.matured_turf_positions == (3, 7)
+    assert driver._generation is None  # no life started yet -- Continue starts the first one
+
+
+def test_continue_from_the_boot_skill_tree_starts_a_new_generation() -> None:
+    saved = Game(ScriptedEncounterRandom(()), matured_turf_positions=(3,))
+    driver = _driver(save_store=FakeSaveStore(data=encode(saved)))
+    assert isinstance(driver._scene, SkillTreeScene)
+
+    driver.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c))
+    driver.update(0.016)
+
     assert isinstance(driver._scene, ExplorationScene)
-    assert driver._scene._game.matured_turf_positions == (3, 7)
+    assert driver._generation is not None
+    assert driver._scene._generation.died is False
+
+
+def test_active_generation_raises_if_no_generation_has_started_yet() -> None:
+    driver = _driver(save_store=FakeSaveStore(data=encode(Game(ScriptedEncounterRandom(())))))
+    assert driver._generation is None
+
+    with pytest.raises(RuntimeError, match="no generation is active"):
+        driver._active_generation()
 
 
 def test_update_never_returns_a_top_level_transition() -> None:
