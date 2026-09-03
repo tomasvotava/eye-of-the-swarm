@@ -1,6 +1,32 @@
-import pygame
+import json
+from enum import StrEnum
+from pathlib import Path
 
-from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteAtlas, SpriteKey, build_placeholder_atlas
+import pygame
+import pytest
+
+from eye.gui.animation import AnimationClip
+from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteAtlas, SpriteKey, build_art_atlas, build_placeholder_atlas
+
+
+def _write_static_sprite(directory: Path, name: str = "sprite", size: tuple[int, int] = (4, 4)) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    pygame.image.save(pygame.Surface(size), directory / f"{name}.png")
+
+
+def _write_clip(directory: Path, name: str, frame_count: int = 2, frame_size: int = 4, fps: float = 8) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    pygame.image.save(pygame.Surface((frame_size * frame_count, frame_size)), directory / f"{name}.png")
+    manifest = {"frame_width": frame_size, "frame_height": frame_size, "frame_count": frame_count, "fps": fps}
+    (directory / f"{name}.json").write_text(json.dumps(manifest))
+
+
+class _BrambleState(StrEnum):
+    IDLE = "idle"
+
+
+class _SeedVariant(StrEnum):
+    ACTIVE = "active"
 
 
 def test_build_placeholder_atlas_has_a_surface_for_every_sprite_key() -> None:
@@ -25,3 +51,71 @@ def test_sprite_atlas_get_returns_the_wrapped_surface() -> None:
     atlas = SpriteAtlas({SpriteKey.PLAYER: surface})
 
     assert atlas.get(SpriteKey.PLAYER) is surface
+
+
+def test_build_art_atlas_falls_back_to_the_placeholder_for_a_missing_directory(tmp_path: Path) -> None:
+    atlas = build_art_atlas(tmp_path)
+
+    assert atlas.get(SpriteKey.TURF).get_size() == (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+
+
+def test_build_art_atlas_loads_a_static_sprite_when_present(tmp_path: Path) -> None:
+    _write_static_sprite(tmp_path / SpriteKey.PLAYER.value, size=(4, 4))
+
+    atlas = build_art_atlas(tmp_path)
+
+    assert atlas.get(SpriteKey.PLAYER).get_size() == (4, 4)
+
+
+def test_build_art_atlas_falls_back_to_the_placeholder_when_the_directory_has_no_static_sprite(
+    tmp_path: Path,
+) -> None:
+    _write_clip(tmp_path / SpriteKey.BRAMBLE.value, "idle")
+
+    atlas = build_art_atlas(tmp_path)
+
+    assert atlas.get(SpriteKey.BRAMBLE).get_size() == (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+
+
+def test_build_art_atlas_resolves_a_clip_pair_via_get_animation_set(tmp_path: Path) -> None:
+    _write_clip(tmp_path / SpriteKey.BRAMBLE.value, "idle", frame_count=3, fps=8)
+
+    atlas = build_art_atlas(tmp_path)
+    clips = atlas.get_animation_set(SpriteKey.BRAMBLE, _BrambleState)
+
+    clip = clips[_BrambleState.IDLE]
+    assert isinstance(clip, AnimationClip)
+    assert len(clip.frames) == 3
+    assert clip.frame_duration_seconds == pytest.approx(1 / 8)
+
+
+def test_build_art_atlas_resolves_a_named_variant_via_get_variant_set(tmp_path: Path) -> None:
+    directory = tmp_path / SpriteKey.SEED.value
+    directory.mkdir()
+    pygame.image.save(pygame.Surface((4, 4)), directory / "active.png")
+
+    atlas = build_art_atlas(tmp_path)
+    variants = atlas.get_variant_set(SpriteKey.SEED, _SeedVariant)
+
+    assert variants[_SeedVariant.ACTIVE].get_size() == (4, 4)
+
+
+def test_get_animation_set_raises_when_a_state_has_no_matching_file(tmp_path: Path) -> None:
+    atlas = build_art_atlas(tmp_path)
+
+    with pytest.raises(ValueError, match=r"states.*IDLE"):
+        atlas.get_animation_set(SpriteKey.BRAMBLE, _BrambleState)
+
+
+def test_get_variant_set_raises_when_a_variant_has_no_matching_file(tmp_path: Path) -> None:
+    atlas = build_art_atlas(tmp_path)
+
+    with pytest.raises(ValueError, match=r"variants.*ACTIVE"):
+        atlas.get_variant_set(SpriteKey.SEED, _SeedVariant)
+
+
+def test_build_art_atlas_rejects_a_static_sprite_with_a_manifest_sibling(tmp_path: Path) -> None:
+    _write_clip(tmp_path / SpriteKey.PLAYER.value, "sprite")
+
+    with pytest.raises(ValueError, match=r"sprite\.png.*must not have a \.json manifest sibling"):
+        build_art_atlas(tmp_path)
