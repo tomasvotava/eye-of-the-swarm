@@ -12,6 +12,7 @@ from eye.gui.game_driver import GameDriver
 from eye.gui.scenes.combat import ACTION_KEYS, CombatScene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.skilltree import _ROWS, SkillTreeScene
+from eye.gui.tuning import WALK_TO_ENCOUNTER_DURATION_SECONDS
 from eye.persistence.codec import decode, encode
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -23,7 +24,15 @@ _STATS = Stats(max_hp=20, attack=5, defense=2, meter_capacity=100, meter_fill_ra
 _ACTIONS = (ActionDefinition(kind=ActionKind.STRUGGLE, name="Struggle"),)
 
 
-def _driver(kind_queue: Sequence[EncounterKind] = (), save_store: FakeSaveStore | None = None) -> GameDriver:
+def _driver(
+    kind_queue: Sequence[EncounterKind] = (EncounterKind.NOTHING, EncounterKind.NOTHING),
+    save_store: FakeSaveStore | None = None,
+) -> GameDriver:
+    # Defaults to two queued NOTHING screens rather than an empty queue: ExplorationScene's
+    # for_new_generation() (ADR 0012) fires advance() once immediately, whether at construction or
+    # after a later Continue -- one entry covers GameDriver.__init__()'s own throwaway generation
+    # (immediately overwritten by _driver_with() below), a second covers a genuine Continue later
+    # in the same test, and tests that never reach either case just leave the rest unused.
     return GameDriver(build_placeholder_atlas(), ScriptedEncounterRandom(kind_queue), save_store or FakeSaveStore())
 
 
@@ -45,13 +54,17 @@ def _driver_with(generation: Generation, save_store: FakeSaveStore | None = None
     driver = _driver(save_store=save_store)
     driver._game._current_generation = generation
     driver._generation = generation
-    driver._scene = ExplorationScene(generation, driver._game, driver._atlas)
+    driver._scene = ExplorationScene.for_new_generation(generation, driver._game, driver._atlas)
     return driver
 
 
 def _advance(driver: GameDriver) -> None:
+    # Drives a full screen-walk lap (ADR 0012): ExplorationScene.for_new_generation() already
+    # joins at AT_ENTRY with the screen's encounter pending, so one ADVANCE press plus a walk to
+    # the marker is enough to reveal it -- the EnterCombat/HUD-message outcome every caller here
+    # is actually after.
     driver.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
-    driver.update(0.016)
+    driver.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
 
 
 def _drive_battle_to_conclusion(driver: GameDriver, max_frames: int = 200) -> None:

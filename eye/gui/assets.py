@@ -25,6 +25,11 @@ class SpriteKey(StrEnum):
     SEED = "seed"
     TURF = "turf"
     BACKGROUND = "background"
+    # A screen's not-yet-triggered EffectGranted/ResourceGranted encounter, visible at the
+    # marker while walking toward it (ADR 0012) -- distinct from SEED, which is the HUD's
+    # "seed ready to plant" status icon, not a screen encounter.
+    EFFECT_PICKUP = "effect_pickup"
+    RESOURCE_PICKUP = "resource_pickup"
     # Fallback for a lookup that couldn't resolve a more specific key (e.g. a Strain with no
     # same-named sprite) -- the conventional "missing texture" placeholder, not tied to any one
     # entity, so callers have somewhere to fall back to instead of crashing.
@@ -102,6 +107,8 @@ _PLACEHOLDER_SHAPES: Mapping[SpriteKey, _PlaceholderShape] = {
     SpriteKey.SEED: _PlaceholderShape(color="gold", is_circle=True),
     SpriteKey.TURF: _PlaceholderShape(color="forestgreen", is_circle=False),
     SpriteKey.BACKGROUND: _PlaceholderShape(color="saddlebrown", is_circle=False),
+    SpriteKey.EFFECT_PICKUP: _PlaceholderShape(color="mediumorchid", is_circle=True),
+    SpriteKey.RESOURCE_PICKUP: _PlaceholderShape(color="goldenrod", is_circle=True),
     SpriteKey.UNKNOWN: _PlaceholderShape(color="magenta", is_circle=False),
 }
 
