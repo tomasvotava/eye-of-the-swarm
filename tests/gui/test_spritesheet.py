@@ -24,24 +24,49 @@ def test_load_manifest_parses_all_fields() -> None:
     assert manifest == SpriteSheetManifest(frame_width=32, frame_height=32, frame_count=5, fps=8)
 
 
-def test_load_spritesheet_clip_slices_the_expected_frame_count_and_size() -> None:
-    frames, _ = load_spritesheet_clip(VALID_SHEET, VALID_MANIFEST)
+@pytest.mark.parametrize(
+    ("field", "value", "expected_exception"),
+    [
+        ("frame_width", None, TypeError),
+        ("frame_count", "bramble", ValueError),
+        ("fps", [], TypeError),
+        ("fps", False, TypeError),
+    ],
+)
+def test_manifest_rejects_a_field_of_the_wrong_type_at_construction(
+    field: str, value: object, expected_exception: type[Exception]
+) -> None:
+    fields: dict[str, object] = {"frame_width": 32, "frame_height": 32, "frame_count": 5, "fps": 8}
+    fields[field] = value
 
-    assert len(frames) == 5
-    assert all(frame.get_size() == (32, 32) for frame in frames)
+    with pytest.raises(expected_exception):
+        SpriteSheetManifest(**fields)  # type: ignore[arg-type]
+
+
+def test_manifest_coerces_numeric_looking_fields_to_their_declared_type() -> None:
+    manifest = SpriteSheetManifest(frame_width="32", frame_height="32", frame_count="5", fps="8")  # type: ignore[arg-type]
+
+    assert manifest == SpriteSheetManifest(frame_width=32, frame_height=32, frame_count=5, fps=8)
+
+
+def test_load_spritesheet_clip_slices_the_expected_frame_count_and_size() -> None:
+    clip = load_spritesheet_clip(VALID_SHEET, VALID_MANIFEST)
+
+    assert len(clip.frames) == 5
+    assert all(frame.get_size() == (32, 32) for frame in clip.frames)
 
 
 def test_load_spritesheet_clip_slices_frames_at_the_correct_positions() -> None:
-    frames, _ = load_spritesheet_clip(VALID_SHEET, VALID_MANIFEST)
+    clip = load_spritesheet_clip(VALID_SHEET, VALID_MANIFEST)
 
-    for frame, expected_color in zip(frames, FRAME_COLORS, strict=True):
+    for frame, expected_color in zip(clip.frames, FRAME_COLORS, strict=True):
         assert tuple(frame.get_at((0, 0))) == expected_color
 
 
 def test_load_spritesheet_clip_returns_the_per_frame_duration() -> None:
-    _, duration = load_spritesheet_clip(VALID_SHEET, VALID_MANIFEST)
+    clip = load_spritesheet_clip(VALID_SHEET, VALID_MANIFEST)
 
-    assert duration == pytest.approx(1 / 8)
+    assert clip.frame_duration == pytest.approx(1 / 8)
 
 
 def test_load_spritesheet_clip_raises_on_a_manifest_that_does_not_fit_the_sheet_width() -> None:
