@@ -47,9 +47,9 @@ only when the GUI calls it changes.
      +---------- generation.advance() fires here, for the NEW screen
   ```
   - **`RESOLVED`** — player sits at the encounter marker; this screen's outcome is already known
-    and applied (or it's the spawn screen, with nothing to resolve). **Plant is legal only in this
-    phase** — pressing the plant key elsewhere is a silent no-op, mirroring the existing
-    `is_seed_ready` guard style. ADVANCE starts the walk to the exit.
+    and applied. **Plant is legal only in this phase** — pressing the plant key elsewhere is a
+    silent no-op, mirroring the existing `is_seed_ready` guard style. ADVANCE starts the walk to
+    the exit.
   - **`WALKING_TO_EXIT`** — arrival at the exit immediately calls `generation.advance()` for the
     next screen (this is the "as early as when the screen loads" call — it applies that screen's
     resource/effect side-effects domain-side right away, exactly as `advance()` already does
@@ -61,38 +61,60 @@ only when the GUI calls it changes.
   - **`WALKING_TO_ENCOUNTER`** — arrival triggers the reveal: `EnemyEncountered` returns an
     `EnterCombat` transition; otherwise the HUD message is shown and the phase drops to
     `RESOLVED`.
-- **Every fresh `ExplorationScene` construction starts in `RESOLVED`, uniformly — no
-  combat-vs-fresh-generation branch in `GameDriver`.** A new generation's spawn screen has nothing
-  to resolve (fine — `RESOLVED` with nothing pending). Returning from a won battle also lands in
-  `RESOLVED`, positioned at the encounter marker: the fight itself *was* resolving the encounter,
-  so there's nothing left to walk to. This is the re-derived plant-decision window required by ADR
-  0009's flagged consequence: it is exactly the `RESOLVED` phase, and it survives the exploration
-  ⟷ combat scene swap without `GameDriver` needing any awareness of walk phases.
+- **Two distinct, named ways to (re)join this cycle — not one uniform rule.** `RESOLVED` is only
+  ever reached honestly by actually walking there (as the diagram shows); a fresh `ExplorationScene`
+  cannot simply be constructed into it wholesale, or the phase stops meaning what it says. The two
+  cases genuinely differ in how much walking has already happened, so `ExplorationScene` exposes
+  two named constructors instead of one constructor plus a boolean flag — each call site should
+  say which history it's in, not toggle a flag whose meaning has to be looked up:
+  - **`ExplorationScene.for_new_generation(...)`** — used by `GameDriver._start_new_generation()`
+    (reached both when a brand-new game skips straight to exploration and when a `Continue`
+    transition starts the next life after a skill-tree spend). No screen has been walked yet in
+    this life; the spawn/home-turf position itself is never walked (it holds no
+    `advance()`-generated encounter — matured turf is safe by definition) and is treated as
+    instantaneous. This constructor calls `generation.advance()` once immediately, for the first
+    screen beyond spawn, and joins the cycle at `AT_ENTRY` for that screen — a second call site for
+    the "`advance()` fires when a screen loads" rule, alongside the `WALKING_TO_EXIT` arrival case
+    above, not a third one.
+  - **`ExplorationScene.resuming_after_combat(...)`** — used by `GameDriver._resolve_battle_concluded()`'s
+    survive branch. Does *not* call `advance()` again — the current screen's encounter was already
+    produced by an earlier `advance()` call, before combat took over — and joins the cycle directly
+    at `RESOLVED`, positioned at the marker. This is legitimate, not a shortcut: the walk from
+    `AT_ENTRY` to the marker already happened, in the `ExplorationScene` instance that existed
+    before the `EnterCombat` transition fired: `RESOLVED` here is genuinely the last state that
+    walk reached, just carried across the scene swap along with the rest of the generation's state,
+    the same way `Generation` itself survives the swap.
+
+  This is the re-derived plant-decision window required by ADR 0009's flagged consequence: it is
+  exactly the `RESOLVED` phase, reached only by one of the two histories above, never manufactured
+  at construction for a screen that hasn't actually been walked.
 - **`plant_seed()` itself is unchanged** — still plants at `_current_screen`, still synchronous on
   keypress. Only the GUI's gating of *when* it forwards the plant key changes.
 - **The core invariant still holds structurally, unaffected by the walk animation**:
-  `_current_screen` only ever advances via `generation.advance()`, which happens exactly once per
-  screen at the `WALKING_TO_EXIT` arrival boundary, and there is no mechanic to move backward.
-  Once it advances, the previous screen is permanently behind — planting always targets wherever
-  `_current_screen` currently points, which the GUI never lets outrun what's been resolved.
+  `_current_screen` only ever advances via `generation.advance()`, which fires exactly once per
+  screen — either at a `WALKING_TO_EXIT` arrival (the steady-state case within a life) or once at
+  `ExplorationScene.for_new_generation()` construction (game start, or leaving the skill tree to
+  start the next life) — and there is no mechanic to move backward. Once it advances, the previous
+  screen is permanently behind — planting always targets wherever `_current_screen` currently
+  points, which the GUI never lets outrun what's been resolved.
 - **New `eye/gui/tuning.py`** holds GUI-side pacing constants (walk duration/speed for both
   `WALKING_TO_EXIT` and `WALKING_TO_ENCOUNTER`) — mirrors PROJECT_BRIEF.md §9.5's own note that
   even presentation pacing belongs in a `tuning.py`, not a magic number in scene code.
-- **Animation wiring**: the player's `Animator[PlayerAnimationState]` (ADR 0011,
-  `required_states=frozenset({IDLE, WALK})`) is set to `WALK` on entering either walking phase and
-  back to `IDLE` on entering either idle phase (`RESOLVED`, `AT_ENTRY`). `walk.png`/`walk.json`
-  ship as byte-for-byte duplicates of `idle.png`/`idle.json` (no walk-cycle art exists yet) —
-  proves the state machine drives a visible state change end-to-end; a future art delivery swaps
-  just the asset files, no code change.
+- **Animation wiring**: the player's `Animator[PlayerAnimationState]` (ADR 0011) is set to `WALK`
+  on entering either walking phase and back to `IDLE` on entering either idle phase (`RESOLVED`,
+  `AT_ENTRY`). `walk.png`/`walk.json` ship as byte-for-byte duplicates of `idle.png`/`idle.json`
+  (no walk-cycle art exists yet) — proves the state machine drives a visible state change
+  end-to-end; a future art delivery swaps just the asset files, no code change.
 
 ## Consequences
 
-- `GameDriver`'s routing policy (ADR 0010) is untouched: it still only distinguishes
-  `EnterCombat`/`BattleConcluded`/`Continue` and constructs `ExplorationScene` the same way from
-  every path — it has no awareness that `ExplorationScene` now has internal phases.
-  `BattleConcluded`'s non-died branch already just returns a fresh `ExplorationScene`, which now
-  happens to start in `RESOLVED` as a consequence of this ADR, not a new parameter `GameDriver`
-  has to pass.
+- `GameDriver`'s routing policy (ADR 0010) needs no new branch, only a naming change at its two
+  existing, already-distinct `ExplorationScene`-construction call sites: `_start_new_generation()`
+  switches from a bare `ExplorationScene(...)` call to `ExplorationScene.for_new_generation(...)`,
+  and `_resolve_battle_concluded()`'s survive branch switches to
+  `ExplorationScene.resuming_after_combat(...)`. `GameDriver` still has no awareness of
+  `ExplorationScene`'s internal phases — it just calls the constructor matching the history it's
+  already in.
   `EnterCombat`'s payload (the `EnemyEncounter`) is unchanged — only when it's returned from
   `ExplorationScene.update()` moves, from immediately on `advance()` to `WALKING_TO_ENCOUNTER`
   arrival.
@@ -100,6 +122,7 @@ only when the GUI calls it changes.
   `AT_ENTRY`/`WALKING_TO_ENCOUNTER` phases established here, rather than needing its own
   traversal model.
 - Structural tests (phase transitions, `advance()` call count/timing, `EnterCombat` withheld until
-  `WALKING_TO_ENCOUNTER` arrival, plant accepted only in `RESOLVED`, fresh-construction-always-
-  starts-`RESOLVED` for both the new-generation and post-combat-win paths) replace/extend
-  `test_exploration.py`'s current single-call-does-everything assertions.
+  `WALKING_TO_ENCOUNTER` arrival, plant accepted only in `RESOLVED`, `for_new_generation()` calling
+  `advance()` once and starting at `AT_ENTRY`, `resuming_after_combat()` not calling `advance()`
+  and starting at `RESOLVED`) replace/extend `test_exploration.py`'s current
+  single-call-does-everything assertions.
