@@ -33,7 +33,7 @@ class SpriteSheetManifest:
 @dataclass(frozen=True, slots=True)
 class SpriteSheetClip:
     frames: tuple[pygame.Surface, ...]
-    frame_duration: float  # seconds per frame
+    frame_duration_seconds: float
 
 
 def load_manifest(manifest_path: Path) -> SpriteSheetManifest:
@@ -60,4 +60,4 @@ def load_spritesheet_clip(sheet_path: Path, manifest_path: Path) -> SpriteSheetC
         sheet.subsurface((i * manifest.frame_width, 0, manifest.frame_width, manifest.frame_height))
         for i in range(manifest.frame_count)
     )
-    return SpriteSheetClip(frames=frames, frame_duration=1 / manifest.fps)
+    return SpriteSheetClip(frames=frames, frame_duration_seconds=1 / manifest.fps)

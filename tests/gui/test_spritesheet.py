@@ -66,7 +66,7 @@ def test_load_spritesheet_clip_slices_frames_at_the_correct_positions() -> None:
 def test_load_spritesheet_clip_returns_the_per_frame_duration() -> None:
     clip = load_spritesheet_clip(VALID_SHEET, VALID_MANIFEST)
 
-    assert clip.frame_duration == pytest.approx(1 / 8)
+    assert clip.frame_duration_seconds == pytest.approx(1 / 8)
 
 
 def test_load_spritesheet_clip_raises_on_a_manifest_that_does_not_fit_the_sheet_width() -> None:
