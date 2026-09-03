@@ -78,14 +78,14 @@ class GameDriver:
     def _resolve_battle_concluded(self) -> PlayScene:
         generation = self._active_generation()
         if not generation.died:
-            return ExplorationScene(generation, self._game, self._atlas)
+            return ExplorationScene.resuming_after_combat(generation, self._game, self._atlas)
         self._game.end_generation(generation)
         self._persist()
         return SkillTreeScene(self._game, self._atlas, on_purchase=self._persist)
 
     def _start_new_generation(self) -> ExplorationScene:
         self._generation = self._game.start_generation()
-        return ExplorationScene(self._generation, self._game, self._atlas)
+        return ExplorationScene.for_new_generation(self._generation, self._game, self._atlas)
 
     def _active_generation(self) -> Generation:
         # EnterCombat/BattleConcluded are only ever reported by CombatScene/ExplorationScene,

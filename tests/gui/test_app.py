@@ -1,6 +1,7 @@
 import pygame
 import pytest
 
+from eye.exploration.encounters import EncounterKind
 from eye.gui.app import _DEV_ASSET_VIEWER_ENV_VAR, App, _dev_asset_viewer_requested, _initial_scene
 from eye.gui.game_driver import GameDriver
 from eye.gui.scene import Scene
@@ -32,7 +33,10 @@ def _app(initial_scene: Scene | None = None) -> App:
 
 
 def test_initial_scene_returns_a_game_driver_by_default() -> None:
-    scene = _initial_scene(FakeSaveStore(), ScriptedEncounterRandom(()), dev_asset_viewer=False)
+    # A brand-new game immediately fires advance() for its first screen via for_new_generation()
+    # (ADR 0012), so the queue needs at least one entry even though this test doesn't otherwise
+    # care what that screen holds.
+    scene = _initial_scene(FakeSaveStore(), ScriptedEncounterRandom([EncounterKind.NOTHING]), dev_asset_viewer=False)
 
     assert isinstance(scene, GameDriver)
 
