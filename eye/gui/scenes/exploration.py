@@ -5,7 +5,7 @@ event surfaces -- the only trigger among those in `eye.exploration.encounters` t
 screen. Owned and routed by `GameDriver` (ADR 0010), never constructs a sibling scene itself.
 """
 
-from enum import Enum, auto
+from enum import Enum, StrEnum, auto
 
 import pygame
 import pygame.typing
@@ -22,6 +22,13 @@ _HUD_MARGIN = 8
 _ICON_MARGIN = 8
 
 type _ScreenEvent = EffectGranted | ResourceGranted | NothingHappened
+
+
+class PlayerAnimationState(StrEnum):
+    """The player's animation states (ADR 0011)."""
+
+    IDLE = "idle"
+    WALK = "walk"
 
 
 class ExplorationAction(Enum):

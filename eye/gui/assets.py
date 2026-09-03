@@ -45,6 +45,15 @@ class SpriteAtlas:
     def get(self, key: SpriteKey) -> pygame.Surface:
         return self._surfaces[key]
 
+    def has_animation_set(self, key: SpriteKey) -> bool:
+        """Whether `key` has any loaded animation clips at all.
+
+        Distinguishes "no animation data for this key" (fine — a caller falls back to `get`)
+        from "some clips exist but a required state is missing", which `get_animation_set`
+        still raises on rather than this method silently absorbing.
+        """
+        return key in self._clips
+
     def get_animation_set[TState: StrEnum](
         self, key: SpriteKey, state_type: type[TState]
     ) -> Mapping[TState, AnimationClip]:
