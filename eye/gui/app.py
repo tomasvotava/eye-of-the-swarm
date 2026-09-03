@@ -11,10 +11,11 @@ splash/menu epic adds screens here without touching `App`.
 import asyncio
 import os
 import random
+from pathlib import Path
 
 import pygame
 
-from eye.gui.assets import build_placeholder_atlas
+from eye.gui.assets import build_art_atlas
 from eye.gui.game_driver import GameDriver
 from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
@@ -23,6 +24,7 @@ from eye.persistence.port import SaveStore
 _WINDOW_SIZE = (1280, 720)
 _MAX_FPS = 60
 _TITLE = "The Eye of the Swarm"
+_SPRITES_DIR = Path("eye/gui/sprites")
 
 # Set (to any value) to boot straight into DevAssetViewerScene instead of the generational loop --
 # a developer-only escape hatch, never the game's default entry point.
@@ -71,7 +73,7 @@ class App:
 
 
 def _initial_scene(save_store: SaveStore | None, rng: random.Random, dev_asset_viewer: bool) -> Scene:
-    atlas = build_placeholder_atlas()
+    atlas = build_art_atlas(_SPRITES_DIR)
     if dev_asset_viewer:
         return DevAssetViewerScene(atlas)
     return GameDriver(atlas, rng, save_store)

@@ -9,8 +9,10 @@ from enum import Enum, auto
 import pygame
 import pygame.typing
 
+from eye.gui.animation import Animator
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.scene import Scene
+from eye.gui.scenes.exploration import PlayerAnimationState
 
 _FONT_SIZE = 20
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
@@ -48,6 +50,12 @@ class DevAssetViewerScene:
         self._atlas = atlas
         self._index = 0
         self._pending_action: DevAssetViewerAction | None = None
+        self._player_animator: Animator[PlayerAnimationState] | None = None
+        if atlas.has_animation_set(SpriteKey.PLAYER):
+            self._player_animator = Animator(
+                atlas.get_animation_set(SpriteKey.PLAYER, PlayerAnimationState),
+                initial_state=PlayerAnimationState.IDLE,
+            )
 
     @property
     def current_key(self) -> SpriteKey:
@@ -61,6 +69,8 @@ class DevAssetViewerScene:
             self._pending_action = action
 
     def update(self, dt: float) -> Scene | None:
+        if self._player_animator is not None:
+            self._player_animator.update(dt)
         if self._pending_action is None:
             return None
         action = self._pending_action
@@ -69,10 +79,15 @@ class DevAssetViewerScene:
         self._index = (self._index + delta) % len(_KEYS)
         return None
 
+    def _current_sprite(self, key: SpriteKey) -> pygame.Surface:
+        if key is SpriteKey.PLAYER and self._player_animator is not None:
+            return self._player_animator.current_frame()
+        return self._atlas.get(key)
+
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
         key = self.current_key
-        sprite = pygame.transform.scale_by(self._atlas.get(key), _SPRITE_SCALE)
+        sprite = pygame.transform.scale_by(self._current_sprite(key), _SPRITE_SCALE)
         surface.blit(sprite, sprite.get_rect(center=surface.get_rect().center))
         self._draw_hud(surface, key)
 

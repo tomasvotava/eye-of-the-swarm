@@ -119,3 +119,17 @@ def test_build_art_atlas_rejects_a_static_sprite_with_a_manifest_sibling(tmp_pat
 
     with pytest.raises(ValueError, match=r"sprite\.png.*must not have a \.json manifest sibling"):
         build_art_atlas(tmp_path)
+
+
+def test_has_animation_set_is_false_for_a_key_with_no_clips() -> None:
+    atlas = build_placeholder_atlas()
+
+    assert atlas.has_animation_set(SpriteKey.PLAYER) is False
+
+
+def test_has_animation_set_is_true_once_the_key_has_a_clip(tmp_path: Path) -> None:
+    _write_clip(tmp_path / SpriteKey.BRAMBLE.value, "idle")
+
+    atlas = build_art_atlas(tmp_path)
+
+    assert atlas.has_animation_set(SpriteKey.BRAMBLE) is True
