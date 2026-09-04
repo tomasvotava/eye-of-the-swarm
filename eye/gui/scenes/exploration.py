@@ -9,6 +9,7 @@ never constructs a sibling scene itself.
 
 from collections.abc import Sequence
 from enum import Enum, StrEnum, auto
+from typing import assert_never
 
 import pygame
 import pygame.typing
@@ -122,13 +123,13 @@ class ExplorationScene:
         game: Game,
         atlas: SpriteAtlas,
         *,
-        phase: _Phase,
+        starting_phase: _Phase,
         pending_events: Sequence[SessionEvent] = (),
     ) -> None:
         self._generation = generation
         self._game = game
         self._atlas = atlas
-        self._phase = phase
+        self._phase = starting_phase
         self._pending_events = pending_events
         self._walk_elapsed_seconds = 0.0
         self._pending_action: ExplorationAction | None = None
@@ -141,7 +142,7 @@ class ExplorationScene:
         turf being safe by definition -- so this fires `advance()` once immediately rather than
         waiting for a `WALKING_TO_EXIT` arrival that will never come for this screen (ADR 0012)."""
         events = generation.advance()
-        return cls(generation, game, atlas, phase=_Phase.AT_ENTRY, pending_events=events)
+        return cls(generation, game, atlas, starting_phase=_Phase.AT_ENTRY, pending_events=events)
 
     @classmethod
     def resuming_after_combat(cls, generation: Generation, game: Game, atlas: SpriteAtlas) -> ExplorationScene:
@@ -149,7 +150,7 @@ class ExplorationScene:
         in the `ExplorationScene` instance that existed before the `EnterCombat` swap, and that
         screen's `advance()` already fired before combat took over, so this does not call it
         again (ADR 0012)."""
-        return cls(generation, game, atlas, phase=_Phase.RESOLVED)
+        return cls(generation, game, atlas, starting_phase=_Phase.RESOLVED)
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN:
@@ -170,7 +171,7 @@ class ExplorationScene:
         if action is None:
             return None
         if action is ExplorationAction.PLANT_SEED:
-            if self._phase is _Phase.RESOLVED:
+            if self._can_plant_seed():
                 self._handle_plant_seed()
             return None
         if self._phase is _Phase.RESOLVED:
@@ -189,9 +190,13 @@ class ExplorationScene:
         self._phase = phase
         self._walk_elapsed_seconds = 0.0
 
+    def _can_plant_seed(self) -> bool:
+        # Single source of truth for plant legality -- both the actual gate in update() and the
+        # GUI's "seed ready" icon/HUD label read this, so they can't drift apart (ADR 0012:
+        # RESOLVED is the only phase where planting is legal).
+        return self._phase is _Phase.RESOLVED and self._generation.is_seed_ready
+
     def _handle_plant_seed(self) -> None:
-        if not self._generation.is_seed_ready:
-            return
         events = self._generation.plant_seed()
         planted = next((event for event in events if isinstance(event, SeedPlanted)), None)
         if planted is not None:
@@ -244,14 +249,17 @@ class ExplorationScene:
         surface.blit(background, (0, 0))
 
     def _player_x_fraction(self) -> float:
-        if self._phase is _Phase.RESOLVED:
-            return ENCOUNTER_X_FRACTION
-        if self._phase is _Phase.AT_ENTRY:
-            return ENTRY_X_FRACTION
-        if self._phase is _Phase.WALKING_TO_EXIT:
-            duration, start, end = WALK_TO_EXIT_DURATION_SECONDS, ENCOUNTER_X_FRACTION, EXIT_X_FRACTION
-        else:
-            duration, start, end = WALK_TO_ENCOUNTER_DURATION_SECONDS, ENTRY_X_FRACTION, ENCOUNTER_X_FRACTION
+        match self._phase:
+            case _Phase.RESOLVED:
+                return ENCOUNTER_X_FRACTION
+            case _Phase.AT_ENTRY:
+                return ENTRY_X_FRACTION
+            case _Phase.WALKING_TO_EXIT:
+                duration, start, end = WALK_TO_EXIT_DURATION_SECONDS, ENCOUNTER_X_FRACTION, EXIT_X_FRACTION
+            case _Phase.WALKING_TO_ENCOUNTER:
+                duration, start, end = WALK_TO_ENCOUNTER_DURATION_SECONDS, ENTRY_X_FRACTION, ENCOUNTER_X_FRACTION
+            case _:
+                assert_never(self._phase)
         ratio = min(1.0, self._walk_elapsed_seconds / duration)
         return start + (end - start) * ratio
 
@@ -274,7 +282,7 @@ class ExplorationScene:
 
     def _draw_status_icons(self, surface: pygame.Surface) -> None:
         x = _ICON_MARGIN
-        if self._generation.is_seed_ready:
+        if self._can_plant_seed():
             seed = self._atlas.get(SpriteKey.SEED)
             surface.blit(seed, (x, _ICON_MARGIN))
             x += seed.get_width() + _ICON_MARGIN
@@ -285,7 +293,7 @@ class ExplorationScene:
     def _draw_hud(self, surface: pygame.Surface) -> None:
         font = _get_font()
         lines = [
-            f"Seed ready to plant: {'yes' if self._generation.is_seed_ready else 'no'}",
+            f"Seed ready to plant: {'yes' if self._can_plant_seed() else 'no'}",
             f"Spores this life: {self._generation.spores_gained}",
             self._last_message,
             "Space/Enter: advance   P: plant seed",

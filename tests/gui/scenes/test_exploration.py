@@ -209,6 +209,22 @@ def test_plant_seed_action_is_a_no_op_at_entry_even_when_the_seed_is_ready() -> 
     assert generation.is_seed_ready is True
 
 
+def test_can_plant_seed_reflects_phase_not_just_seed_readiness() -> None:
+    # _can_plant_seed() backs both the actual plant gate and the GUI's "seed ready" icon/HUD
+    # label -- it must go False the moment the phase leaves RESOLVED, even though the domain's
+    # is_seed_ready stays True until an actual plant_seed() call consumes it.
+    scene, generation = _scene([EncounterKind.NOTHING] * (_ADVANCES_TO_READY_SEED + 1))
+    for _ in range(_ADVANCES_TO_READY_SEED):
+        _resolve_next_screen(scene)
+    assert generation.is_seed_ready is True
+    assert scene._can_plant_seed() is True  # RESOLVED, per _resolve_next_screen()'s contract
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # now AT_ENTRY
+    assert generation.is_seed_ready is True
+    assert scene._can_plant_seed() is False
+
+
 def test_advance_action_returns_an_enter_combat_transition_on_encounter() -> None:
     scene, _ = _scene([EncounterKind.ENEMY])
 
