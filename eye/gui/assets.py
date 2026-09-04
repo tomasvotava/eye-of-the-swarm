@@ -34,6 +34,11 @@ class SpriteKey(StrEnum):
     # same-named sprite) -- the conventional "missing texture" placeholder, not tied to any one
     # entity, so callers have somewhere to fall back to instead of crashing.
     UNKNOWN = "unknown"
+    BEATLE = "beatle"
+    FLEA = "flea"
+    GOLEM = "golem"
+    PHIDIZVIK = "phidizvik"
+    TUMBLEWEED = "tumbleweed"
 
 
 class SpriteAtlas:
