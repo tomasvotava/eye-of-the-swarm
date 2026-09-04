@@ -15,6 +15,7 @@ import pygame
 import pygame.typing
 
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
+from eye.gui.animation import Animator
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.tuning import (
@@ -70,6 +71,16 @@ class _Phase(Enum):
     WALKING_TO_EXIT = auto()
     AT_ENTRY = auto()
     WALKING_TO_ENCOUNTER = auto()
+
+
+def _animation_state_for_phase(phase: _Phase) -> PlayerAnimationState:
+    match phase:
+        case _Phase.WALKING_TO_EXIT | _Phase.WALKING_TO_ENCOUNTER:
+            return PlayerAnimationState.WALK
+        case _Phase.RESOLVED | _Phase.AT_ENTRY:
+            return PlayerAnimationState.IDLE
+        case _:
+            assert_never(phase)
 
 
 _font: pygame.font.Font | None = None
@@ -135,6 +146,15 @@ class ExplorationScene:
         self._pending_action: ExplorationAction | None = None
         self._last_message = "You explore outward from the hive."
 
+        # None when the atlas has no player animation data (e.g. build_placeholder_atlas()) --
+        # mirrors DevAssetViewerScene's identical guard for this identical key/enum (ADR 0011).
+        self._player_animator: Animator[PlayerAnimationState] | None = None
+        if atlas.has_animation_set(SpriteKey.PLAYER):
+            self._player_animator = Animator(
+                atlas.get_animation_set(SpriteKey.PLAYER, PlayerAnimationState),
+                initial_state=_animation_state_for_phase(starting_phase),
+            )
+
     @classmethod
     def for_new_generation(cls, generation: Generation, game: Game, atlas: SpriteAtlas) -> ExplorationScene:
         """Joins the cycle at `AT_ENTRY` for the first screen beyond spawn. The spawn/home-turf
@@ -160,6 +180,8 @@ class ExplorationScene:
             self._pending_action = action
 
     def update(self, dt: float) -> PlaySceneTransition | None:
+        if self._player_animator is not None:
+            self._player_animator.update(dt)
         if self._phase in (_Phase.WALKING_TO_EXIT, _Phase.WALKING_TO_ENCOUNTER):
             # A key pressed mid-walk is a silent no-op, not a queued one -- discarded here rather
             # than left to fire the instant the walk ends.
@@ -187,8 +209,15 @@ class ExplorationScene:
         return self._advance_walk(dt)
 
     def _begin_walk(self, phase: _Phase) -> None:
-        self._phase = phase
+        self._set_phase(phase)
         self._walk_elapsed_seconds = 0.0
+
+    def _set_phase(self, phase: _Phase) -> None:
+        # Single source of truth for phase transitions (post-__init__) -- keeps the player
+        # animator's state from being able to drift out of sync with the phase (ADR 0012).
+        self._phase = phase
+        if self._player_animator is not None:
+            self._player_animator.set_state(_animation_state_for_phase(phase))
 
     def _can_plant_seed(self) -> bool:
         # Single source of truth for plant legality -- both the actual gate in update() and the
@@ -218,12 +247,12 @@ class ExplorationScene:
 
     def _arrive_at_exit(self) -> None:
         self._pending_events = self._generation.advance()
-        self._phase = _Phase.AT_ENTRY
+        self._set_phase(_Phase.AT_ENTRY)
         self._walk_elapsed_seconds = 0.0
 
     def _arrive_at_encounter(self) -> PlaySceneTransition | None:
         events, self._pending_events = self._pending_events, ()
-        self._phase = _Phase.RESOLVED
+        self._set_phase(_Phase.RESOLVED)
         self._walk_elapsed_seconds = 0.0
 
         encounter = next((event for event in events if isinstance(event, EnemyEncountered)), None)
@@ -264,7 +293,10 @@ class ExplorationScene:
         return start + (end - start) * ratio
 
     def _draw_player(self, surface: pygame.Surface) -> None:
-        player = self._atlas.get(SpriteKey.PLAYER)
+        if self._player_animator is not None:
+            player = self._player_animator.current_frame()
+        else:
+            player = self._atlas.get(SpriteKey.PLAYER)
         x = round(surface.get_width() * self._player_x_fraction())
         surface.blit(player, player.get_rect(center=(x, surface.get_rect().centery)))
 

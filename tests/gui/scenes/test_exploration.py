@@ -1,4 +1,6 @@
+import json
 from collections.abc import Sequence
+from pathlib import Path
 
 import pygame
 import pytest
@@ -7,16 +9,17 @@ from eye.combat.effects import EffectName
 from eye.exploration.encounters import Biome, EncounterKind, ResourceKind, Strain
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
-from eye.gui.assets import SpriteKey, build_placeholder_atlas
+from eye.gui.assets import SpriteKey, build_art_atlas, build_placeholder_atlas
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
     KEY_ACTIONS,
     ExplorationAction,
     ExplorationScene,
+    PlayerAnimationState,
     _Phase,
     _resolve_encounter_sprite_key,
 )
-from eye.gui.tuning import WALK_TO_ENCOUNTER_DURATION_SECONDS, WALK_TO_EXIT_DURATION_SECONDS
+from eye.gui.tuning import ENTRY_X_FRACTION, WALK_TO_ENCOUNTER_DURATION_SECONDS, WALK_TO_EXIT_DURATION_SECONDS
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -29,6 +32,28 @@ def _scene(kind_queue: Sequence[EncounterKind] = ()) -> tuple[ExplorationScene, 
     game = Game(ScriptedEncounterRandom(kind_queue))
     generation = game.start_generation()
     return ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas()), generation
+
+
+def _write_player_clips(assets_dir: Path, frame_count: int = 2, fps: float = 8) -> None:
+    # Mirrors tests/gui/scenes/test_dev_assets.py's own helper -- too small a duplicate to
+    # justify a shared test fixture module for.
+    player_dir = assets_dir / SpriteKey.PLAYER.value
+    player_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("idle", "walk"):
+        sheet = pygame.Surface((4 * frame_count, 4))
+        for index in range(frame_count):
+            color = (index * 40 % 256, 0, 0, 255)
+            sheet.fill(color, pygame.Rect(index * 4, 0, 4, 4))
+        pygame.image.save(sheet, player_dir / f"{name}.png")
+        manifest = {"frame_width": 4, "frame_height": 4, "frame_count": frame_count, "fps": fps}
+        (player_dir / f"{name}.json").write_text(json.dumps(manifest))
+
+
+def _scene_with_real_player_art(tmp_path: Path, kind_queue: Sequence[EncounterKind] = ()) -> ExplorationScene:
+    _write_player_clips(tmp_path)
+    game = Game(ScriptedEncounterRandom(kind_queue))
+    generation = game.start_generation()
+    return ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
 
 
 def _press(scene: ExplorationScene, key: int) -> None:
@@ -274,3 +299,93 @@ def test_draw_does_not_raise_across_every_phase(surface_size: tuple[int, int]) -
     _press(scene, pygame.K_SPACE)
     scene.update(WALK_TO_EXIT_DURATION_SECONDS / 2)
     scene.draw(surface)  # WALKING_TO_EXIT, mid-walk
+
+
+def test_without_animation_data_the_player_animator_is_none() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+
+    assert scene._player_animator is None
+
+
+def test_with_animation_data_the_player_animator_is_built(tmp_path: Path) -> None:
+    scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING])
+
+    assert scene._player_animator is not None
+
+
+def test_player_animation_state_is_idle_at_entry_and_walk_during_the_walk_to_the_encounter(
+    tmp_path: Path,
+) -> None:
+    scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING])
+    phase_at_entry = scene._phase
+    assert phase_at_entry is _Phase.AT_ENTRY
+    animator = scene._player_animator
+    assert animator is not None
+    state_at_entry = animator._state
+    assert state_at_entry is PlayerAnimationState.IDLE
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # mid-walk to the marker
+    phase_mid_walk = scene._phase
+    assert phase_mid_walk is _Phase.WALKING_TO_ENCOUNTER
+    state_mid_walk = animator._state
+    assert state_mid_walk is PlayerAnimationState.WALK
+
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # arrives, RESOLVED
+    phase_resolved = scene._phase
+    assert phase_resolved is _Phase.RESOLVED
+    state_resolved = animator._state
+    assert state_resolved is PlayerAnimationState.IDLE
+
+
+def test_player_animation_state_is_walk_during_the_walk_to_the_exit(tmp_path: Path) -> None:
+    scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING, EncounterKind.NOTHING])
+    _resolve_next_screen(scene)
+    phase_resolved = scene._phase
+    assert phase_resolved is _Phase.RESOLVED
+    assert scene._player_animator is not None
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS / 2)  # mid-walk to the exit
+    phase_mid_walk = scene._phase
+    assert phase_mid_walk is _Phase.WALKING_TO_EXIT
+    assert scene._player_animator._state is PlayerAnimationState.WALK
+
+
+def test_resuming_after_combat_starts_the_player_animator_idle(tmp_path: Path) -> None:
+    _write_player_clips(tmp_path)
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
+    generation = game.start_generation()
+
+    scene = ExplorationScene.resuming_after_combat(generation, game, build_art_atlas(tmp_path))
+
+    assert scene._phase is _Phase.RESOLVED
+    assert scene._player_animator is not None
+    assert scene._player_animator._state is PlayerAnimationState.IDLE
+
+
+def test_updating_advances_the_player_animation_frame_during_a_walk(tmp_path: Path) -> None:
+    scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING])
+    assert scene._player_animator is not None
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(0.0)  # enters WALKING_TO_ENCOUNTER without consuming any walk time yet
+    first_frame = scene._player_animator.current_frame()
+
+    scene.update(1 / 8)  # exactly one frame at the default 8fps test clip
+    second_frame = scene._player_animator.current_frame()
+
+    assert pygame.image.tobytes(first_frame, "RGBA") != pygame.image.tobytes(second_frame, "RGBA")
+
+
+def test_draw_with_animation_data_blits_the_animator_frame(tmp_path: Path) -> None:
+    scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING])
+    assert scene._player_animator is not None  # AT_ENTRY, drawn at ENTRY_X_FRACTION
+
+    surface = pygame.Surface((64, 64))
+    scene.draw(surface)
+
+    expected = scene._player_animator.current_frame()
+    x = round(surface.get_width() * ENTRY_X_FRACTION)
+    sampled = surface.get_at((x, surface.get_height() // 2))
+    assert sampled == expected.get_at((expected.get_width() // 2, expected.get_height() // 2))
