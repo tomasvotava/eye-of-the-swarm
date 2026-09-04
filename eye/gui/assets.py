@@ -115,6 +115,11 @@ _PLACEHOLDER_SHAPES: Mapping[SpriteKey, _PlaceholderShape] = {
     SpriteKey.EFFECT_PICKUP: _PlaceholderShape(color="mediumorchid", is_circle=True),
     SpriteKey.RESOURCE_PICKUP: _PlaceholderShape(color="goldenrod", is_circle=True),
     SpriteKey.UNKNOWN: _PlaceholderShape(color="magenta", is_circle=False),
+    SpriteKey.BEATLE: _PlaceholderShape(color="darkolivegreen", is_circle=True),
+    SpriteKey.FLEA: _PlaceholderShape(color="sienna", is_circle=True),
+    SpriteKey.GOLEM: _PlaceholderShape(color="slategray", is_circle=True),
+    SpriteKey.PHIDIZVIK: _PlaceholderShape(color="teal", is_circle=True),
+    SpriteKey.TUMBLEWEED: _PlaceholderShape(color="peru", is_circle=True),
 }
 
 
