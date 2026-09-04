@@ -4,7 +4,7 @@ generational loop (ADR 0009). Wired in behind a dev-only entry point in app.py -
 in the normal exploration -> combat -> skill-tree -> rebirth loop.
 """
 
-from enum import Enum, auto
+from enum import Enum, StrEnum, auto
 
 import pygame
 import pygame.typing
@@ -20,17 +20,39 @@ _MARGIN = 8
 _SPRITE_SCALE = 8  # placeholder sprites are tiny; enlarge them for visibility while browsing
 
 _KEYS: tuple[SpriteKey, ...] = tuple(SpriteKey)
+_ENEMY_KEYS: tuple[SpriteKey, ...] = (
+    SpriteKey.BEATLE,
+    SpriteKey.FLEA,
+    SpriteKey.GOLEM,
+    SpriteKey.PHIDIZVIK,
+    SpriteKey.TUMBLEWEED,
+)
+
+
+class EnemyAnimationState(StrEnum):
+    """Dev-viewer-only preview states, matching the idle/attack/hit clips shipped per enemy
+    directory -- not the combat domain's eventual state type, which combat wiring defines
+    separately when it lands.
+    """
+
+    IDLE = "idle"
+    ATTACK = "attack"
+    HIT = "hit"
 
 
 class DevAssetViewerAction(Enum):
     NEXT = auto()
     PREVIOUS = auto()
+    NEXT_STATE = auto()
+    PREVIOUS_STATE = auto()
 
 
 # pygame key -> DevAssetViewerAction. Edit this mapping to reassign controls.
 KEY_ACTIONS: dict[int, DevAssetViewerAction] = {
     pygame.K_RIGHT: DevAssetViewerAction.NEXT,
     pygame.K_LEFT: DevAssetViewerAction.PREVIOUS,
+    pygame.K_UP: DevAssetViewerAction.NEXT_STATE,
+    pygame.K_DOWN: DevAssetViewerAction.PREVIOUS_STATE,
 }
 
 _font: pygame.font.Font | None = None
@@ -56,6 +78,12 @@ class DevAssetViewerScene:
                 atlas.get_animation_set(SpriteKey.PLAYER, PlayerAnimationState),
                 initial_state=PlayerAnimationState.IDLE,
             )
+        self._enemy_state = EnemyAnimationState.IDLE
+        self._enemy_animators: dict[SpriteKey, Animator[EnemyAnimationState]] = {
+            key: Animator(atlas.get_animation_set(key, EnemyAnimationState), initial_state=EnemyAnimationState.IDLE)
+            for key in _ENEMY_KEYS
+            if atlas.has_animation_set(key)
+        }
 
     @property
     def current_key(self) -> SpriteKey:
@@ -69,19 +97,36 @@ class DevAssetViewerScene:
             self._pending_action = action
 
     def update(self, dt: float) -> Scene | None:
+        if self._pending_action is not None:
+            action = self._pending_action
+            self._pending_action = None
+            match action:
+                case DevAssetViewerAction.NEXT:
+                    self._index = (self._index + 1) % len(_KEYS)
+                case DevAssetViewerAction.PREVIOUS:
+                    self._index = (self._index - 1) % len(_KEYS)
+                case DevAssetViewerAction.NEXT_STATE:
+                    self._cycle_enemy_state(1)
+                case DevAssetViewerAction.PREVIOUS_STATE:
+                    self._cycle_enemy_state(-1)
         if self._player_animator is not None:
             self._player_animator.update(dt)
-        if self._pending_action is None:
-            return None
-        action = self._pending_action
-        self._pending_action = None
-        delta = 1 if action is DevAssetViewerAction.NEXT else -1
-        self._index = (self._index + delta) % len(_KEYS)
+        current_enemy_animator = self._enemy_animators.get(self.current_key)
+        if current_enemy_animator is not None:
+            current_enemy_animator.set_state(self._enemy_state)
+            current_enemy_animator.update(dt)
         return None
+
+    def _cycle_enemy_state(self, delta: int) -> None:
+        states = tuple(EnemyAnimationState)
+        self._enemy_state = states[(states.index(self._enemy_state) + delta) % len(states)]
 
     def _current_sprite(self, key: SpriteKey) -> pygame.Surface:
         if key is SpriteKey.PLAYER and self._player_animator is not None:
             return self._player_animator.current_frame()
+        enemy_animator = self._enemy_animators.get(key)
+        if enemy_animator is not None:
+            return enemy_animator.current_frame()
         return self._atlas.get(key)
 
     def draw(self, surface: pygame.Surface) -> None:
@@ -97,5 +142,7 @@ class DevAssetViewerScene:
             f"{key.value}  ({self._index + 1}/{len(_KEYS)})",
             "Left/Right: previous/next sprite",
         ]
+        if key in self._enemy_animators:
+            lines.append(f"state: {self._enemy_state.value}  (Up/Down: previous/next state)")
         for index, line in enumerate(lines):
             surface.blit(font.render(line, True, _TEXT_COLOR), (_MARGIN, _MARGIN + index * _FONT_SIZE))
