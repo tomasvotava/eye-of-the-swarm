@@ -18,3 +18,4 @@ Design source: [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 | [0010](adr/0010-gui-game-driver-architecture.md) | GUI driver: `GameDriver` split from `App` | Accepted |
 | [0011](adr/0011-sprite-asset-pipeline-and-animation-framework.md) | Sprite asset pipeline & animation framework | Accepted |
 | [0012](adr/0012-screen-walking-movement.md) | Screen-walking movement | Accepted |
+| [0013](adr/0013-battle-event-animation.md) | Battle event animation | Accepted |
