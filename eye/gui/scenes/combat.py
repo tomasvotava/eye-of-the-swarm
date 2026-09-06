@@ -5,6 +5,12 @@ own and surfacing an action menu only once the player actually needs to choose. 
 it reports a bare `BattleConcluded()` and takes no further action -- `GameDriver` (ADR 0010) is the
 one that reads `generation.died` and decides whether that means a return to exploration or a trip
 to the skill tree, mirroring `eye/tui/combat.py::play_battle()`, which never decides that either.
+
+Each domain call's returned events are revealed one at a time through `_pending_events` rather
+than applied to the log in the same instant (ADR 0013) -- the next domain call, the action menu's
+interactivity, and the `BattleConcluded` transition are all withheld until that queue drains.
+`Battle` itself may already be ahead of what's been shown; `CombatScene` only acts on that once
+nothing is left to reveal.
 """
 
 from collections import deque
@@ -39,6 +45,7 @@ from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
+from eye.gui.tuning import BATTLE_EVENT_REVEAL_INTERVAL_SECONDS
 from eye.gui.widgets import BuffIcon, TextBuffIcon
 from eye.session.generation import Generation
 
@@ -161,10 +168,20 @@ class CombatScene:
         self._pending_action_index: int | None = None
         self._cursor_index = 0
         self._log: deque[str] = deque(maxlen=_LOG_LINES)
-        self._record(self._battle.start())
+        # No maxlen -- every event must reach the player in order, unlike _log's rolling display
+        # window, which can afford to drop old lines (ADR 0013).
+        self._pending_events: deque[BattleEvent] = deque()
+        self._reveal_timer = 0.0
+        # Tracks whether this update() call already revealed an event, so a same-call fallthrough
+        # into a fresh domain call (e.g. the queue draining straight into AWAITING_ENEMY_TURN)
+        # doesn't also grant that new batch an immediate reveal -- exactly one event per call,
+        # even at a batch boundary (ADR 0013). False at construction so battle.start()'s own
+        # batch still gets its immediate first reveal, same as any other fresh batch.
+        self._revealed_this_call = False
+        self._queue_events(self._battle.start())
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
-        if pygame_event.type != pygame.KEYDOWN or self._pending_query is None:
+        if pygame_event.type != pygame.KEYDOWN or self._pending_query is None or self._pending_events:
             return
         available = self._pending_query.available
         if pygame_event.key in ACTION_KEYS:
@@ -179,6 +196,14 @@ class CombatScene:
             self._pending_action_index = self._cursor_index
 
     def update(self, dt: float) -> PlaySceneTransition | None:
+        self._revealed_this_call = False
+        if self._pending_events:
+            self._advance_reveal(dt)
+            if self._pending_events:
+                return None
+            # The queue just drained on this same call -- fall through to check the gates below
+            # immediately, rather than waiting an extra frame, mirroring ExplorationScene's own
+            # arrival handling (ADR 0012) which acts the instant its own timer condition is met.
         if self._battle.is_over:
             return self._conclude()
         phase = self._battle.turn_phase
@@ -187,17 +212,23 @@ class CombatScene:
         elif phase is TurnPhase.AWAITING_PLAYER_ACTION:
             self._resolve_pending_action()
         elif phase is TurnPhase.AWAITING_ENEMY_TURN:
-            self._record(self._battle.resolve_enemy_turn())
+            self._queue_events(self._battle.resolve_enemy_turn())
         return None
+
+    def _advance_reveal(self, dt: float) -> None:
+        self._reveal_timer += dt
+        if self._reveal_timer >= BATTLE_EVENT_REVEAL_INTERVAL_SECONDS:
+            self._reveal_timer = 0.0
+            self._reveal_next_event()
 
     def _advance_query(self) -> None:
         query = self._battle.query_player_turn()
         if isinstance(query, PlayerTurnNeedsAction):
-            self._record(query.pre_turn_events)
             self._pending_query = query
             self._cursor_index = 0
+            self._queue_events(query.pre_turn_events)
         else:
-            self._record(query.events)
+            self._queue_events(query.events)
 
     def _resolve_pending_action(self) -> None:
         if self._pending_query is None or self._pending_action_index is None:
@@ -205,15 +236,32 @@ class CombatScene:
         action = self._pending_query.available[self._pending_action_index]
         self._pending_query = None
         self._pending_action_index = None
-        self._record(self._battle.resolve_player_turn(action))
+        self._queue_events(self._battle.resolve_player_turn(action))
 
     def _conclude(self) -> PlaySceneTransition:
         self._generation.finish_battle(self._battle)
         return BattleConcluded()
 
-    def _record(self, events: Sequence[BattleEvent]) -> None:
-        for event in events:
-            self._log.append(_describe_event(event))
+    def _queue_events(self, events: Sequence[BattleEvent]) -> None:
+        # Only ever called with an already-empty queue -- update()'s top-of-method gate withholds
+        # every call site below it (query/resolve/enemy-turn) until _pending_events drains, and
+        # __init__ starts with an empty deque. A freshly queued batch's first event reveals
+        # immediately (ADR 0013's decided pacing: the domain call that produced this batch already
+        # fired this frame, so showing its first consequence right away reads as responsive) --
+        # *unless* this same update() call already revealed an event via the queue-drain
+        # fallthrough above. Without that guard, a batch boundary (the previous batch's last event
+        # draining straight into a fresh domain call, e.g. AWAITING_ENEMY_TURN) would grant the new
+        # batch its own immediate reveal too, showing two events in one call -- the two decisions
+        # (immediate-first-reveal, same-call fallthrough) are each correct alone but compound at
+        # the seam between them without this check.
+        self._pending_events.extend(events)
+        if self._pending_events and not self._revealed_this_call:
+            self._reveal_next_event()
+        self._reveal_timer = 0.0
+
+    def _reveal_next_event(self) -> None:
+        self._revealed_this_call = True
+        self._log.append(_describe_event(self._pending_events.popleft()))
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
@@ -280,7 +328,7 @@ class CombatScene:
             x += _BUFF_ICON_STEP
 
     def _draw_menu(self, surface: pygame.Surface) -> None:
-        if self._pending_query is None:
+        if self._pending_query is None or self._pending_events:
             return
         font = _get_font()
         available = self._pending_query.available

@@ -6,6 +6,7 @@ from eye.character import Character
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.battle import TurnPhase
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
+from eye.combat.events import MeterConsumed
 from eye.combat.stats import Stats
 from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
 from eye.exploration.encounters import EncounterKind, Strain
@@ -22,6 +23,7 @@ from eye.gui.scenes.combat import (
     CombatScene,
     _resolve_enemy_sprite_key,
 )
+from eye.gui.tuning import BATTLE_EVENT_REVEAL_INTERVAL_SECONDS
 from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
@@ -54,10 +56,13 @@ def _press(scene: CombatScene, key: int) -> None:
     scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=key))
 
 
-def _drive_to_transition(scene: CombatScene, max_frames: int = 200) -> PlaySceneTransition:
+def _drive_to_transition(scene: CombatScene, max_frames: int = 500) -> PlaySceneTransition:
+    # dt >= the reveal interval on every call guarantees each call drains at most one already-
+    # queued event (never zero, unless nothing is pending) rather than needing to simulate real
+    # elapsed wall-clock time across many small-dt frames (ADR 0013's paced reveal queue).
     for _ in range(max_frames):
         _press(scene, ACTION_KEYS[0])
-        result = scene.update(0.016)
+        result = scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)
         if result is not None:
             return result
     raise AssertionError("battle did not conclude within max_frames")
@@ -155,8 +160,10 @@ def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
     assert scene._cursor_index == 1
     _press(scene, pygame.K_RETURN)
 
-    for _ in range(10):
-        scene.update(0.016)
+    # dt >= the reveal interval per call so each call drains at most one queued event instead of
+    # needing to simulate real elapsed time across many small-dt frames (ADR 0013).
+    for _ in range(50):
+        scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)
         if scene._pending_query is not None:
             break
     else:
@@ -180,6 +187,123 @@ def test_update_resolves_automatic_phases_without_input() -> None:
     scene.update(0.016)
 
     assert scene._battle.turn_phase is TurnPhase.AWAITING_PLAYER_ACTION
+
+
+def test_queueing_a_batch_reveals_its_first_event_immediately() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)  # reach AWAITING_PLAYER_ACTION
+    _press(scene, ACTION_KEYS[0])
+
+    log_length_before = len(scene._log)
+    scene.update(0.0)  # resolves the turn; dt=0.0 proves the first reveal isn't interval-gated
+
+    assert len(scene._log) == log_length_before + 1
+    assert scene._pending_events, "a Struggle swing always yields more than one event"
+
+
+def test_update_reveals_at_most_one_further_event_per_call() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)  # reach AWAITING_PLAYER_ACTION
+    _press(scene, ACTION_KEYS[0])
+    scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)  # resolves the turn; queues events, reveals the first
+
+    assert scene._pending_events
+    pending_before = len(scene._pending_events)
+
+    scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS * 100)  # a huge dt still only drains one -- no catch-up
+
+    assert len(scene._pending_events) == pending_before - 1
+
+
+def test_update_withholds_the_next_query_while_events_are_pending() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)  # reach AWAITING_PLAYER_ACTION
+    _press(scene, ACTION_KEYS[0])
+    scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)  # resolves the turn; queues events, reveals the first
+
+    assert scene._pending_events, "a Struggle swing always yields more than one event"
+    pending_before = len(scene._pending_events)
+
+    for _ in range(3):
+        scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS / 10)  # nowhere near a full interval, even summed
+
+    assert len(scene._pending_events) == pending_before, "no event should reveal before the interval elapses"
+    assert scene._pending_query is None, "the next query must wait for the reveal queue to drain"
+
+
+def test_battle_concluded_is_withheld_until_the_last_event_is_revealed() -> None:
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=overwhelming)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)  # reach AWAITING_PLAYER_ACTION
+    _press(scene, ACTION_KEYS[0])
+    result = scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)  # resolves the lethal swing
+
+    assert result is None, "BattleConcluded must wait for the reveal queue, even though the battle is already over"
+    assert scene._battle.is_over
+    assert scene._pending_events, "the killing blow's events (including BattleEnded) are still queued"
+
+    result = None
+    for _ in range(50):
+        result = scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)
+        if result is not None:
+            break
+
+    assert result == BattleConcluded()
+    assert not scene._pending_events
+
+
+def test_menu_is_not_interactive_while_events_are_pending() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)  # sets a real pending_query with an empty queue
+    assert scene._pending_query is not None
+
+    # Force a queued event onto an otherwise-idle, already-interactive query, isolating the queue
+    # itself (rather than "no query yet") as what gates input/rendering.
+    scene._pending_events.append(MeterConsumed(combatant=scene._battle.player, meter_after=0))
+
+    _press(scene, ACTION_KEYS[0])
+    assert scene._pending_action_index is None, "handle_pygame_event must ignore input while events are pending"
+
+    surface = pygame.Surface((800, 600))
+    surface.fill("black")
+    scene._draw_menu(surface)
+
+    assert pygame.transform.average_color(surface)[:3] == (0, 0, 0), "the menu must not render"
+
+
+def test_update_never_reveals_more_than_one_event_per_call_across_a_whole_battle() -> None:
+    # Regression test: a batch boundary -- the reveal queue draining on the same update() call
+    # that then triggers a fresh domain call (e.g. straight into AWAITING_ENEMY_TURN) -- must not
+    # also grant that new batch's first event an immediate reveal on top of the one that just
+    # drained. _drive_to_transition's per-call dt only proves *at least* one event drains per
+    # call where events are pending; this counts every _reveal_next_event() call to prove *at
+    # most* one too, across this battle's own AWAITING_ENEMY_TURN boundaries (the guard is a
+    # single choke point in _queue_events, so this also covers the other call sites' boundaries).
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    reveal_count = 0
+    original_reveal = scene._reveal_next_event
+
+    def counting_reveal() -> None:
+        nonlocal reveal_count
+        reveal_count += 1
+        original_reveal()
+
+    scene._reveal_next_event = counting_reveal  # type: ignore[method-assign]  # test spy, not production code
+
+    for _ in range(500):
+        before = reveal_count
+        _press(scene, ACTION_KEYS[0])
+        result = scene.update(BATTLE_EVENT_REVEAL_INTERVAL_SECONDS)
+        assert reveal_count - before <= 1, "update() revealed more than one event in a single call"
+        if result is not None:
+            return
+    raise AssertionError("battle did not conclude within max_frames")
 
 
 def test_win_finishes_the_battle_and_reports_a_bare_battle_concluded() -> None:
