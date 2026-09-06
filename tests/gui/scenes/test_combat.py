@@ -12,7 +12,16 @@ from eye.exploration.encounters import EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
 from eye.gui.assets import SpriteKey, build_placeholder_atlas
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
-from eye.gui.scenes.combat import ACTION_KEYS, CombatScene, _resolve_enemy_sprite_key
+from eye.gui.scenes.combat import (
+    _BAR_HEIGHT,
+    _FONT_SIZE,
+    _GAP,
+    _MARGIN,
+    _METER_HEIGHT,
+    ACTION_KEYS,
+    CombatScene,
+    _resolve_enemy_sprite_key,
+)
 from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
@@ -204,3 +213,55 @@ def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
     scene.update(0.016)  # reach AWAITING_PLAYER_ACTION so the action menu also renders
 
     scene.draw(pygame.Surface(surface_size))
+
+
+def test_draw_anchors_the_player_left_and_the_enemy_right() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    surface = pygame.Surface((800, 600))
+    surface.fill("black")
+
+    scene.draw(surface)
+
+    player_sprite = scene._atlas.get(SpriteKey.PLAYER)
+    enemy_sprite = scene._atlas.get(scene._enemy_sprite_key)
+    # Both sprites are non-empty placeholder shapes drawn on a black background, so scanning each
+    # column for any non-black pixel locates where each panel actually rendered without hardcoding
+    # every sub-widget's position. Restricted to the sprite panels' own vertical band so the
+    # bottom-anchored menu/log (which always render near the left edge) can't mask a regression.
+    black = pygame.Color("black")
+    panel_band = range(_MARGIN, _MARGIN + max(player_sprite.get_height(), enemy_sprite.get_height()))
+    non_black_columns = [
+        x for x in range(surface.get_width()) if any(surface.get_at((x, y)) != black for y in panel_band)
+    ]
+    assert non_black_columns, "expected the combat scene to draw something"
+    assert min(non_black_columns) < player_sprite.get_width() + _MARGIN
+    assert max(non_black_columns) > surface.get_width() - enemy_sprite.get_width() - _MARGIN
+
+
+def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    # Short-labelled effects, so the assertion below exercises the row's positioning rather than
+    # a pre-existing, orthogonal limitation where a long label (e.g. "Clouded Judgement") can
+    # itself render wider than one _BUFF_ICON_STEP.
+    for effect in (EffectName.RUNT, EffectName.WILTY, EffectName.FIBROUS):
+        scene._battle.enemy.effects.apply(ActiveEffect(effect, EffectCategory.BATTLE, 5))
+    surface = pygame.Surface((800, 600))
+    surface.fill("black")
+
+    scene.draw(surface)
+
+    enemy_sprite = scene._atlas.get(scene._enemy_sprite_key)
+    sprite_x = surface.get_width() - _MARGIN - enemy_sprite.get_width()
+    icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
+    # A generous band around the icon row's y-position, well clear of the menu/log which anchor
+    # to the bottom of the surface -- isolates the icon row from the sprite/bars drawn above it.
+    icon_band = range(icon_row_top, icon_row_top + _FONT_SIZE * 2)
+    black = pygame.Color("black")
+    icon_columns = [x for x in range(surface.get_width()) if any(surface.get_at((x, y)) != black for y in icon_band)]
+
+    assert icon_columns, "expected the enemy's buff icons to render"
+    # The mirrored row anchors flush against the sprite instead of growing rightward past it --
+    # a small margin covers anti-aliased glyph edges, not a full icon-step's worth of drift.
+    assert max(icon_columns) < sprite_x + _GAP + 20

@@ -48,7 +48,6 @@ _GAP = 4
 _BAR_WIDTH = 200
 _BAR_HEIGHT = 16
 _METER_HEIGHT = 8
-_PANEL_GAP = 16
 _BUFF_ICON_STEP = 90
 _LOG_LINES = 4
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
@@ -218,28 +217,44 @@ class CombatScene:
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
-        panel_height = _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
-        self._draw_combatant(surface, self._battle.player, SpriteKey.PLAYER, _MARGIN)
-        self._draw_combatant(surface, self._battle.enemy, self._enemy_sprite_key, _MARGIN + panel_height + _PANEL_GAP)
+        self._draw_combatant(surface, self._battle.player, SpriteKey.PLAYER, mirrored=False)
+        self._draw_combatant(surface, self._battle.enemy, self._enemy_sprite_key, mirrored=True)
         self._draw_menu(surface)
         self._draw_log(surface)
 
-    def _draw_combatant(self, surface: pygame.Surface, combatant: Combatant, sprite_key: SpriteKey, top: int) -> None:
+    def _draw_combatant(
+        self, surface: pygame.Surface, combatant: Combatant, sprite_key: SpriteKey, *, mirrored: bool
+    ) -> None:
+        # mirrored=True anchors the whole panel to the surface's right edge instead of the left,
+        # so the player and enemy sit on opposite sides of the screen facing each other.
         font = _get_font()
         sprite = self._atlas.get(sprite_key)
-        surface.blit(sprite, (_MARGIN, top))
-        label_x = _MARGIN + sprite.get_width() + _GAP
-        surface.blit(font.render(combatant.name, True, _TEXT_COLOR), (label_x, top))
+        top = _MARGIN
+        if mirrored:
+            sprite_x = surface.get_width() - _MARGIN - sprite.get_width()
+            bar_right = sprite_x - _GAP
+            bar_left = bar_right - _BAR_WIDTH
+        else:
+            sprite_x = _MARGIN
+            bar_left = sprite_x + sprite.get_width() + _GAP
+            bar_right = bar_left + _BAR_WIDTH
+        surface.blit(sprite, (sprite_x, top))
+
+        name = font.render(combatant.name, True, _TEXT_COLOR)
+        name_x = bar_right - name.get_width() if mirrored else bar_left
+        surface.blit(name, (name_x, top))
 
         current_hp = max(0, combatant.current_hp)
-        hp_rect = pygame.Rect(label_x, top + _FONT_SIZE, _BAR_WIDTH, _BAR_HEIGHT)
+        hp_rect = pygame.Rect(bar_left, top + _FONT_SIZE, _BAR_WIDTH, _BAR_HEIGHT)
         self._draw_bar(surface, hp_rect, current_hp / combatant.base_stats.max_hp, _HP_COLOR)
         hp_label = font.render(f"{current_hp}/{combatant.base_stats.max_hp}", True, _TEXT_COLOR)
-        surface.blit(hp_label, (hp_rect.right + _GAP, hp_rect.top))
+        hp_label_x = hp_rect.left - _GAP - hp_label.get_width() if mirrored else hp_rect.right + _GAP
+        surface.blit(hp_label, (hp_label_x, hp_rect.top))
 
-        meter_rect = pygame.Rect(label_x, hp_rect.bottom + _GAP, _BAR_WIDTH, _METER_HEIGHT)
+        meter_rect = pygame.Rect(bar_left, hp_rect.bottom + _GAP, _BAR_WIDTH, _METER_HEIGHT)
         self._draw_bar(surface, meter_rect, combatant.current_meter / combatant.base_stats.meter_capacity, _METER_COLOR)
-        self._draw_buff_icons(surface, combatant, (label_x, meter_rect.bottom + _GAP))
+        icon_row_x = bar_right if mirrored else bar_left
+        self._draw_buff_icons(surface, combatant, (icon_row_x, meter_rect.bottom + _GAP), mirrored=mirrored)
 
     def _draw_bar(
         self, surface: pygame.Surface, rect: pygame.Rect, ratio: float, color: pygame.typing.ColorLike
@@ -249,11 +264,18 @@ class CombatScene:
         filled.width = round(rect.width * min(1.0, max(0.0, ratio)))
         pygame.draw.rect(surface, color, filled)
 
-    def _draw_buff_icons(self, surface: pygame.Surface, combatant: Combatant, pos: tuple[int, int]) -> None:
+    def _draw_buff_icons(
+        self, surface: pygame.Surface, combatant: Combatant, pos: tuple[int, int], *, mirrored: bool
+    ) -> None:
+        active = [name for name in EffectName if combatant.effects.has(name)]
         x, y = pos
-        for name in EffectName:
-            if not combatant.effects.has(name):
-                continue
+        if mirrored:
+            # pos.x is the row's right edge on the mirrored side; the BuffIcon protocol exposes
+            # no width to right-align each icon individually, so shift the whole row's start left
+            # by its total width instead and step forward as usual -- the row still ends flush at
+            # pos.x rather than growing off the sprite/surface edge.
+            x -= _BUFF_ICON_STEP * len(active)
+        for name in active:
             self._buff_icon_factory(name).render(surface, pygame.Vector2(x, y))
             x += _BUFF_ICON_STEP
 
