@@ -62,3 +62,6 @@ class Animator[TState: StrEnum]:
 
     def current_frame(self) -> pygame.Surface:
         return self._clips[self._state].frames[self._frame_index]
+
+    def duration_of(self, state: TState) -> float:
+        return self._clips[state].total_duration_seconds

@@ -9,8 +9,8 @@ to the skill tree, mirroring `eye/tui/combat.py::play_battle()`, which never dec
 
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, field, replace
+from enum import Enum, StrEnum
 from typing import assert_never
 
 import pygame
@@ -38,8 +38,10 @@ from eye.combat.events import (
 )
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
+from eye.gui.animation import AnimationClip, Animator
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
+from eye.gui.tuning import BATTLE_DEATH_POSE_HOLD_SECONDS, BATTLE_VALUE_TWEEN_SECONDS
 from eye.gui.widgets import BuffIcon, TextBuffIcon
 from eye.session.generation import Generation
 
@@ -157,6 +159,99 @@ class Phase:
     on_complete: Callable[[], None] = lambda: None
 
 
+class CombatAnimationState(StrEnum):
+    """Combat-facing animation states (ADR 0013) -- distinct from `dev_assets.py`'s preview-only
+    `EnemyAnimationState`, per that module's own docstring."""
+
+    IDLE = "idle"
+    ATTACK = "attack"
+    HIT = "hit"
+    DEAD = "dead"
+
+
+class _LoadedCombatAnimationState(StrEnum):
+    """The subset of `CombatAnimationState` backed by an actual animated clip on disk -- used only
+    as the `state_type` argument to `atlas.get_animation_set()`, which is all-or-nothing (raises if
+    any member has no matching clip). `DEAD` is deliberately excluded: it's a single static pose
+    (`dead.png`, no `.json` manifest -- a still frame has no meaningful fps), loaded as a named
+    variant instead and merged in separately by `_build_combat_animator`."""
+
+    IDLE = "idle"
+    ATTACK = "attack"
+    HIT = "hit"
+
+
+class _DeadVariant(StrEnum):
+    """The single static-pose variant name `_build_combat_animator` resolves via
+    `atlas.get_variant_set()` -- a one-member enum exists purely to satisfy that method's
+    enum-typed contract."""
+
+    DEAD = "dead"
+
+
+def _build_combat_animator(atlas: SpriteAtlas, key: SpriteKey) -> Animator[CombatAnimationState] | None:
+    """Returns `None` for a key with no animation clips at all -- the static-sprite fallback path
+    BRAMBLE/UNKNOWN and any `build_placeholder_atlas()`-based test takes. Otherwise builds the
+    full 4-state clip set: `IDLE`/`ATTACK`/`HIT` loaded from disk (with `loop=False` forced onto
+    the one-shot `ATTACK`/`HIT` clips -- `build_art_atlas` itself only sets `loop=True` defaults,
+    per ADR 0013), `DEAD` synthesized as a one-frame `loop=False` clip from the static `dead.png`
+    variant.
+    """
+    if not atlas.has_animation_set(key):
+        return None
+    loaded = atlas.get_animation_set(key, _LoadedCombatAnimationState)
+    clips: dict[CombatAnimationState, AnimationClip] = {
+        CombatAnimationState.IDLE: loaded[_LoadedCombatAnimationState.IDLE],
+        CombatAnimationState.ATTACK: replace(loaded[_LoadedCombatAnimationState.ATTACK], loop=False),
+        CombatAnimationState.HIT: replace(loaded[_LoadedCombatAnimationState.HIT], loop=False),
+    }
+    dead_surface = atlas.get_variant_set(key, _DeadVariant)[_DeadVariant.DEAD]
+    # frame_duration_seconds is otherwise inert for a single-frame clip (Animator.update() freezes
+    # before ever comparing elapsed time against it) -- the real hold comes from Death's own Phase
+    # duration (BATTLE_DEATH_POSE_HOLD_SECONDS). Any positive value satisfies AnimationClip here.
+    clips[CombatAnimationState.DEAD] = AnimationClip(
+        frames=(dead_surface,), frame_duration_seconds=BATTLE_DEATH_POSE_HOLD_SECONDS, loop=False
+    )
+    return Animator(clips, initial_state=CombatAnimationState.IDLE)
+
+
+@dataclass(slots=True)
+class DisplayedCombatantState:
+    """What `_draw_combatant` actually renders (ADR 0013) -- mutated only by `Phase` callbacks,
+    never read live off `Combatant` once the battle is underway. Float `hp`/`meter` let `on_progress`
+    interpolate smoothly; rounded only at draw time."""
+
+    hp: float
+    meter: float
+    active_effects: set[EffectName] = field(default_factory=set)
+
+
+def _displayed_state_from(combatant: Combatant) -> DisplayedCombatantState:
+    return DisplayedCombatantState(
+        hp=float(combatant.current_hp),
+        meter=float(combatant.current_meter),
+        active_effects={name for name in EffectName if combatant.effects.has(name)},
+    )
+
+
+def _hp_tween_phase(displayed: DisplayedCombatantState, end_hp: int) -> Phase:
+    # start is captured eagerly here, not in on_start: _phases_for runs synchronously when the
+    # triggering event is dequeued, by which point every earlier event's phases (including their
+    # own tweens' on_complete snaps) have already fully run -- so displayed.hp is always accurate
+    # at this exact moment. See ADR 0013 / CombatScene._advance_phases for why only one event's
+    # phases are ever active at a time.
+    start = displayed.hp
+    end = float(end_hp)
+
+    def on_progress(fraction: float) -> None:
+        displayed.hp = start + (end - start) * fraction
+
+    def on_complete() -> None:
+        displayed.hp = end  # snap to the exact value; avoids float drift from interpolation
+
+    return Phase(duration_seconds=BATTLE_VALUE_TWEEN_SECONDS, on_progress=on_progress, on_complete=on_complete)
+
+
 class CombatScene:
     def __init__(
         self,
@@ -178,7 +273,20 @@ class CombatScene:
         self._current_phases: deque[Phase] = deque()
         self._phase_elapsed: float = 0.0
         self._phase_started: bool = False
+        self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER)
+        self._enemy_animator = _build_combat_animator(atlas, self._enemy_sprite_key)
+        # Seeded before battle.start()'s own events are queued (ADR 0013) -- displayed state must
+        # reflect pre-battle values until start()'s events (e.g. a Resonance meter prefill) are
+        # actually revealed, not whatever start() already mutated live Combatant state to.
+        self._player_displayed = _displayed_state_from(self._battle.player)
+        self._enemy_displayed = _displayed_state_from(self._battle.enemy)
         self._queue_events(self._battle.start())
+
+    def _animator_for(self, combatant: Combatant) -> Animator[CombatAnimationState] | None:
+        return self._player_animator if combatant is self._battle.player else self._enemy_animator
+
+    def _displayed_for(self, combatant: Combatant) -> DisplayedCombatantState:
+        return self._player_displayed if combatant is self._battle.player else self._enemy_displayed
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN or self._pending_query is None:
@@ -198,6 +306,13 @@ class CombatScene:
             self._pending_action_index = self._cursor_index
 
     def update(self, dt: float) -> PlaySceneTransition | None:
+        # Ticks every real frame regardless of which phase (if any) is active (ADR 0013) -- not
+        # folded into _advance_phases, which can run its zero-duration cascade loop more than once
+        # per call and must not tick an animator's real elapsed time more than once per frame.
+        if self._player_animator is not None:
+            self._player_animator.update(dt)
+        if self._enemy_animator is not None:
+            self._enemy_animator.update(dt)
         self._advance_phases(dt)
         if self._current_phases or self._pending_events:
             # Gating invariant (ADR 0013): the next domain call and the BattleConcluded
@@ -276,17 +391,77 @@ class CombatScene:
             self._phase_started = False
             dt = 0.0  # a completed phase's leftover time is not carried into the next one
 
+    def _swing_phase(self, source: Combatant, target: Combatant) -> Phase:
+        # Drives both animators from one Phase (ADR 0013) -- no separate "windup" event needed
+        # even for a multi-hit combo, since animators tick unconditionally every frame regardless
+        # of which phase is active.
+        source_animator = self._animator_for(source)
+        target_animator = self._animator_for(target)
+        source_duration = source_animator.duration_of(CombatAnimationState.ATTACK) if source_animator else 0.0
+        target_duration = target_animator.duration_of(CombatAnimationState.HIT) if target_animator else 0.0
+
+        def on_start() -> None:
+            if source_animator is not None:
+                source_animator.set_state(CombatAnimationState.ATTACK)
+            if target_animator is not None:
+                target_animator.set_state(CombatAnimationState.HIT)
+
+        def on_complete() -> None:
+            if source_animator is not None:
+                source_animator.set_state(CombatAnimationState.IDLE)
+            if target_animator is not None:
+                target_animator.set_state(CombatAnimationState.IDLE)
+
+        return Phase(duration_seconds=max(source_duration, target_duration), on_start=on_start, on_complete=on_complete)
+
+    def _reaction_phase(self, combatant: Combatant) -> Phase:
+        # Target-only treatment for a reflect/recoil hit (ADR 0013) -- no attacker swing to drive.
+        animator = self._animator_for(combatant)
+        duration = animator.duration_of(CombatAnimationState.HIT) if animator else 0.0
+
+        def on_start() -> None:
+            if animator is not None:
+                animator.set_state(CombatAnimationState.HIT)
+
+        def on_complete() -> None:
+            if animator is not None:
+                animator.set_state(CombatAnimationState.IDLE)
+
+        return Phase(duration_seconds=duration, on_start=on_start, on_complete=on_complete)
+
     def _phases_for(self, event: BattleEvent) -> list[Phase]:
-        # Stubbed to [] for every variant -- the Phase primitive and driver land here; per-event
-        # visual content is added per-variant in #172 (animation-driven swings), #173
-        # (Announcement/Tween), and #174 (Overlay), per ADR 0013.
+        # EffectApplied/EffectExpired/TurnSkipped/ExtraActionTriggered/BattleEnded/MeterFilled/
+        # MeterConsumed/DotTicked/HealApplied are deliberately phase-less for now -- they get
+        # Announcement/Tween/Overlay treatments per ADR 0013 once those land. ActionChosen is
+        # permanently phase-less.
         match event:
             case ActionChosen():
                 return []
-            case Death():
-                return []
-            case Revive():
-                return []
+            case Death(combatant=combatant):
+                animator = self._animator_for(combatant)
+                displayed = self._displayed_for(combatant)
+
+                def on_start() -> None:
+                    # Defensive snap, not an assumption that a preceding event already tweened HP
+                    # correctly -- a DotTicked- or Wilty-triggered death has no such predecessor
+                    # (DotTicked's own phase is still [] here; Wilty sets current_hp with no event
+                    # at all). _handle_potential_death only ever fires Death once current_hp <= 0.
+                    displayed.hp = float(max(0, combatant.current_hp))
+                    if animator is not None:
+                        animator.set_state(CombatAnimationState.DEAD)
+
+                return [Phase(duration_seconds=BATTLE_DEATH_POSE_HOLD_SECONDS, on_start=on_start)]
+            case Revive(combatant=combatant, revived_hp=revived_hp):
+                animator = self._animator_for(combatant)
+
+                def on_start() -> None:
+                    if animator is not None:
+                        animator.set_state(CombatAnimationState.IDLE)
+
+                return [
+                    Phase(duration_seconds=0.0, on_start=on_start),
+                    _hp_tween_phase(self._displayed_for(combatant), revived_hp),
+                ]
             case TurnSkipped():
                 return []
             case EffectApplied():
@@ -301,12 +476,18 @@ class CombatScene:
                 return []
             case MeterConsumed():
                 return []
-            case HitLanded():
-                return []
-            case HitReflected():
-                return []
-            case SelfDamageTaken():
-                return []
+            case HitLanded(source=source, target=target, target_hp_after=target_hp_after):
+                return [
+                    self._swing_phase(source, target),
+                    _hp_tween_phase(self._displayed_for(target), target_hp_after),
+                ]
+            case HitReflected(target=target, target_hp_after=target_hp_after):
+                return [self._reaction_phase(target), _hp_tween_phase(self._displayed_for(target), target_hp_after)]
+            case SelfDamageTaken(combatant=combatant, combatant_hp_after=combatant_hp_after):
+                return [
+                    self._reaction_phase(combatant),
+                    _hp_tween_phase(self._displayed_for(combatant), combatant_hp_after),
+                ]
             case DotTicked():
                 return []
             case HealApplied():
@@ -316,17 +497,38 @@ class CombatScene:
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
-        self._draw_combatant(surface, self._battle.player, SpriteKey.PLAYER, mirrored=False)
-        self._draw_combatant(surface, self._battle.enemy, self._enemy_sprite_key, mirrored=True)
+        self._draw_combatant(
+            surface,
+            self._battle.player,
+            SpriteKey.PLAYER,
+            self._player_animator,
+            self._player_displayed,
+            mirrored=False,
+        )
+        self._draw_combatant(
+            surface,
+            self._battle.enemy,
+            self._enemy_sprite_key,
+            self._enemy_animator,
+            self._enemy_displayed,
+            mirrored=True,
+        )
         self._draw_menu(surface)
 
     def _draw_combatant(
-        self, surface: pygame.Surface, combatant: Combatant, sprite_key: SpriteKey, *, mirrored: bool
+        self,
+        surface: pygame.Surface,
+        combatant: Combatant,
+        sprite_key: SpriteKey,
+        animator: Animator[CombatAnimationState] | None,
+        displayed: DisplayedCombatantState,
+        *,
+        mirrored: bool,
     ) -> None:
         # mirrored=True anchors the whole panel to the surface's right edge instead of the left,
         # so the player and enemy sit on opposite sides of the screen facing each other.
         font = _get_font()
-        sprite = self._atlas.get(sprite_key)
+        sprite = animator.current_frame() if animator is not None else self._atlas.get(sprite_key)
         top = _MARGIN
         if mirrored:
             sprite_x = surface.get_width() - _MARGIN - sprite.get_width()
@@ -342,15 +544,22 @@ class CombatScene:
         name_x = bar_right - name.get_width() if mirrored else bar_left
         surface.blit(name, (name_x, top))
 
-        current_hp = max(0, combatant.current_hp)
+        current_hp = max(0.0, displayed.hp)
         hp_rect = pygame.Rect(bar_left, top + _FONT_SIZE, _BAR_WIDTH, _BAR_HEIGHT)
         self._draw_bar(surface, hp_rect, current_hp / combatant.base_stats.max_hp, _HP_COLOR)
-        hp_label = font.render(f"{current_hp}/{combatant.base_stats.max_hp}", True, _TEXT_COLOR)
+        hp_label = font.render(f"{round(current_hp)}/{combatant.base_stats.max_hp}", True, _TEXT_COLOR)
         hp_label_x = hp_rect.left - _GAP - hp_label.get_width() if mirrored else hp_rect.right + _GAP
         surface.blit(hp_label, (hp_label_x, hp_rect.top))
 
+        # Meter and buff icons deliberately still read live Combatant state, not
+        # DisplayedCombatantState: MeterFilled/MeterConsumed/EffectApplied/EffectExpired are all
+        # still phase-less (their Tween/Announcement treatments are pending per ADR 0013), so
+        # switching either over now would freeze it at its construction-time snapshot for the
+        # whole battle instead of tracking the fight -- worse than an always-live read.
         meter_rect = pygame.Rect(bar_left, hp_rect.bottom + _GAP, _BAR_WIDTH, _METER_HEIGHT)
-        self._draw_bar(surface, meter_rect, combatant.current_meter / combatant.base_stats.meter_capacity, _METER_COLOR)
+        self._draw_bar(
+            surface, meter_rect, max(0, combatant.current_meter) / combatant.base_stats.meter_capacity, _METER_COLOR
+        )
         icon_row_x = bar_right if mirrored else bar_left
         self._draw_buff_icons(surface, combatant, (icon_row_x, meter_rect.bottom + _GAP), mirrored=mirrored)
 
