@@ -65,10 +65,6 @@ KEY_ACTIONS: dict[int, SkillTreeAction] = {
 }
 
 
-def _get_font() -> pygame.font.Font:
-    return get_font(GameFont.ITHACA, _FONT_SIZE)
-
-
 def _node_state(skill_tree: SkillTree, node: SkillNode) -> SkillNodeState:
     if skill_tree.is_purchased(node.id):
         return SkillNodeState.PURCHASED
@@ -149,7 +145,7 @@ class SkillTreeScene:
 
     def _draw_grid(self, surface: pygame.Surface) -> None:
         skill_tree = self._game.skill_tree
-        font = _get_font()
+        font = get_font(GameFont.ITHACA, _FONT_SIZE)
         top = _MARGIN
         previous_branch = None
         for row_index, row in enumerate(_ROWS):
@@ -166,7 +162,7 @@ class SkillTreeScene:
             previous_branch = branch
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
-        font = _get_font()
+        font = get_font(GameFont.ITHACA, _FONT_SIZE)
         lines = [
             f"Spores available: {self._game.skill_tree.spores_available}",
             self._last_message,

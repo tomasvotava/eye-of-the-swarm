@@ -76,12 +76,6 @@ ACTION_KEYS: tuple[int, ...] = (
     pygame.K_9,
 )
 
-_font: pygame.font.Font | None = None
-
-
-def _get_font() -> pygame.font.Font:
-    return get_font(GameFont.ITHACA, _FONT_SIZE)
-
 
 def _label(value: Enum) -> str:
     return value.name.replace("_", " ").title()
@@ -538,7 +532,7 @@ class CombatScene:
     ) -> None:
         # mirrored=True anchors the whole panel to the surface's right edge instead of the left,
         # so the player and enemy sit on opposite sides of the screen facing each other.
-        font = _get_font()
+        font = get_font(GameFont.ITHACA, _FONT_SIZE)
         sprite = animator.current_frame() if animator is not None else self._atlas.get(sprite_key)
         if _COMBATANT_SCALE_FACTOR != 1:
             sprite = pygame.transform.scale_by(sprite, _COMBATANT_SCALE_FACTOR)
@@ -604,7 +598,7 @@ class CombatScene:
     def _draw_menu(self, surface: pygame.Surface) -> None:
         if self._pending_query is None:
             return
-        font = _get_font()
+        font = get_font(GameFont.ITHACA, _FONT_SIZE)
         available = self._pending_query.available
         menu_height = (len(available) + 1) * _FONT_SIZE  # +1 for the control hint below the rows
         top = surface.get_height() - menu_height - _MARGIN
