@@ -11,12 +11,17 @@ import pygame
 class AnimationClip:
     frames: tuple[pygame.Surface, ...]
     frame_duration_seconds: float
+    loop: bool = True
 
     def __post_init__(self) -> None:
         if not self.frames:
             raise ValueError("AnimationClip requires at least one frame")
         if self.frame_duration_seconds <= 0:
             raise ValueError(f"frame_duration_seconds must be positive, got {self.frame_duration_seconds!r}")
+
+    @property
+    def total_duration_seconds(self) -> float:
+        return len(self.frames) * self.frame_duration_seconds
 
 
 class Animator[TState: StrEnum]:
@@ -30,7 +35,12 @@ class Animator[TState: StrEnum]:
         self._elapsed_seconds = 0.0
 
     def set_state(self, state: TState) -> None:
-        if state == self._state:
+        # Re-entering the *same* looping state is a no-op (avoids restarting an idle loop every
+        # frame it's requested); a one-shot clip must restart even when re-entered from itself --
+        # otherwise, once frozen on its last frame, it could never play again (e.g. a combo's
+        # second hit re-requesting the same HIT state on a target already flinching from the
+        # first).
+        if state == self._state and self._clips[state].loop:
             return
         self._state = state
         self._frame_index = 0
@@ -38,10 +48,17 @@ class Animator[TState: StrEnum]:
 
     def update(self, dt: float) -> None:
         clip = self._clips[self._state]
+        if not clip.loop and self._frame_index == len(clip.frames) - 1:
+            return  # already frozen on a one-shot clip's last frame
         self._elapsed_seconds += dt
         while self._elapsed_seconds >= clip.frame_duration_seconds:
             self._elapsed_seconds -= clip.frame_duration_seconds
             self._frame_index = (self._frame_index + 1) % len(clip.frames)
+            if not clip.loop and self._frame_index == 0:
+                # Just wrapped past a one-shot clip's last frame -- snap back and freeze instead.
+                self._frame_index = len(clip.frames) - 1
+                self._elapsed_seconds = 0.0
+                break
 
     def current_frame(self) -> pygame.Surface:
         return self._clips[self._state].frames[self._frame_index]

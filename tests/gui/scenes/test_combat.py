@@ -1,3 +1,5 @@
+from collections import deque
+
 import pygame
 import pytest
 
@@ -6,7 +8,25 @@ from eye.character import Character
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.battle import TurnPhase
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
-from eye.combat.stats import Stats
+from eye.combat.events import (
+    ActionChosen,
+    BattleEnded,
+    BattleEvent,
+    Death,
+    DotTicked,
+    EffectApplied,
+    EffectExpired,
+    ExtraActionTriggered,
+    HealApplied,
+    HitLanded,
+    HitReflected,
+    MeterConsumed,
+    MeterFilled,
+    Revive,
+    SelfDamageTaken,
+    TurnSkipped,
+)
+from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
 from eye.exploration.encounters import EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
@@ -20,12 +40,47 @@ from eye.gui.scenes.combat import (
     _METER_HEIGHT,
     ACTION_KEYS,
     CombatScene,
+    Phase,
     _resolve_enemy_sprite_key,
 )
 from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
 _STATS = Stats(max_hp=20, attack=5, defense=2, meter_capacity=100, meter_fill_rate=1)
+
+
+def _combatant(name: str = "Combatant") -> Combatant:
+    return Combatant(name=name, base_stats=_STATS, current_hp=_STATS.max_hp)
+
+
+# One instance of every BattleEvent variant -- used to check that `_phases_for` is exhaustive and
+# currently stubbed to `[]` across the board, regardless of the field values on each event.
+_ONE_OF_EACH_BATTLE_EVENT: tuple[BattleEvent, ...] = (
+    Death(combatant=_combatant()),
+    Revive(combatant=_combatant(), revived_hp=5),
+    TurnSkipped(combatant=_combatant()),
+    ActionChosen(actor=_combatant(), action=ActionKind.STRUGGLE, was_swapped_by_clouded_judgement=False),
+    HitLanded(
+        source=_combatant(),
+        target=_combatant(),
+        action=ActionKind.STRUGGLE,
+        hit_index=0,
+        hit_count=1,
+        damage=3,
+        target_hp_after=17,
+    ),
+    HitReflected(source=_combatant(), target=_combatant(), damage=2, target_hp_after=18),
+    SelfDamageTaken(combatant=_combatant(), damage=1, combatant_hp_after=19),
+    EffectApplied(target=_combatant(), effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3),
+    EffectExpired(target=_combatant(), effect=EffectName.FIBROUS),
+    DotTicked(target=_combatant(), effect=EffectName.TOXICITY, damage=1, target_hp_after=19),
+    HealApplied(target=_combatant(), effect=EffectName.NOURISHED, amount=2, target_hp_after=20),
+    ExtraActionTriggered(actor=_combatant(), extra_action_index=1),
+    MeterFilled(combatant=_combatant(), amount=10, meter_after=50),
+    MeterConsumed(combatant=_combatant(), meter_after=0),
+    BattleEnded(winner=_combatant()),
+)
+
 # Two entries (both STRUGGLE-kind, so win/loss math is unaffected by which one gets picked) so
 # cursor navigation across more than one row is actually exercised.
 _ACTIONS = (
@@ -265,3 +320,146 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
     # The mirrored row anchors flush against the sprite instead of growing rightward past it --
     # a small margin covers anti-aliased glyph edges, not a full icon-step's worth of drift.
     assert max(icon_columns) < sprite_x + _GAP + 20
+
+
+def test_phases_for_is_exhaustive_and_stubbed_to_empty_for_every_variant() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    for event in _ONE_OF_EACH_BATTLE_EVENT:
+        assert scene._phases_for(event) == []
+
+
+def test_advance_phases_blocks_a_real_duration_phase_across_calls() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    starts: list[int] = []
+    completions: list[int] = []
+    first = Phase(duration_seconds=0.5, on_start=lambda: starts.append(1), on_complete=lambda: completions.append(1))
+    second = Phase(duration_seconds=0.5, on_start=lambda: starts.append(2), on_complete=lambda: completions.append(2))
+    scene._current_phases = deque([first, second])
+    scene._pending_events.clear()
+
+    scene._advance_phases(0.3)
+    assert starts == [1]
+    assert completions == []
+
+    scene._advance_phases(0.3)
+    # The second phase starts the instant the first completes, within this same call -- but does
+    # not itself complete yet, since only leftover (zeroed) time was available to it this call.
+    assert starts == [1, 2]
+    assert completions == [1]
+
+    # Regression check for the exact bug class this driver design exists to make impossible: a
+    # later, separate call must not re-fire on_start for a phase already in progress, even though
+    # `_phase_elapsed` was left at exactly 0.0 by the call above.
+    scene._advance_phases(0.5)
+    assert starts == [1, 2]
+    assert completions == [1, 2]
+
+
+def test_advance_phases_does_not_carry_a_completed_phases_leftover_time_into_the_next() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    completions: list[int] = []
+    first = Phase(duration_seconds=0.5, on_complete=lambda: completions.append(1))
+    second = Phase(duration_seconds=0.2, on_complete=lambda: completions.append(2))
+    scene._current_phases = deque([first, second])
+    scene._pending_events.clear()
+
+    scene._advance_phases(0.3)
+    # This call's dt overshoots the first phase's remaining duration by 0.3s -- more than enough
+    # to also finish the second phase (0.2s) if that leftover carried over instead of resetting.
+    scene._advance_phases(0.5)
+
+    assert completions == [1]
+
+
+def test_advance_phases_cascades_zero_duration_phases_within_a_single_call() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    completions: list[int] = []
+    scene._current_phases = deque(
+        [
+            Phase(duration_seconds=0.0, on_complete=lambda: completions.append(1)),
+            Phase(duration_seconds=0.0, on_complete=lambda: completions.append(2)),
+        ]
+    )
+    scene._pending_events.clear()
+
+    scene._advance_phases(0.016)
+
+    assert completions == [1, 2]
+    assert not scene._current_phases
+
+
+def test_update_starts_a_real_phase_exactly_once_across_two_frames() -> None:
+    # Drives the actual production path (update() -> _queue_events -> _start_next_event ->
+    # _phases_for), rather than injecting into _current_phases directly, so it also exercises the
+    # gate on real domain-produced events, not just hand-built ones. A RESONANCE effect guarantees
+    # battle.start() itself produces events for update()'s first call to pick up.
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    starts: list[BattleEvent] = []
+    scene._phases_for = lambda event: [Phase(duration_seconds=1.0, on_start=lambda: starts.append(event))]  # type: ignore[method-assign]
+
+    scene.update(0.016)
+    assert len(starts) == 1
+    assert scene._current_phases  # the long phase is still in progress
+    turn_phase_before = scene._battle.turn_phase
+
+    scene.update(0.016)
+
+    assert len(starts) == 1  # on_start must not refire while the same phase is still in progress
+    assert scene._battle.turn_phase == turn_phase_before  # confirms the next domain call was withheld
+
+
+def test_update_withholds_the_next_domain_call_while_phases_are_pending() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    turn_phase_before = scene._battle.turn_phase
+    scene._current_phases = deque([Phase(duration_seconds=1.0)])
+
+    result = scene.update(0.016)
+
+    assert result is None
+    assert scene._battle.turn_phase == turn_phase_before
+    assert scene._pending_query is None
+
+
+def test_update_withholds_battle_concluded_while_phases_are_pending() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._battle.enemy.current_hp = 0  # forces is_over True without going through _conclude()
+    scene._current_phases = deque([Phase(duration_seconds=1.0)])
+
+    result = scene.update(0.016)
+
+    assert result is None
+
+
+def test_handle_pygame_event_withholds_input_while_phases_are_pending() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)  # reach AWAITING_PLAYER_ACTION with a pending query
+    assert scene._pending_query is not None
+    scene._current_phases = deque([Phase(duration_seconds=1.0)])
+
+    _press(scene, ACTION_KEYS[0])
+
+    assert scene._pending_action_index is None
+
+
+def test_log_records_every_event_unbounded_and_is_never_drawn() -> None:
+    # _generation()'s default stats (not overwhelming) take the fight several rounds, producing
+    # more events than any small display-oriented cap could plausibly hold.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    _drive_to_transition(scene)
+
+    assert len(scene._log) > 4  # log has no cap; a bounded log would fail this
+    assert not hasattr(scene, "_draw_log")
+    scene.draw(pygame.Surface((800, 600)))  # must not raise now that draw() has no log panel

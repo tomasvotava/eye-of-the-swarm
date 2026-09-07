@@ -15,9 +15,9 @@ class _SingleState(StrEnum):
     IDLE = "idle"
 
 
-def _clip(frame_count: int, frame_duration_seconds: float = 0.1) -> AnimationClip:
+def _clip(frame_count: int, frame_duration_seconds: float = 0.1, *, loop: bool = True) -> AnimationClip:
     frames = tuple(pygame.Surface((1, 1)) for _ in range(frame_count))
-    return AnimationClip(frames=frames, frame_duration_seconds=frame_duration_seconds)
+    return AnimationClip(frames=frames, frame_duration_seconds=frame_duration_seconds, loop=loop)
 
 
 def test_animation_clip_rejects_zero_frames() -> None:
@@ -95,5 +95,42 @@ def test_update_wraps_through_multiple_frames_in_a_single_large_dt() -> None:
     animator = Animator(clips, initial_state=_SingleState.IDLE)
 
     animator.update(0.25)
+
+    assert animator.current_frame() is clips[_SingleState.IDLE].frames[2]
+
+
+def test_animation_clip_total_duration_seconds_is_frame_count_times_frame_duration() -> None:
+    clip = _clip(4, frame_duration_seconds=0.05)
+
+    assert clip.total_duration_seconds == pytest.approx(0.2)
+
+
+def test_set_state_to_the_same_non_looping_state_restarts_the_clip() -> None:
+    clips = {_SingleState.IDLE: _clip(2, frame_duration_seconds=0.1, loop=False)}
+    animator = Animator(clips, initial_state=_SingleState.IDLE)
+    animator.update(0.1)
+    assert animator.current_frame() is clips[_SingleState.IDLE].frames[1]
+
+    animator.set_state(_SingleState.IDLE)  # a combo's second hit re-requesting the same state
+
+    assert animator.current_frame() is clips[_SingleState.IDLE].frames[0]
+
+
+def test_update_freezes_on_the_last_frame_of_a_non_looping_clip() -> None:
+    clips = {_SingleState.IDLE: _clip(2, frame_duration_seconds=0.1, loop=False)}
+    animator = Animator(clips, initial_state=_SingleState.IDLE)
+
+    animator.update(0.1)
+    assert animator.current_frame() is clips[_SingleState.IDLE].frames[1]
+
+    animator.update(0.1)
+    assert animator.current_frame() is clips[_SingleState.IDLE].frames[1]
+
+
+def test_update_freezes_on_the_last_frame_under_an_oversized_dt_for_a_non_looping_clip() -> None:
+    clips = {_SingleState.IDLE: _clip(3, frame_duration_seconds=0.1, loop=False)}
+    animator = Animator(clips, initial_state=_SingleState.IDLE)
+
+    animator.update(10.0)  # far exceeds total_duration_seconds -- must not wrap past the last frame
 
     assert animator.current_frame() is clips[_SingleState.IDLE].frames[2]
