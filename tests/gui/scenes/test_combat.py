@@ -1,6 +1,10 @@
+import json
 from collections import deque
+from collections.abc import Sequence
+from pathlib import Path
 
 import pygame
+import pygame.typing
 import pytest
 
 from eye.bestiary import BESTIARY
@@ -28,9 +32,9 @@ from eye.combat.events import (
 )
 from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
-from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind
+from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
-from eye.gui.assets import SpriteKey, build_placeholder_atlas
+from eye.gui.assets import SpriteKey, build_art_atlas, build_placeholder_atlas
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
     _BAR_HEIGHT,
@@ -39,22 +43,51 @@ from eye.gui.scenes.combat import (
     _MARGIN,
     _METER_HEIGHT,
     ACTION_KEYS,
+    CombatAnimationState,
     CombatScene,
+    DisplayedCombatantState,
     Phase,
+    _build_combat_animator,
+    _DeadVariant,
+    _hp_tween_phase,
+    _LoadedCombatAnimationState,
     _resolve_enemy_sprite_key,
 )
+from eye.gui.tuning import BATTLE_DEATH_POSE_HOLD_SECONDS, BATTLE_VALUE_TWEEN_SECONDS
+from eye.gui.widgets import BuffIcon, TextBuffIcon
 from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
 _STATS = Stats(max_hp=20, attack=5, defense=2, meter_capacity=100, meter_fill_rate=1)
 
 
+def _write_clip(directory: Path, name: str, frame_count: int = 2, frame_size: int = 4, fps: float = 8) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    pygame.image.save(pygame.Surface((frame_size * frame_count, frame_size)), directory / f"{name}.png")
+    manifest = {"frame_width": frame_size, "frame_height": frame_size, "frame_count": frame_count, "fps": fps}
+    (directory / f"{name}.json").write_text(json.dumps(manifest))
+
+
+def _write_dead_variant(directory: Path, size: int = 4) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    pygame.image.save(pygame.Surface((size, size)), directory / "dead.png")
+
+
+def _write_full_combat_sprite_set(directory: Path, *, attack_fps: float = 8, hit_fps: float = 8) -> None:
+    _write_clip(directory, "idle", frame_count=2, fps=8)
+    _write_clip(directory, "attack", frame_count=2, fps=attack_fps)
+    _write_clip(directory, "hit", frame_count=2, fps=hit_fps)
+    _write_dead_variant(directory)
+
+
 def _combatant(name: str = "Combatant") -> Combatant:
     return Combatant(name=name, base_stats=_STATS, current_hp=_STATS.max_hp)
 
 
-# One instance of every BattleEvent variant -- used to check that `_phases_for` is exhaustive and
-# currently stubbed to `[]` across the board, regardless of the field values on each event.
+# One instance of every BattleEvent variant -- used to check that `_phases_for` is exhaustive.
+# Death/Revive/HitLanded/HitReflected/SelfDamageTaken are the animation-driven swing events and
+# return real phases; every other variant stays stubbed to `[]` pending ADR 0013's remaining
+# Announcement/Tween/Overlay treatments.
 _ONE_OF_EACH_BATTLE_EVENT: tuple[BattleEvent, ...] = (
     Death(combatant=_combatant()),
     Revive(combatant=_combatant(), revived_hp=5),
@@ -89,12 +122,14 @@ _ACTIONS = (
 )
 
 
-def _generation(stats: Stats = _STATS, character: Character | None = None) -> Generation:
+def _generation(
+    stats: Stats = _STATS, character: Character | None = None, strain_queue: Sequence[Strain] = ()
+) -> Generation:
     return Generation(
         character=character or Character(current_hp=stats.max_hp, max_hp=stats.max_hp),
         stats=stats,
         actions=_ACTIONS,
-        rng=ScriptedEncounterRandom([EncounterKind.ENEMY]),
+        rng=ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=strain_queue),
         starting_screen=0,
         matured_turfs=(),
     )
@@ -210,7 +245,10 @@ def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
     assert scene._cursor_index == 1
     _press(scene, pygame.K_RETURN)
 
-    for _ in range(10):
+    # A generous budget: animation-driven swing/tween phases (ADR 0013) give HitLanded/
+    # SelfDamageTaken real duration, so several update() calls are needed before the next query
+    # can appear.
+    for _ in range(200):
         scene.update(0.016)
         if scene._pending_query is not None:
             break
@@ -332,12 +370,34 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
     assert max(icon_columns) < sprite_x + _GAP + 20
 
 
-def test_phases_for_is_exhaustive_and_stubbed_to_empty_for_every_variant() -> None:
+_ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded, HitReflected, SelfDamageTaken)
+
+
+def test_phases_for_is_exhaustive_over_every_battle_event_variant() -> None:
+    # No crash for any variant is the exhaustiveness check itself -- assert_never() would raise.
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
     for event in _ONE_OF_EACH_BATTLE_EVENT:
-        assert scene._phases_for(event) == []
+        scene._phases_for(event)
+
+
+def test_phases_for_returns_empty_for_variants_not_yet_animated() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    for event in _ONE_OF_EACH_BATTLE_EVENT:
+        if not isinstance(event, _ANIMATION_DRIVEN_EVENT_TYPES):
+            assert scene._phases_for(event) == []
+
+
+def test_phases_for_returns_real_phases_for_every_animation_driven_swing_event() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    for event in _ONE_OF_EACH_BATTLE_EVENT:
+        if isinstance(event, _ANIMATION_DRIVEN_EVENT_TYPES):
+            assert scene._phases_for(event) != []
 
 
 def test_advance_phases_blocks_a_real_duration_phase_across_calls() -> None:
@@ -473,3 +533,265 @@ def test_log_records_every_event_unbounded_and_is_never_drawn() -> None:
     assert len(scene._log) > 4  # log has no cap; a bounded log would fail this
     assert not hasattr(scene, "_draw_log")
     scene.draw(pygame.Surface((800, 600)))  # must not raise now that draw() has no log panel
+
+
+def test_build_combat_animator_returns_none_for_a_key_with_no_animation_clips() -> None:
+    assert _build_combat_animator(build_placeholder_atlas(), SpriteKey.BEATLE) is None
+
+
+def test_build_combat_animator_builds_the_full_four_state_clip_set(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)
+    atlas = build_art_atlas(tmp_path)
+
+    animator = _build_combat_animator(atlas, SpriteKey.BEATLE)
+
+    assert animator is not None
+    for state in CombatAnimationState:
+        animator.set_state(state)
+        assert isinstance(animator.current_frame(), pygame.Surface)
+
+
+def test_build_combat_animator_forces_loop_false_on_the_attack_and_hit_clips(tmp_path: Path) -> None:
+    # build_art_atlas itself only sets loop=True defaults -- _build_combat_animator must override
+    # it, or a swing phase's animation would keep cycling forever once its bounded duration ends.
+    # A 2-frame, fps=8 clip advanced by dt=1000.0 (8000 frame-durations, an even multiple) lands
+    # back on frame 0 if it loops -- only loop=False freezes it on the clip's *last* frame instead,
+    # so asserting against frames[-1] (not just "some frame that stopped changing") is what
+    # actually distinguishes the two rather than passing for either.
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)
+    atlas = build_art_atlas(tmp_path)
+    loaded = atlas.get_animation_set(SpriteKey.BEATLE, _LoadedCombatAnimationState)
+    animator = _build_combat_animator(atlas, SpriteKey.BEATLE)
+    assert animator is not None
+
+    for loaded_state, combat_state in (
+        (_LoadedCombatAnimationState.ATTACK, CombatAnimationState.ATTACK),
+        (_LoadedCombatAnimationState.HIT, CombatAnimationState.HIT),
+    ):
+        animator.set_state(combat_state)
+        animator.update(1000.0)
+        assert animator.current_frame() is loaded[loaded_state].frames[-1]
+
+
+def test_build_combat_animator_dead_state_resolves_to_the_static_variant(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)
+    atlas = build_art_atlas(tmp_path)
+    animator = _build_combat_animator(atlas, SpriteKey.BEATLE)
+    assert animator is not None
+    dead_surface = atlas.get_variant_set(SpriteKey.BEATLE, _DeadVariant)[_DeadVariant.DEAD]
+
+    animator.set_state(CombatAnimationState.DEAD)
+
+    assert animator.current_frame() is dead_surface
+
+
+def test_build_combat_animator_raises_when_the_dead_variant_is_missing(tmp_path: Path) -> None:
+    directory = tmp_path / SpriteKey.BEATLE.value
+    _write_clip(directory, "idle")
+    _write_clip(directory, "attack")
+    _write_clip(directory, "hit")
+    atlas = build_art_atlas(tmp_path)
+
+    with pytest.raises(ValueError, match=r"variants.*DEAD"):
+        _build_combat_animator(atlas, SpriteKey.BEATLE)
+
+
+def test_displayed_state_is_seeded_before_battle_starts_own_events_are_revealed() -> None:
+    # Mirrors test_construction_starts_the_battle_and_prefills_the_resonance_meter's setup: a
+    # Resonance effect makes battle.start() mutate current_meter immediately on construction.
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    assert scene._battle.player.current_meter > 0  # start() already mutated live Combatant state
+    assert scene._player_displayed.meter == 0  # but the seeded snapshot predates that mutation
+
+
+def test_death_phase_holds_for_the_tuned_duration_and_sets_the_dead_state(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
+    atlas = build_art_atlas(tmp_path)
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), atlas)
+    dead_surface = atlas.get_variant_set(SpriteKey.PLAYER, _DeadVariant)[_DeadVariant.DEAD]
+
+    phases = scene._phases_for(Death(combatant=scene._battle.player))
+
+    assert len(phases) == 1
+    assert phases[0].duration_seconds == BATTLE_DEATH_POSE_HOLD_SECONDS
+    phases[0].on_start()
+    assert scene._player_animator is not None
+    assert scene._player_animator.current_frame() is dead_surface
+
+
+def test_death_phase_defensively_snaps_hp_with_no_preceding_tween() -> None:
+    # A Wilty-triggered death sets current_hp directly with no preceding damage event at all --
+    # Death's on_start must not assume some earlier phase already tweened displayed.hp to match.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._battle.player.current_hp = 0
+    assert scene._player_displayed.hp != 0  # still the untouched construction-time snapshot
+
+    scene._phases_for(Death(combatant=scene._battle.player))[0].on_start()
+
+    assert scene._player_displayed.hp == 0.0
+
+
+def _hit_landed(scene: CombatScene) -> HitLanded:
+    return HitLanded(
+        source=scene._battle.player,
+        target=scene._battle.enemy,
+        action=ActionKind.STRUGGLE,
+        hit_index=0,
+        hit_count=1,
+        damage=5,
+        target_hp_after=scene._battle.enemy.current_hp - 5,
+    )
+
+
+def test_hit_landed_phase_duration_is_the_targets_clip_when_it_is_slower(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value, attack_fps=8)  # 2/8 = 0.25s
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value, hit_fps=2)  # 2/2 = 1.0s
+    atlas = build_art_atlas(tmp_path)
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    scene = CombatScene(generation, _encounter(generation), atlas)
+
+    phases = scene._phases_for(_hit_landed(scene))
+
+    assert phases[0].duration_seconds == pytest.approx(1.0)
+
+
+def test_hit_landed_phase_duration_is_the_sources_clip_when_it_is_slower(tmp_path: Path) -> None:
+    # The companion to the test above, with the slower clip on the opposite side -- together they
+    # rule out an implementation that just always returns one side's duration.
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value, attack_fps=2)  # 2/2 = 1.0s
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value, hit_fps=8)  # 2/8 = 0.25s
+    atlas = build_art_atlas(tmp_path)
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    scene = CombatScene(generation, _encounter(generation), atlas)
+
+    phases = scene._phases_for(_hit_landed(scene))
+
+    assert phases[0].duration_seconds == pytest.approx(1.0)
+
+
+def test_swing_phase_drives_source_attack_and_target_hit_then_resets_both_to_idle(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)
+    atlas = build_art_atlas(tmp_path)
+    player_clips = atlas.get_animation_set(SpriteKey.PLAYER, _LoadedCombatAnimationState)
+    enemy_clips = atlas.get_animation_set(SpriteKey.BEATLE, _LoadedCombatAnimationState)
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    scene = CombatScene(generation, _encounter(generation), atlas)
+    assert scene._player_animator is not None
+    assert scene._enemy_animator is not None
+
+    swing = scene._phases_for(_hit_landed(scene))[0]
+    swing.on_start()
+    assert scene._player_animator.current_frame() is player_clips[_LoadedCombatAnimationState.ATTACK].frames[0]
+    assert scene._enemy_animator.current_frame() is enemy_clips[_LoadedCombatAnimationState.HIT].frames[0]
+
+    swing.on_complete()
+    assert scene._player_animator.current_frame() is player_clips[_LoadedCombatAnimationState.IDLE].frames[0]
+    assert scene._enemy_animator.current_frame() is enemy_clips[_LoadedCombatAnimationState.IDLE].frames[0]
+
+
+def test_reaction_phase_drives_hit_then_resets_to_idle(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
+    atlas = build_art_atlas(tmp_path)
+    player_clips = atlas.get_animation_set(SpriteKey.PLAYER, _LoadedCombatAnimationState)
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), atlas)
+    assert scene._player_animator is not None
+
+    reaction = scene._reaction_phase(scene._battle.player)
+    reaction.on_start()
+    assert scene._player_animator.current_frame() is player_clips[_LoadedCombatAnimationState.HIT].frames[0]
+
+    reaction.on_complete()
+    assert scene._player_animator.current_frame() is player_clips[_LoadedCombatAnimationState.IDLE].frames[0]
+
+
+def test_advance_phases_leaves_displayed_hp_strictly_between_before_and_after_mid_tween() -> None:
+    # The central claim of ADR 0013: DisplayedCombatantState reflects only fully-completed phases,
+    # never the live Combatant -- which Battle has, per its own contract, already fully resolved
+    # by the time any of its events reach the GUI.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    pre_hit_hp = scene._enemy_displayed.hp
+    target_hp_after = round(pre_hit_hp) - 5
+    event = HitLanded(
+        source=scene._battle.player,
+        target=scene._battle.enemy,
+        action=ActionKind.STRUGGLE,
+        hit_index=0,
+        hit_count=1,
+        damage=5,
+        target_hp_after=target_hp_after,
+    )
+    scene._battle.enemy.current_hp = target_hp_after  # Battle has already resolved this hit
+
+    scene._queue_events([event])
+    scene._advance_phases(0.0)  # cascades the zero-duration swing phase (no animator), starts the tween
+    assert scene._enemy_displayed.hp == pre_hit_hp  # tween hasn't progressed yet
+
+    scene._advance_phases(BATTLE_VALUE_TWEEN_SECONDS / 2)
+
+    assert target_hp_after < scene._enemy_displayed.hp < pre_hit_hp
+    assert scene._battle.enemy.current_hp == target_hp_after  # live state was already fully resolved
+
+
+def test_hp_tween_phase_interpolates_and_snaps_exactly_on_completion() -> None:
+    displayed = DisplayedCombatantState(hp=100.0, meter=0.0)
+    phase = _hp_tween_phase(displayed, 60)
+
+    phase.on_progress(0.5)
+    assert displayed.hp == pytest.approx(80.0)
+
+    phase.on_complete()
+    assert displayed.hp == 60.0
+
+
+def test_buff_icons_still_read_live_combatant_state_not_the_displayed_snapshot() -> None:
+    # The buff row deliberately reads live Combatant state, not the DisplayedCombatantState
+    # snapshot -- see combat.py's _draw_combatant comment for why. Recording which EffectName
+    # values actually get rendered (rather than only inspecting the snapshot, which no drawing
+    # code reads) is what makes this catch a regression to reading the snapshot instead.
+    rendered: list[EffectName] = []
+
+    def _spy_factory(effect: EffectName) -> BuffIcon:
+        rendered.append(effect)
+        return TextBuffIcon(effect)
+
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    scene._battle.player.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, 3))
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert EffectName.FIBROUS in rendered
+
+
+def test_meter_bar_still_reads_live_combatant_state_not_the_displayed_snapshot() -> None:
+    # Same reasoning as the buff-icon test above: MeterFilled/MeterConsumed are still phase-less,
+    # so the meter bar would otherwise be frozen at its construction-time snapshot for the whole
+    # battle. Recording the actual ratio _draw_bar is called with (rather than only inspecting the
+    # snapshot) is what makes this catch a regression to reading it instead.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._battle.player.current_meter = 42
+    assert scene._player_displayed.meter != 42  # snapshot never moved from its construction value
+    ratios: list[float] = []
+    original_draw_bar = scene._draw_bar
+
+    def _spy_draw_bar(surface: pygame.Surface, rect: pygame.Rect, ratio: float, color: pygame.typing.ColorLike) -> None:
+        ratios.append(ratio)
+        original_draw_bar(surface, rect, ratio, color)
+
+    scene._draw_bar = _spy_draw_bar  # type: ignore[method-assign]
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    # Draw order per _draw_combatant: HP bar then meter bar, player side first.
+    expected_ratio = 42 / scene._battle.player.base_stats.meter_capacity
+    assert ratios[1] == pytest.approx(expected_ratio)
