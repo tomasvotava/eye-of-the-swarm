@@ -86,8 +86,8 @@ def _combatant(name: str = "Combatant") -> Combatant:
 
 # One instance of every BattleEvent variant -- used to check that `_phases_for` is exhaustive.
 # Death/Revive/HitLanded/HitReflected/SelfDamageTaken are the animation-driven swing events and
-# return real phases; every other variant stays stubbed to `[]` pending ADR 0013's remaining
-# Announcement/Tween/Overlay treatments.
+# MeterFilled/MeterConsumed are tween-only; together they return real phases, while every other
+# variant stays stubbed to `[]` pending ADR 0013's remaining Announcement/Overlay treatments.
 _ONE_OF_EACH_BATTLE_EVENT: tuple[BattleEvent, ...] = (
     Death(combatant=_combatant()),
     Revive(combatant=_combatant(), revived_hp=5),
@@ -371,6 +371,8 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
 
 
 _ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded, HitReflected, SelfDamageTaken)
+_TWEEN_ONLY_EVENT_TYPES = (MeterFilled, MeterConsumed)
+_EVENT_TYPES_WITH_REAL_PHASES = _ANIMATION_DRIVEN_EVENT_TYPES + _TWEEN_ONLY_EVENT_TYPES
 
 
 def test_phases_for_is_exhaustive_over_every_battle_event_variant() -> None:
@@ -387,16 +389,16 @@ def test_phases_for_returns_empty_for_variants_not_yet_animated() -> None:
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
     for event in _ONE_OF_EACH_BATTLE_EVENT:
-        if not isinstance(event, _ANIMATION_DRIVEN_EVENT_TYPES):
+        if not isinstance(event, _EVENT_TYPES_WITH_REAL_PHASES):
             assert scene._phases_for(event) == []
 
 
-def test_phases_for_returns_real_phases_for_every_animation_driven_swing_event() -> None:
+def test_phases_for_returns_real_phases_for_every_animated_or_tweened_event() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
     for event in _ONE_OF_EACH_BATTLE_EVENT:
-        if isinstance(event, _ANIMATION_DRIVEN_EVENT_TYPES):
+        if isinstance(event, _EVENT_TYPES_WITH_REAL_PHASES):
             assert scene._phases_for(event) != []
 
 
@@ -772,15 +774,15 @@ def test_buff_icons_still_read_live_combatant_state_not_the_displayed_snapshot()
     assert EffectName.FIBROUS in rendered
 
 
-def test_meter_bar_still_reads_live_combatant_state_not_the_displayed_snapshot() -> None:
-    # Same reasoning as the buff-icon test above: MeterFilled/MeterConsumed are still phase-less,
-    # so the meter bar would otherwise be frozen at its construction-time snapshot for the whole
-    # battle. Recording the actual ratio _draw_bar is called with (rather than only inspecting the
-    # snapshot) is what makes this catch a regression to reading it instead.
+def test_meter_bar_renders_the_displayed_snapshot_not_live_combatant_state() -> None:
+    # MeterFilled/MeterConsumed now tween DisplayedCombatantState.meter (same as HP), so the drawn
+    # bar must track that snapshot, not the live Combatant, while a tween is mid-flight. Recording
+    # the actual ratio _draw_bar is called with (rather than only inspecting the snapshot) is what
+    # makes this catch a regression to reading live state instead.
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._battle.player.current_meter = 42
-    assert scene._player_displayed.meter != 42  # snapshot never moved from its construction value
+    scene._player_displayed.meter = 42  # simulates a tween mid-flight
+    scene._battle.player.current_meter = 99  # already fully resolved live, per Battle's contract
     ratios: list[float] = []
     original_draw_bar = scene._draw_bar
 
@@ -795,3 +797,24 @@ def test_meter_bar_still_reads_live_combatant_state_not_the_displayed_snapshot()
     # Draw order per _draw_combatant: HP bar then meter bar, player side first.
     expected_ratio = 42 / scene._battle.player.base_stats.meter_capacity
     assert ratios[1] == pytest.approx(expected_ratio)
+
+
+def test_meter_filled_and_meter_consumed_tween_the_displayed_meter_over_the_hp_tween_duration() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    displayed = scene._player_displayed
+    displayed.meter = 0.0
+
+    filled_phase = scene._phases_for(MeterFilled(combatant=scene._battle.player, amount=50, meter_after=50))
+    assert len(filled_phase) == 1
+    assert filled_phase[0].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS
+    filled_phase[0].on_progress(0.5)
+    assert displayed.meter == pytest.approx(25.0)
+    filled_phase[0].on_complete()
+    assert displayed.meter == 50.0
+
+    consumed_phase = scene._phases_for(MeterConsumed(combatant=scene._battle.player, meter_after=0))
+    assert len(consumed_phase) == 1
+    assert consumed_phase[0].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS
+    consumed_phase[0].on_complete()
+    assert displayed.meter == 0.0

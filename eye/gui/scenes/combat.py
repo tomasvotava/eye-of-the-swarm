@@ -252,6 +252,21 @@ def _hp_tween_phase(displayed: DisplayedCombatantState, end_hp: int) -> Phase:
     return Phase(duration_seconds=BATTLE_VALUE_TWEEN_SECONDS, on_progress=on_progress, on_complete=on_complete)
 
 
+def _meter_tween_phase(displayed: DisplayedCombatantState, end_meter: int) -> Phase:
+    # Same shape and duration as _hp_tween_phase -- see that function's comment for why capturing
+    # start eagerly here is safe.
+    start = displayed.meter
+    end = float(end_meter)
+
+    def on_progress(fraction: float) -> None:
+        displayed.meter = start + (end - start) * fraction
+
+    def on_complete() -> None:
+        displayed.meter = end  # snap to the exact value; avoids float drift from interpolation
+
+    return Phase(duration_seconds=BATTLE_VALUE_TWEEN_SECONDS, on_progress=on_progress, on_complete=on_complete)
+
+
 class CombatScene:
     def __init__(
         self,
@@ -430,10 +445,9 @@ class CombatScene:
         return Phase(duration_seconds=duration, on_start=on_start, on_complete=on_complete)
 
     def _phases_for(self, event: BattleEvent) -> list[Phase]:
-        # EffectApplied/EffectExpired/TurnSkipped/ExtraActionTriggered/BattleEnded/MeterFilled/
-        # MeterConsumed/DotTicked/HealApplied are deliberately phase-less for now -- they get
-        # Announcement/Tween/Overlay treatments per ADR 0013 once those land. ActionChosen is
-        # permanently phase-less.
+        # EffectApplied/EffectExpired/TurnSkipped/ExtraActionTriggered/BattleEnded/DotTicked/
+        # HealApplied are deliberately phase-less for now -- they get Announcement/Overlay
+        # treatments per ADR 0013 once those land. ActionChosen is permanently phase-less.
         match event:
             case ActionChosen():
                 return []
@@ -472,10 +486,10 @@ class CombatScene:
                 return []
             case BattleEnded():
                 return []
-            case MeterFilled():
-                return []
-            case MeterConsumed():
-                return []
+            case MeterFilled(combatant=combatant, meter_after=meter_after):
+                return [_meter_tween_phase(self._displayed_for(combatant), meter_after)]
+            case MeterConsumed(combatant=combatant, meter_after=meter_after):
+                return [_meter_tween_phase(self._displayed_for(combatant), meter_after)]
             case HitLanded(source=source, target=target, target_hp_after=target_hp_after):
                 return [
                     self._swing_phase(source, target),
@@ -551,15 +565,14 @@ class CombatScene:
         hp_label_x = hp_rect.left - _GAP - hp_label.get_width() if mirrored else hp_rect.right + _GAP
         surface.blit(hp_label, (hp_label_x, hp_rect.top))
 
-        # Meter and buff icons deliberately still read live Combatant state, not
-        # DisplayedCombatantState: MeterFilled/MeterConsumed/EffectApplied/EffectExpired are all
-        # still phase-less (their Tween/Announcement treatments are pending per ADR 0013), so
-        # switching either over now would freeze it at its construction-time snapshot for the
-        # whole battle instead of tracking the fight -- worse than an always-live read.
         meter_rect = pygame.Rect(bar_left, hp_rect.bottom + _GAP, _BAR_WIDTH, _METER_HEIGHT)
         self._draw_bar(
-            surface, meter_rect, max(0, combatant.current_meter) / combatant.base_stats.meter_capacity, _METER_COLOR
+            surface, meter_rect, max(0.0, displayed.meter) / combatant.base_stats.meter_capacity, _METER_COLOR
         )
+        # Buff icons deliberately still read live Combatant state, not DisplayedCombatantState:
+        # EffectApplied/EffectExpired are still phase-less (their Announcement treatment is
+        # pending per ADR 0013), so switching this over now would freeze the row at its
+        # construction-time snapshot for the whole battle -- worse than an always-live read.
         icon_row_x = bar_right if mirrored else bar_left
         self._draw_buff_icons(surface, combatant, (icon_row_x, meter_rect.bottom + _GAP), mirrored=mirrored)
 
