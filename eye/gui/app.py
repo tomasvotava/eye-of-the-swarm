@@ -21,7 +21,7 @@ from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
 from eye.persistence.port import SaveStore
 
-_WINDOW_SIZE = (1280, 720)
+_WINDOW_SIZE = (640, 480)
 _MAX_FPS = 60
 _TITLE = "The Eye of the Swarm"
 _SPRITES_DIR = Path("eye/gui/sprites")
@@ -81,7 +81,7 @@ def _initial_scene(save_store: SaveStore | None, rng: random.Random, dev_asset_v
 
 async def run(save_store: SaveStore | None = None, rng: random.Random | None = None) -> None:
     pygame.init()
-    screen = pygame.display.set_mode(_WINDOW_SIZE)
+    screen = pygame.display.set_mode(_WINDOW_SIZE, flags=pygame.SCALED)
     pygame.display.set_caption(_TITLE)
     clock = pygame.Clock()
 
