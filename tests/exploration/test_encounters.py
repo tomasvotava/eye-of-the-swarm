@@ -2,6 +2,7 @@ import random
 
 from eye.combat.effects import EffectCategory, EffectName
 from eye.exploration.encounters import (
+    ENCOUNTERABLE_STRAINS,
     EffectPickupEncounter,
     EncounterGenerator,
     EncounterKind,
@@ -71,6 +72,17 @@ def test_enemy_encounter_uses_a_strain() -> None:
     assert enemy_encounters
     for encounter in enemy_encounters:
         assert encounter.strain in set(Strain)
+
+
+def test_every_encounterable_strain_is_reachable() -> None:
+    # Also establishes that BRAMBLE never spawns live: ENCOUNTERABLE_STRAINS excludes it, and this
+    # asserts the *only* Strains ever actually drawn match that set exactly.
+    generator = EncounterGenerator(random.Random(0))
+
+    rolls = [generator.generate() for _ in range(500)]
+
+    seen_strains = {roll.strain for roll in rolls if isinstance(roll, EnemyEncounter)}
+    assert seen_strains == set(ENCOUNTERABLE_STRAINS)
 
 
 def _kind_of(

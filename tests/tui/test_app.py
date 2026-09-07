@@ -5,7 +5,7 @@ from collections.abc import Iterator
 import pytest
 from rich.console import Console
 
-from eye.exploration.encounters import EncounterKind
+from eye.exploration.encounters import EncounterKind, Strain
 from eye.persistence.codec import decode
 from eye.skilltree.catalog import CATALOG
 from eye.tui import app
@@ -36,7 +36,9 @@ class _RaisingInput:
 def test_run_plays_a_generation_to_death_reaches_the_skilltree_menu_and_persists(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    rng = ScriptedEncounterRandom([EncounterKind.ENEMY] * 10)
+    # Flea is winnable by an unmodified base-stat player (banking a spore award large enough to
+    # afford the cheapest skill node); Golem isn't, ending the generation on the second encounter.
+    rng = ScriptedEncounterRandom([EncounterKind.ENEMY] * 10, strain_queue=[Strain.FLEA, Strain.GOLEM])
     input_source = itertools.chain(itertools.repeat("1", _COMBAT_INPUT_BUDGET), ["done", "n"])
     store = _FakeSaveStore()
 

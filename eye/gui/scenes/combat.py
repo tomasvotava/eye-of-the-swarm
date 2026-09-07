@@ -97,10 +97,10 @@ def _duration(category: EffectCategory, remaining_turns: int | None) -> str:
 
 
 def _resolve_enemy_sprite_key(strain_name: str) -> SpriteKey:
-    # Assumes a same-named SpriteKey per Strain (true for v1's only member, BRAMBLE) -- a future
-    # multi-Strain epic (PROJECT_BRIEF.md §8) must keep the two enums' names in sync or give this
-    # a real Strain -> SpriteKey mapping instead. Falls back to the "missing texture" placeholder
-    # rather than crashing the scene if the two ever drift apart.
+    # Assumes a same-named SpriteKey per Strain -- ENCOUNTERABLE_STRAINS and SpriteKey's enemy
+    # members must be kept in sync, or this needs a real Strain -> SpriteKey mapping instead.
+    # Falls back to the "missing texture" placeholder rather than crashing the scene if the two
+    # ever drift apart.
     try:
         return SpriteKey[strain_name]
     except KeyError:

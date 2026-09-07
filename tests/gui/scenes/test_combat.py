@@ -28,7 +28,7 @@ from eye.combat.events import (
 )
 from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
-from eye.exploration.encounters import EncounterKind, Strain
+from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind
 from eye.exploration.events import EnemyEncountered
 from eye.gui.assets import SpriteKey, build_placeholder_atlas
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
@@ -228,6 +228,15 @@ def test_resolve_enemy_sprite_key_falls_back_to_unknown_for_an_unmatched_name() 
     assert _resolve_enemy_sprite_key("NOT_A_REAL_STRAIN") is SpriteKey.UNKNOWN
 
 
+def test_every_encounterable_strain_resolves_to_a_real_sprite_key() -> None:
+    # _resolve_enemy_sprite_key falls back to SpriteKey.UNKNOWN on a name mismatch rather than
+    # raising, so a live Strain with no matching SpriteKey would ship silently broken (a magenta
+    # "missing texture" placeholder) instead of failing loudly -- this pins the naming contract
+    # for every Strain that can actually reach the screen.
+    for strain in ENCOUNTERABLE_STRAINS:
+        assert _resolve_enemy_sprite_key(strain.name) is not SpriteKey.UNKNOWN
+
+
 def test_update_resolves_automatic_phases_without_input() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
@@ -240,13 +249,14 @@ def test_update_resolves_automatic_phases_without_input() -> None:
 def test_win_finishes_the_battle_and_reports_a_bare_battle_concluded() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    encounter = _encounter(generation)
+    scene = CombatScene(generation, encounter, build_placeholder_atlas())
 
     transition = _drive_to_transition(scene)
 
     assert transition == BattleConcluded()
     assert generation.died is False
-    assert generation.spores_gained == BESTIARY[Strain.BRAMBLE].spore_award
+    assert generation.spores_gained == BESTIARY[encounter.strain].spore_award
 
 
 def test_loss_finishes_the_battle_and_reports_a_bare_battle_concluded() -> None:

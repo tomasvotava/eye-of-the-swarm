@@ -24,7 +24,24 @@ class EncounterKind(Enum):
 
 
 class Strain(Enum):
-    BRAMBLE = auto()  # v1's single archetype; more join later without restructuring
+    BRAMBLE = auto()  # test-fixture only -- kept out of ENCOUNTERABLE_STRAINS, never spawned live
+    BEATLE = auto()
+    FLEA = auto()
+    GOLEM = auto()
+    PHIDIZVIK = auto()
+    TUMBLEWEED = auto()
+
+
+# The Strains EncounterGenerator actually spawns -- excludes BRAMBLE, which stays in the Strain
+# enum/BESTIARY purely so existing fixtures/tests keep a stub archetype with no sprite art to
+# exercise against.
+ENCOUNTERABLE_STRAINS: tuple[Strain, ...] = (
+    Strain.BEATLE,
+    Strain.FLEA,
+    Strain.GOLEM,
+    Strain.PHIDIZVIK,
+    Strain.TUMBLEWEED,
+)
 
 
 class Biome(Enum):
@@ -87,7 +104,7 @@ class EncounterGenerator:
         kind = self._rng.choices(kinds, weights=weights, k=1)[0]
         match kind:
             case EncounterKind.ENEMY:
-                return EnemyEncounter(strain=self._rng.choice(list(Strain)))
+                return EnemyEncounter(strain=self._rng.choice(ENCOUNTERABLE_STRAINS))
             case EncounterKind.EFFECT_PICKUP:
                 name = self._rng.choice(list(EffectName))
                 return EffectPickupEncounter(effect=ActiveEffect(name, EffectCategory.LIFESPAN, remaining_turns=None))
