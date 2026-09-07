@@ -85,13 +85,6 @@ def _animation_state_for_phase(phase: _Phase) -> PlayerAnimationState:
             assert_never(phase)
 
 
-_font: pygame.font.Font | None = None
-
-
-def _get_font() -> pygame.font.Font:
-    return get_font(GameFont.ITHACA, _FONT_SIZE)
-
-
 def _describe_screen_event(event: _ScreenEvent) -> str:
     if isinstance(event, EffectGranted):
         return f"You feel {event.effect.name.replace('_', ' ').title()} take hold."
@@ -322,7 +315,7 @@ class ExplorationScene:
             surface.blit(turf, (x, _ICON_MARGIN))
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
-        font = _get_font()
+        font = get_font(GameFont.ITHACA, _FONT_SIZE)
         lines = [
             f"Seed ready to plant: {'yes' if self._can_plant_seed() else 'no'}",
             f"Spores this life: {self._generation.spores_gained}",

@@ -57,10 +57,6 @@ KEY_ACTIONS: dict[int, DevAssetViewerAction] = {
 }
 
 
-def _get_font() -> pygame.font.Font:
-    return get_font(GameFont.ITHACA, _FONT_SIZE)
-
-
 class DevAssetViewerScene:
     def __init__(self, atlas: SpriteAtlas) -> None:
         self._atlas = atlas
@@ -131,7 +127,7 @@ class DevAssetViewerScene:
         self._draw_hud(surface, key)
 
     def _draw_hud(self, surface: pygame.Surface, key: SpriteKey) -> None:
-        font = _get_font()
+        font = get_font(GameFont.ITHACA, _FONT_SIZE)
         lines = [
             f"{key.value}  ({self._index + 1}/{len(_KEYS)})",
             "Left/Right: previous/next sprite",

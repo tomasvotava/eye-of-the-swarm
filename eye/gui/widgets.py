@@ -20,12 +20,6 @@ _LOCKED_COLOR: pygame.typing.ColorLike = "dimgray"
 _AVAILABLE_COLOR: pygame.typing.ColorLike = "gold"
 _PURCHASED_COLOR: pygame.typing.ColorLike = "limegreen"
 
-_font: pygame.font.Font | None = None
-
-
-def _get_font() -> pygame.font.Font:
-    return get_font(GameFont.ITHACA, _FONT_SIZE)
-
 
 class BuffIcon(Protocol):
     def render(self, surface: pygame.Surface, pos: pygame.Vector2) -> None: ...
@@ -51,7 +45,7 @@ class TextBuffIcon:
 
     def render(self, surface: pygame.Surface, pos: pygame.Vector2) -> None:
         color = _BUFF_COLOR if EFFECT_POLARITY[self.effect] is EffectPolarity.BUFF else _DEBUFF_COLOR
-        surface.blit(_get_font().render(_effect_label(self.effect), True, color), pos)
+        surface.blit(get_font(GameFont.ITHACA, _FONT_SIZE).render(_effect_label(self.effect), True, color), pos)
 
 
 _STATE_COLORS: dict[SkillNodeState, pygame.typing.ColorLike] = {
@@ -63,4 +57,7 @@ _STATE_COLORS: dict[SkillNodeState, pygame.typing.ColorLike] = {
 
 class TextSkillTreeLeaf:
     def render(self, surface: pygame.Surface, rect: pygame.Rect, node: SkillNode, state: SkillNodeState) -> None:
-        surface.blit(_get_font().render(f"{node.name} ({node.cost})", True, _STATE_COLORS[state]), rect.topleft)
+        surface.blit(
+            get_font(GameFont.ITHACA, _FONT_SIZE).render(f"{node.name} ({node.cost})", True, _STATE_COLORS[state]),
+            rect.topleft,
+        )
