@@ -40,6 +40,7 @@ from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.animation import AnimationClip, Animator
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.tuning import BATTLE_DEATH_POSE_HOLD_SECONDS, BATTLE_VALUE_TWEEN_SECONDS
 from eye.gui.widgets import BuffIcon, TextBuffIcon
@@ -78,12 +79,7 @@ _font: pygame.font.Font | None = None
 
 
 def _get_font() -> pygame.font.Font:
-    # Constructed lazily rather than at import time: pygame.font must already be initialized,
-    # which module import order doesn't guarantee (mirrors eye.gui.widgets._get_font()).
-    global _font
-    if _font is None:
-        _font = pygame.font.Font(None, _FONT_SIZE)
-    return _font
+    return get_font(GameFont.ITHACA, _FONT_SIZE)
 
 
 def _label(value: Enum) -> str:

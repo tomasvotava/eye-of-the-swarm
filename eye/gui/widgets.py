@@ -10,9 +10,10 @@ from typing import Protocol
 import pygame
 
 from eye.combat.effects import EFFECT_POLARITY, EffectName, EffectPolarity
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.skilltree.tree import SkillNode
 
-_FONT_SIZE = 20
+_FONT_SIZE = 16
 _BUFF_COLOR: pygame.typing.ColorLike = "mediumseagreen"
 _DEBUFF_COLOR: pygame.typing.ColorLike = "indianred"
 _LOCKED_COLOR: pygame.typing.ColorLike = "dimgray"
@@ -23,13 +24,7 @@ _font: pygame.font.Font | None = None
 
 
 def _get_font() -> pygame.font.Font:
-    # Constructed lazily rather than at import time: pygame.font must already be initialized,
-    # which module import order doesn't guarantee. Cached after that so per-frame render() calls
-    # reuse one Font instead of rebuilding it every call.
-    global _font
-    if _font is None:
-        _font = pygame.font.Font(None, _FONT_SIZE)
-    return _font
+    return get_font(GameFont.ITHACA, _FONT_SIZE)
 
 
 class BuffIcon(Protocol):

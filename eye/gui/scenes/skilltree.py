@@ -16,6 +16,7 @@ import pygame
 import pygame.typing
 
 from eye.gui.assets import SpriteAtlas
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import Continue, PlaySceneTransition
 from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, TextSkillTreeLeaf
 from eye.session.game import Game
@@ -23,9 +24,9 @@ from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
 from eye.skilltree.tree import SkillNode
 
-_FONT_SIZE = 20
-_ROW_LABEL_WIDTH = 160
-_CELL_WIDTH = 170
+_FONT_SIZE = 16
+_ROW_LABEL_WIDTH = 100
+_CELL_WIDTH = 190
 _ROW_HEIGHT = 28
 _ROW_GAP = 6
 _BRANCH_GAP = 16  # extra vertical gap where a row's branch differs from the previous row's
@@ -63,16 +64,9 @@ KEY_ACTIONS: dict[int, SkillTreeAction] = {
     pygame.K_c: SkillTreeAction.CONTINUE,
 }
 
-_font: pygame.font.Font | None = None
-
 
 def _get_font() -> pygame.font.Font:
-    # Constructed lazily rather than at import time: pygame.font must already be initialized,
-    # which module import order doesn't guarantee (mirrors eye.gui.widgets._get_font()).
-    global _font
-    if _font is None:
-        _font = pygame.font.Font(None, _FONT_SIZE)
-    return _font
+    return get_font(GameFont.ITHACA, _FONT_SIZE)
 
 
 def _node_state(skill_tree: SkillTree, node: SkillNode) -> SkillNodeState:

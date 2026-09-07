@@ -11,10 +11,11 @@ import pygame.typing
 
 from eye.gui.animation import Animator
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.scene import Scene
 from eye.gui.scenes.exploration import PlayerAnimationState
 
-_FONT_SIZE = 20
+_FONT_SIZE = 14
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _MARGIN = 8
 _SPRITE_SCALE = 8  # placeholder sprites are tiny; enlarge them for visibility while browsing
@@ -55,16 +56,9 @@ KEY_ACTIONS: dict[int, DevAssetViewerAction] = {
     pygame.K_DOWN: DevAssetViewerAction.PREVIOUS_STATE,
 }
 
-_font: pygame.font.Font | None = None
-
 
 def _get_font() -> pygame.font.Font:
-    # Constructed lazily rather than at import time: pygame.font must already be initialized,
-    # which module import order doesn't guarantee (mirrors eye.gui.widgets._get_font()).
-    global _font
-    if _font is None:
-        _font = pygame.font.Font(None, _FONT_SIZE)
-    return _font
+    return get_font(GameFont.ITHACA, _FONT_SIZE)
 
 
 class DevAssetViewerScene:
