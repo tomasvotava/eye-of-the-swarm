@@ -240,15 +240,27 @@ undecided.
 ### 9.5 Battle event animation
 
 Currently a full combat round resolves within a single `update()` call, with all of that round's
-events dumped into the log at once (`CombatScene._record`). v2 reveals events one at a time — a
-debuff roll, a struck hit, an applied effect, recoil damage — each with a short pause before the
-next.
+events dumped into the log at once (`CombatScene._record`). v2 plays events one at a time, each
+driving real animation rather than just paced log text: a struck hit switches the target's sprite
+to a reaction state and holds until that specific clip finishes (varying per enemy) before its HP
+bar rolls to the new value; an applied or expired buff/debuff shows as a large center-screen icon
+with a short description; a lighter tick/flash marks recurring effects like poison or regen
+without a full popup each time. There is no persistent on-screen combat log in this version — the
+underlying event descriptions are still recorded, so a later on-demand recall view ("press a key
+to see what happened") is cheap to add, but that viewer itself is out of scope for now.
 
-**Decided:** auto-timed reveal — each event shows for a fixed pause before the next appears,
-rather than waiting on a keypress. Exact pacing is playtesting-tuned, per this project's existing
-"every magic number lives in `tuning.py`" convention (`CLAUDE.md`). `Battle`'s event-per-call
-contract (ADR 0008) already supports this; nothing about the domain changes, only how many frames
-`CombatScene` takes to walk through one call's events.
+**Decided:** auto-timed, per-event pacing — each event plays out for however long its own
+animation/tween/hold takes before the next begins, rather than a single fixed interval shared by
+every event, and rather than waiting on a keypress. Exact per-treatment durations (tween length,
+announcement hold time) are playtesting-tuned placeholders, per this project's existing "every
+magic number lives in `tuning.py`" convention (`CLAUDE.md`); animation-driven waits are derived
+from the relevant clip's own frame count and per-frame duration, not a separate tuned constant.
+`Battle`'s event-per-call contract (ADR 0008) already supports this; nothing about the domain
+changes, only how `CombatScene` walks through and displays one call's events. See ADR 0013 for
+the full design (`Phase` primitive, the driver loop, and the event → phase-list mapping).
+
+A full post-battle report (win/loss, spores earned, round count, time taken) is a natural
+addition once this lands, but is separate future work, not part of this version.
 
 ### 9.6 Skill tree icon presentation
 
