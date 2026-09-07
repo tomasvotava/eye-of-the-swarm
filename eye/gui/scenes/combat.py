@@ -9,6 +9,7 @@ to the skill tree, mirroring `eye/tui/combat.py::play_battle()`, which never dec
 
 from collections import deque
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from enum import Enum
 from typing import assert_never
 
@@ -49,7 +50,6 @@ _BAR_WIDTH = 200
 _BAR_HEIGHT = 16
 _METER_HEIGHT = 8
 _BUFF_ICON_STEP = 90
-_LOG_LINES = 4
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _BAR_BG_COLOR: pygame.typing.ColorLike = "dimgray"
 _HP_COLOR: pygame.typing.ColorLike = "firebrick"
@@ -144,6 +144,19 @@ def _describe_event(event: BattleEvent) -> str:
             assert_never(event)
 
 
+@dataclass(frozen=True, slots=True)
+class Phase:
+    """One step of a `BattleEvent`'s reveal (ADR 0013): `duration_seconds` of 0 completes in the
+    same driver tick it starts, letting a batch of phase-less/instant events cascade through a
+    single `update()` call for free, while a phase with real duration blocks across calls.
+    """
+
+    duration_seconds: float
+    on_start: Callable[[], None] = lambda: None
+    on_progress: Callable[[float], None] = lambda fraction: None
+    on_complete: Callable[[], None] = lambda: None
+
+
 class CombatScene:
     def __init__(
         self,
@@ -160,12 +173,18 @@ class CombatScene:
         self._pending_query: PlayerTurnNeedsAction | None = None
         self._pending_action_index: int | None = None
         self._cursor_index = 0
-        self._log: deque[str] = deque(maxlen=_LOG_LINES)
-        self._record(self._battle.start())
+        self._log: list[str] = []
+        self._pending_events: deque[BattleEvent] = deque()
+        self._current_phases: deque[Phase] = deque()
+        self._phase_elapsed: float = 0.0
+        self._phase_started: bool = False
+        self._queue_events(self._battle.start())
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN or self._pending_query is None:
             return
+        if self._current_phases or self._pending_events:
+            return  # menu interactivity withheld while a reveal is still playing (ADR 0013)
         available = self._pending_query.available
         if pygame_event.key in ACTION_KEYS:
             index = ACTION_KEYS.index(pygame_event.key)
@@ -179,25 +198,33 @@ class CombatScene:
             self._pending_action_index = self._cursor_index
 
     def update(self, dt: float) -> PlaySceneTransition | None:
+        self._advance_phases(dt)
+        if self._current_phases or self._pending_events:
+            # Gating invariant (ADR 0013): the next domain call and the BattleConcluded
+            # transition are both withheld until everything already returned has been revealed.
+            return None
         if self._battle.is_over:
             return self._conclude()
-        phase = self._battle.turn_phase
-        if phase is TurnPhase.AWAITING_QUERY:
+        turn_phase = self._battle.turn_phase
+        if turn_phase is TurnPhase.AWAITING_QUERY:
             self._advance_query()
-        elif phase is TurnPhase.AWAITING_PLAYER_ACTION:
+        elif turn_phase is TurnPhase.AWAITING_PLAYER_ACTION:
             self._resolve_pending_action()
-        elif phase is TurnPhase.AWAITING_ENEMY_TURN:
-            self._record(self._battle.resolve_enemy_turn())
+        elif turn_phase is TurnPhase.AWAITING_ENEMY_TURN:
+            self._queue_events(self._battle.resolve_enemy_turn())
+        # Starts (without necessarily finishing) the freshly queued batch's first phase within
+        # this same call, rather than needing a dedicated "first event reveals immediately" flag.
+        self._advance_phases(0.0)
         return None
 
     def _advance_query(self) -> None:
         query = self._battle.query_player_turn()
         if isinstance(query, PlayerTurnNeedsAction):
-            self._record(query.pre_turn_events)
+            self._queue_events(query.pre_turn_events)
             self._pending_query = query
             self._cursor_index = 0
         else:
-            self._record(query.events)
+            self._queue_events(query.events)
 
     def _resolve_pending_action(self) -> None:
         if self._pending_query is None or self._pending_action_index is None:
@@ -205,22 +232,93 @@ class CombatScene:
         action = self._pending_query.available[self._pending_action_index]
         self._pending_query = None
         self._pending_action_index = None
-        self._record(self._battle.resolve_player_turn(action))
+        self._queue_events(self._battle.resolve_player_turn(action))
 
     def _conclude(self) -> PlaySceneTransition:
         self._generation.finish_battle(self._battle)
         return BattleConcluded()
 
-    def _record(self, events: Sequence[BattleEvent]) -> None:
-        for event in events:
-            self._log.append(_describe_event(event))
+    def _queue_events(self, events: Sequence[BattleEvent]) -> None:
+        self._pending_events.extend(events)
+
+    def _start_next_event(self) -> None:
+        event = self._pending_events.popleft()
+        self._log.append(_describe_event(event))
+        self._current_phases = deque(self._phases_for(event))
+
+    def _advance_phases(self, dt: float) -> None:
+        while True:
+            if not self._current_phases:
+                if not self._pending_events:
+                    return
+                self._start_next_event()
+                # _phases_for(event) can legitimately return [] -- re-check from the top rather
+                # than indexing into what may still be an empty deque, so an all-empty batch
+                # cascades through pending_events in one call.
+                continue
+            phase = self._current_phases[0]
+            if not self._phase_started:
+                # A dedicated flag, not `self._phase_elapsed == 0.0` -- a phase that starts via
+                # this same loop's leftover zeroed `dt` (see below) can still have zero elapsed
+                # time when the *next* call re-enters here, which would re-fire on_start() for a
+                # phase already in progress. The flag tracks "has on_start run", not "is elapsed
+                # currently zero", so it can't be fooled by that coincidence.
+                phase.on_start()
+                self._phase_started = True
+            self._phase_elapsed += dt
+            fraction = 1.0 if phase.duration_seconds <= 0 else min(1.0, self._phase_elapsed / phase.duration_seconds)
+            phase.on_progress(fraction)
+            if self._phase_elapsed < phase.duration_seconds:
+                return
+            phase.on_complete()
+            self._current_phases.popleft()
+            self._phase_elapsed = 0.0
+            self._phase_started = False
+            dt = 0.0  # a completed phase's leftover time is not carried into the next one
+
+    def _phases_for(self, event: BattleEvent) -> list[Phase]:
+        # Stubbed to [] for every variant -- the Phase primitive and driver land here; per-event
+        # visual content is added per-variant in #172 (animation-driven swings), #173
+        # (Announcement/Tween), and #174 (Overlay), per ADR 0013.
+        match event:
+            case ActionChosen():
+                return []
+            case Death():
+                return []
+            case Revive():
+                return []
+            case TurnSkipped():
+                return []
+            case EffectApplied():
+                return []
+            case EffectExpired():
+                return []
+            case ExtraActionTriggered():
+                return []
+            case BattleEnded():
+                return []
+            case MeterFilled():
+                return []
+            case MeterConsumed():
+                return []
+            case HitLanded():
+                return []
+            case HitReflected():
+                return []
+            case SelfDamageTaken():
+                return []
+            case DotTicked():
+                return []
+            case HealApplied():
+                return []
+            case _:
+                assert_never(event)
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
         self._draw_combatant(surface, self._battle.player, SpriteKey.PLAYER, mirrored=False)
         self._draw_combatant(surface, self._battle.enemy, self._enemy_sprite_key, mirrored=True)
         self._draw_menu(surface)
-        self._draw_log(surface)
 
     def _draw_combatant(
         self, surface: pygame.Surface, combatant: Combatant, sprite_key: SpriteKey, *, mirrored: bool
@@ -285,7 +383,7 @@ class CombatScene:
         font = _get_font()
         available = self._pending_query.available
         menu_height = (len(available) + 1) * _FONT_SIZE  # +1 for the control hint below the rows
-        top = surface.get_height() - _LOG_LINES * _FONT_SIZE - menu_height - _MARGIN
+        top = surface.get_height() - menu_height - _MARGIN
         for index, action in enumerate(available):
             row = pygame.Rect(_MARGIN, top + index * _FONT_SIZE, _BAR_WIDTH, _FONT_SIZE)
             if index == self._cursor_index:
@@ -294,9 +392,3 @@ class CombatScene:
             surface.blit(font.render(label, True, _TEXT_COLOR), row.topleft)
         hint = font.render("1-9: choose   Up/Down + Enter: choose", True, _TEXT_COLOR)
         surface.blit(hint, (_MARGIN, top + len(available) * _FONT_SIZE))
-
-    def _draw_log(self, surface: pygame.Surface) -> None:
-        font = _get_font()
-        top = surface.get_height() - len(self._log) * _FONT_SIZE - _MARGIN
-        for index, line in enumerate(self._log):
-            surface.blit(font.render(line, True, _TEXT_COLOR), (_MARGIN, top + index * _FONT_SIZE))
