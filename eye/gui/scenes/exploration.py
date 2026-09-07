@@ -17,6 +17,7 @@ import pygame.typing
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.animation import Animator
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.tuning import (
     ENCOUNTER_X_FRACTION,
@@ -87,12 +88,7 @@ _font: pygame.font.Font | None = None
 
 
 def _get_font() -> pygame.font.Font:
-    # Constructed lazily rather than at import time: pygame.font must already be initialized,
-    # which module import order doesn't guarantee (mirrors eye.gui.widgets._get_font()).
-    global _font
-    if _font is None:
-        _font = pygame.font.Font(None, _FONT_SIZE)
-    return _font
+    return get_font(GameFont.ITHACA, _FONT_SIZE)
 
 
 def _describe_screen_event(event: _ScreenEvent) -> str:
