@@ -34,6 +34,7 @@ _FONT_SIZE = 20
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _HUD_MARGIN = 8
 _ICON_MARGIN = 8
+_PLAYER_SCALE_FACTOR = 3.0
 
 type _ScreenEvent = EffectGranted | ResourceGranted | NothingHappened
 
@@ -293,6 +294,8 @@ class ExplorationScene:
             player = self._player_animator.current_frame()
         else:
             player = self._atlas.get(SpriteKey.PLAYER)
+        if _PLAYER_SCALE_FACTOR != 1:
+            player = pygame.transform.scale_by(player, _PLAYER_SCALE_FACTOR)
         x = round(surface.get_width() * self._player_x_fraction())
         surface.blit(player, player.get_rect(center=(x, surface.get_rect().centery)))
 
