@@ -49,10 +49,11 @@ from eye.session.generation import Generation
 _FONT_SIZE = 20
 _MARGIN = 8
 _GAP = 4
-_BAR_WIDTH = 200
+_BAR_WIDTH = 230
 _BAR_HEIGHT = 16
 _METER_HEIGHT = 8
 _BUFF_ICON_STEP = 90
+_COMBATANT_SCALE_FACTOR = 3
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _BAR_BG_COLOR: pygame.typing.ColorLike = "dimgray"
 _HP_COLOR: pygame.typing.ColorLike = "firebrick"
@@ -539,16 +540,21 @@ class CombatScene:
         # so the player and enemy sit on opposite sides of the screen facing each other.
         font = _get_font()
         sprite = animator.current_frame() if animator is not None else self._atlas.get(sprite_key)
+        if _COMBATANT_SCALE_FACTOR != 1:
+            sprite = pygame.transform.scale_by(sprite, _COMBATANT_SCALE_FACTOR)
+        sprite_y = surface.height // 2 - sprite.height // 2
         top = _MARGIN
         if mirrored:
-            sprite_x = surface.get_width() - _MARGIN - sprite.get_width()
-            bar_right = sprite_x - _GAP
+            sprite_x = surface.get_width() // 4 * 3 - sprite.width // 2
+            bars_x = surface.get_width() - _MARGIN
+            bar_right = bars_x - _GAP
             bar_left = bar_right - _BAR_WIDTH
         else:
-            sprite_x = _MARGIN
-            bar_left = sprite_x + sprite.get_width() + _GAP
+            sprite_x = surface.get_width() // 4 - sprite.width // 2
+            bars_x = _MARGIN
+            bar_left = bars_x + _GAP
             bar_right = bar_left + _BAR_WIDTH
-        surface.blit(sprite, (sprite_x, top))
+        surface.blit(sprite, (sprite_x, sprite_y))
 
         name = font.render(combatant.name, True, _TEXT_COLOR)
         name_x = bar_right - name.get_width() if mirrored else bar_left
