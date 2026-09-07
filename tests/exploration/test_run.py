@@ -206,14 +206,14 @@ def test_effect_pickup_applies_a_lifespan_effect_to_the_character() -> None:
 def test_enemy_encounter_emits_strain_and_the_v1_biome() -> None:
     run = ExplorationRun(
         _character(),
-        _ScriptedRandom([EncounterKind.ENEMY], choice_indices=[0]),  # BRAMBLE
+        _ScriptedRandom([EncounterKind.ENEMY], choice_indices=[0]),  # BEATLE, first of ENCOUNTERABLE_STRAINS
         starting_screen=0,
         matured_turfs=(),
     )
 
     events = run.advance()
 
-    assert EnemyEncountered(strain=Strain.BRAMBLE, biome=Biome.BRAMBEROSITY) in events
+    assert EnemyEncountered(strain=Strain.BEATLE, biome=Biome.BRAMBEROSITY) in events
 
 
 def test_same_seed_produces_the_same_sequence_of_events() -> None:

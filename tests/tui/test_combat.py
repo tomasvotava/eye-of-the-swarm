@@ -7,7 +7,7 @@ from eye.bestiary import BESTIARY
 from eye.character import Character
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.stats import Combatant, Stats
-from eye.exploration.encounters import EncounterKind, Strain
+from eye.exploration.encounters import EncounterKind
 from eye.exploration.events import EnemyEncountered
 from eye.session.generation import Generation
 from eye.tui.combat import _prompt_action, play_battle
@@ -102,7 +102,7 @@ def test_play_battle_drives_a_win_to_completion_and_finishes_the_battle() -> Non
 
     play_battle(console, generation, encounter, iter(["1"] * 20))
 
-    assert generation.spores_gained == BESTIARY[Strain.BRAMBLE].spore_award
+    assert generation.spores_gained == BESTIARY[encounter.strain].spore_award
     assert "wins the battle" in buffer.getvalue()
 
 

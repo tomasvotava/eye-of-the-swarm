@@ -12,7 +12,7 @@ from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
 from eye.combat.events import HitLanded
 from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import FIBROUS_ATTACK_MAGNITUDE, STRUGGLE_BASE_POWER
-from eye.exploration.encounters import EncounterKind, Strain
+from eye.exploration.encounters import EncounterKind
 from eye.exploration.events import EnemyEncountered, NothingHappened, SeedGrew, SeedPlanted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.session.events import GenerationEnded
@@ -56,10 +56,9 @@ def test_enemy_encounter_resolves_a_battle_against_the_bestiary_profile() -> Non
     events = advance_flat(generation)
 
     enemy_event = next(event for event in events if isinstance(event, EnemyEncountered))
-    assert enemy_event.strain == Strain.BRAMBLE
+    profile = BESTIARY[enemy_event.strain]
     first_hit = next(event for event in events if isinstance(event, HitLanded))
-    bramble = BESTIARY[Strain.BRAMBLE]
-    assert first_hit.damage == round(STRUGGLE_BASE_POWER + 10 - bramble.stats.defense)
+    assert first_hit.damage == round(STRUGGLE_BASE_POWER + 10 - profile.stats.defense)
 
 
 def test_player_win_awards_the_strains_spores_and_writes_hp_back() -> None:
@@ -67,9 +66,10 @@ def test_player_win_awards_the_strains_spores_and_writes_hp_back() -> None:
     character = _character(current_hp=100, max_hp=100)
     generation = _generation(character=character, stats=overwhelming, kind_queue=[EncounterKind.ENEMY])
 
-    advance_flat(generation)
+    events = advance_flat(generation)
 
-    assert generation.spores_gained == BESTIARY[Strain.BRAMBLE].spore_award
+    enemy_event = next(event for event in events if isinstance(event, EnemyEncountered))
+    assert generation.spores_gained == BESTIARY[enemy_event.strain].spore_award
     assert character.current_hp == 100
     assert generation.died is False
 
@@ -103,9 +103,10 @@ def test_character_lifespan_effects_apply_to_the_player_combatant_in_battle() ->
 
     events = advance_flat(generation)
 
+    enemy_event = next(event for event in events if isinstance(event, EnemyEncountered))
+    profile = BESTIARY[enemy_event.strain]
     first_hit = next(event for event in events if isinstance(event, HitLanded))
-    bramble = BESTIARY[Strain.BRAMBLE]
-    expected = round(STRUGGLE_BASE_POWER + 10 + FIBROUS_ATTACK_MAGNITUDE - bramble.stats.defense)
+    expected = round(STRUGGLE_BASE_POWER + 10 + FIBROUS_ATTACK_MAGNITUDE - profile.stats.defense)
     assert first_hit.damage == expected
 
 
