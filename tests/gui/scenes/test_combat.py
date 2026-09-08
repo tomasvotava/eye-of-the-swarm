@@ -43,6 +43,8 @@ from eye.gui.scenes.combat import (
     _ANNOUNCEMENT_ICON_SIZE,
     _ANNOUNCEMENT_SUBTITLE_FONT_SIZE,
     _BAR_HEIGHT,
+    _BUFF_ICON_DURATION_FONT_SIZE,
+    _BUFF_ICON_SIZE,
     _COMBATANT_SCALE_FACTOR,
     _FONT_SIZE,
     _GAP,
@@ -185,6 +187,22 @@ def test_construction_starts_the_battle_and_prefills_the_resonance_meter() -> No
     assert scene._battle.player.current_meter == expected
 
 
+def test_displayed_state_from_seeds_remaining_turns_as_none_for_a_preexisting_lifespan_effect() -> None:
+    # A fresh Battle can only start with pre-existing Lifespan effects -- Battle-scoped ones are
+    # only ever granted by events during this battle -- and Lifespan always displays blank, so the
+    # seed is correct without reading the live effect's actual remaining_turns.
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character)
+    encounter = _encounter(generation)
+
+    scene = CombatScene(generation, encounter, build_placeholder_atlas())
+
+    key = (EffectCategory.LIFESPAN, EffectName.FIBROUS)
+    assert key in scene._player_displayed.active_effects
+    assert scene._player_displayed.remaining_turns[key] is None
+
+
 def test_handle_pygame_event_ignores_non_keydown() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
@@ -276,6 +294,46 @@ def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
         raise AssertionError("did not reach the next player-action query")
 
     assert scene._cursor_index == 0
+
+
+def test_tick_displayed_battle_effect_durations_decrements_only_finite_battle_scoped_entries() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.remaining_turns = {
+        (EffectCategory.BATTLE, EffectName.FIBROUS): 3,
+        (EffectCategory.BATTLE, EffectName.ADRENALINE): None,  # until battle ends -- untouched
+        (EffectCategory.LIFESPAN, EffectName.RESONANCE): None,  # Lifespan never ticks -- untouched
+    }
+
+    scene._tick_displayed_battle_effect_durations()
+
+    assert scene._player_displayed.remaining_turns == {
+        (EffectCategory.BATTLE, EffectName.FIBROUS): 2,
+        (EffectCategory.BATTLE, EffectName.ADRENALINE): None,
+        (EffectCategory.LIFESPAN, EffectName.RESONANCE): None,
+    }
+
+
+def test_resolve_enemy_turn_ticks_the_displayed_battle_effect_durations_by_one_per_round() -> None:
+    # Battle._expire_battle_effects() -- the domain's own once-per-round tick -- is only ever
+    # called from resolve_enemy_turn(), so this pins the one call site
+    # _tick_displayed_battle_effect_durations must stay wired to (eye/gui/scenes/combat.py's
+    # update()) to stay in sync with the domain's actual cadence.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    key = (EffectCategory.BATTLE, EffectName.FIBROUS)
+    scene._player_displayed.remaining_turns[key] = 3
+    scene.update(0.016)  # first AWAITING_PLAYER_ACTION query
+    _press(scene, ACTION_KEYS[0])
+
+    for _ in range(200):
+        scene.update(0.016)
+        if scene._pending_query is not None:
+            break
+    else:
+        raise AssertionError("did not reach the next player-action query")
+
+    assert scene._player_displayed.remaining_turns[key] == 2
 
 
 def test_resolve_enemy_sprite_key_matches_a_same_named_sprite_key() -> None:
@@ -857,6 +915,48 @@ def test_buff_icon_row_renders_the_displayed_snapshot_not_live_combatant_state()
     assert EffectName.FIBROUS in rendered
 
 
+def test_draw_buff_icons_shows_the_remaining_turns_number_in_the_icons_top_right_corner() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.FIBROUS))
+    scene._player_displayed.remaining_turns[(EffectCategory.BATTLE, EffectName.FIBROUS)] = 3
+    surface = pygame.Surface((800, 600))
+    surface.fill("black")
+
+    scene.draw(surface)
+
+    # Mirrors _draw_combatant's own icon-row geometry for the (non-mirrored) player side --
+    # the first icon starts exactly at (bar_left, icon_row_top), per _draw_buff_icons.
+    bar_left = _MARGIN + _GAP
+    icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
+    white = pygame.Color("white")
+    assert any(
+        surface.get_at((x, y)) == white
+        for x in range(bar_left, bar_left + _BUFF_ICON_SIZE)
+        for y in range(icon_row_top, icon_row_top + _BUFF_ICON_DURATION_FONT_SIZE)
+    )
+
+
+def test_draw_buff_icons_shows_no_number_for_an_indefinite_effect() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.active_effects.add((EffectCategory.LIFESPAN, EffectName.FIBROUS))
+    scene._player_displayed.remaining_turns[(EffectCategory.LIFESPAN, EffectName.FIBROUS)] = None
+    surface = pygame.Surface((800, 600))
+    surface.fill("black")
+
+    scene.draw(surface)
+
+    bar_left = _MARGIN + _GAP
+    icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
+    white = pygame.Color("white")
+    assert not any(
+        surface.get_at((x, y)) == white
+        for x in range(bar_left, bar_left + _BUFF_ICON_SIZE)
+        for y in range(icon_row_top, icon_row_top + _BUFF_ICON_DURATION_FONT_SIZE)
+    )
+
+
 def test_effect_applied_phase_adds_to_the_displayed_active_effects_on_start() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
@@ -871,6 +971,37 @@ def test_effect_applied_phase_adds_to_the_displayed_active_effects_on_start() ->
     assert key in scene._player_displayed.active_effects
 
 
+def test_effect_applied_phase_sets_the_displayed_remaining_turns_on_start() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
+    )
+    key = (EffectCategory.BATTLE, EffectName.FIBROUS)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._player_displayed.remaining_turns[key] == 3
+
+
+def test_effect_applied_phase_refreshes_remaining_turns_on_a_suppressed_reapplication() -> None:
+    # PROJECT_BRIEF.md §5.6's refresh-not-stack rule resets duration domain-side without an
+    # announcement -- the HUD countdown must follow that silent reset too, not just active_effects.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    key = (EffectCategory.BATTLE, EffectName.RUNT)
+    scene._player_displayed.active_effects.add(key)
+    scene._player_displayed.remaining_turns[key] = 1
+    event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.RUNT, category=EffectCategory.BATTLE, remaining_turns=3
+    )
+
+    phases = scene._phases_for(event)
+
+    assert phases == []
+    assert scene._player_displayed.remaining_turns[key] == 3
+
+
 def test_effect_expired_phase_discards_from_the_displayed_active_effects_on_start() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
@@ -881,6 +1012,19 @@ def test_effect_expired_phase_discards_from_the_displayed_active_effects_on_star
     scene._phases_for(event)[0].on_start()
 
     assert key not in scene._player_displayed.active_effects
+
+
+def test_effect_expired_phase_discards_the_displayed_remaining_turns_on_start() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    key = (EffectCategory.BATTLE, EffectName.FIBROUS)
+    scene._player_displayed.active_effects.add(key)
+    scene._player_displayed.remaining_turns[key] = 1
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert key not in scene._player_displayed.remaining_turns
 
 
 def test_effect_applied_phase_is_not_suppressed_for_a_different_category_of_the_same_effect() -> None:

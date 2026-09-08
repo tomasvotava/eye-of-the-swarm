@@ -71,6 +71,7 @@ _BAR_HEIGHT = 16
 _METER_HEIGHT = 8
 _BUFF_ICON_SIZE = 28
 _BUFF_ICON_STEP = 36
+_BUFF_ICON_DURATION_FONT_SIZE = 12
 _COMBATANT_SCALE_FACTOR = 3
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _BAR_BG_COLOR: pygame.typing.ColorLike = "dimgray"
@@ -250,18 +251,32 @@ class DisplayedCombatantState:
     # scoped per category -- a Lifespan Fibrous and a Battle Fibrous are tracked (and can both be
     # active) independently, so a name-only set would conflate them.
     active_effects: set[tuple[EffectCategory, EffectName]] = field(default_factory=set)
+    # HUD-row countdown display, same keying as active_effects. None means "no number" (Lifespan,
+    # or an indefinite Battle effect) -- not "unknown". A GUI-side approximation, not read from
+    # Battle: the domain reports an effect's *expiry* (EffectExpired) but never "still active, N
+    # turns left" for one that isn't expiring, so _tick_displayed_battle_effect_durations mirrors
+    # the one call site (Battle.resolve_enemy_turn) where the domain actually ticks Battle-scoped
+    # durations, rather than reading Combatant.effects live (ADR 0013's invariant).
+    remaining_turns: dict[tuple[EffectCategory, EffectName], int | None] = field(default_factory=dict)
 
 
 def _displayed_state_from(combatant: Combatant) -> DisplayedCombatantState:
+    active_effects = {
+        (category, name)
+        for category in EffectCategory
+        for name in EffectName
+        if combatant.effects.has(name, category=category)
+    }
     return DisplayedCombatantState(
         hp=float(combatant.current_hp),
         meter=float(combatant.current_meter),
-        active_effects={
-            (category, name)
-            for category in EffectCategory
-            for name in EffectName
-            if combatant.effects.has(name, category=category)
-        },
+        active_effects=active_effects,
+        # Seeded None for every key, not read off the live effect: correct as-is, not just
+        # expedient -- a fresh Battle can only start with pre-existing Lifespan effects (Battle
+        # effects are only ever granted by events during this battle, none can predate it), and
+        # Lifespan always displays blank (per _duration_subtitle), so no seeded key ever needs a
+        # real number.
+        remaining_turns=dict.fromkeys(active_effects),
     )
 
 
@@ -412,10 +427,23 @@ class CombatScene:
             self._resolve_pending_action()
         elif turn_phase is TurnPhase.AWAITING_ENEMY_TURN:
             self._queue_events(self._battle.resolve_enemy_turn())
+            self._tick_displayed_battle_effect_durations()
         # Starts (without necessarily finishing) the freshly queued batch's first phase within
         # this same call, rather than needing a dedicated "first event reveals immediately" flag.
         self._advance_phases(0.0)
         return None
+
+    def _tick_displayed_battle_effect_durations(self) -> None:
+        # Mirrors EffectRegistry.tick_battle_effects()'s once-per-round decrement -- its only
+        # caller is Battle._expire_battle_effects(), itself only ever called from
+        # resolve_enemy_turn() (never resolve_player_turn() or query_player_turn()), so this is
+        # exact, not a heuristic, as long as it's called from that exact site. Deliberately eager,
+        # not phase-gated (see DisplayedCombatantState.remaining_turns): the HUD number can update
+        # a beat before that round's own animations finish playing.
+        for displayed in (self._player_displayed, self._enemy_displayed):
+            for key, remaining in displayed.remaining_turns.items():
+                if key[0] is EffectCategory.BATTLE and remaining is not None:
+                    displayed.remaining_turns[key] = remaining - 1
 
     def _advance_query(self) -> None:
         query = self._battle.query_player_turn()
@@ -529,9 +557,10 @@ class CombatScene:
         return Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)
 
     def _effect_announcement_phase(self, event: EffectApplied | EffectExpired) -> list[Phase]:
-        # Toggles DisplayedCombatantState.active_effects in the same on_start that reveals the
-        # announcement, not on_complete -- the HUD buff-icon row and the "is affected by"/"wears
-        # off" popup must change in the same frame, since both are announcing the same event.
+        # Toggles DisplayedCombatantState.active_effects/remaining_turns in the same on_start that
+        # reveals the announcement, not on_complete -- the HUD buff-icon row and the "is affected
+        # by"/"wears off" popup must change in the same frame, since both are announcing the same
+        # event.
         displayed = self._displayed_for(event.target)
         if isinstance(event, EffectApplied):
             key = (event.category, event.effect)
@@ -542,8 +571,12 @@ class CombatScene:
                 # (e.g. repeated Barbed Struggle uses) would spam the same popup. A different
                 # category's instance of the same effect name is a genuinely new application (the
                 # brief's own Lifespan-Fibrous-plus-Battle-Fibrous example), not a reapplication.
+                # The HUD countdown still refreshes here, silently, matching the domain's own
+                # silent duration reset -- no announcement plays, so this isn't phase-gated.
+                displayed.remaining_turns[key] = event.remaining_turns
                 return []
             duration = _duration_subtitle(event.category, event.remaining_turns)
+            remaining_turns = event.remaining_turns
         else:
             # EffectExpired carries no category (only ever fired for a Battle-scoped effect today
             # -- Battle._expire_battle_effects/_clear_battle_effects both filter to
@@ -551,6 +584,7 @@ class CombatScene:
             # event. This breaks if a future domain change ever expires a Lifespan effect this way.
             key = (EffectCategory.BATTLE, event.effect)
             duration = "Wears off"
+            remaining_turns = None
         # Player and enemy both hold every effect type (PROJECT_BRIEF.md §5.6), so the subtitle
         # names who it's on, not just how long -- otherwise a Runt on the enemy and a Runt on the
         # player are visually indistinguishable while the card is up.
@@ -563,8 +597,10 @@ class CombatScene:
             self._announcement = announcement
             if applied:
                 displayed.active_effects.add(key)
+                displayed.remaining_turns[key] = remaining_turns
             else:
                 displayed.active_effects.discard(key)
+                displayed.remaining_turns.pop(key, None)
 
         def on_complete() -> None:
             self._announcement = None
@@ -694,9 +730,7 @@ class CombatScene:
             surface, meter_rect, max(0.0, displayed.meter) / combatant.base_stats.meter_capacity, _METER_COLOR
         )
         icon_row_x = bar_right if mirrored else bar_left
-        self._draw_buff_icons(
-            surface, displayed.active_effects, (icon_row_x, meter_rect.bottom + _GAP), mirrored=mirrored
-        )
+        self._draw_buff_icons(surface, displayed, (icon_row_x, meter_rect.bottom + _GAP), mirrored=mirrored)
 
     def _draw_bar(
         self, surface: pygame.Surface, rect: pygame.Rect, ratio: float, color: pygame.typing.ColorLike
@@ -707,20 +741,18 @@ class CombatScene:
         pygame.draw.rect(surface, color, filled)
 
     def _draw_buff_icons(
-        self,
-        surface: pygame.Surface,
-        active_effects: set[tuple[EffectCategory, EffectName]],
-        pos: tuple[int, int],
-        *,
-        mirrored: bool,
+        self, surface: pygame.Surface, displayed: DisplayedCombatantState, pos: tuple[int, int], *, mirrored: bool
     ) -> None:
-        # Reads DisplayedCombatantState.active_effects, not live Combatant.effects (ADR 0013) --
-        # kept in sync by _effect_announcement_phase's on_start, so the icon appears/disappears in
-        # step with its own "is affected by"/"wears off" announcement rather than jumping ahead.
+        # Reads DisplayedCombatantState, not live Combatant.effects (ADR 0013) -- kept in sync by
+        # _effect_announcement_phase's on_start, so the icon appears/disappears in step with its
+        # own "is affected by"/"wears off" announcement rather than jumping ahead.
         # One icon per name regardless of category -- the row shows *whether* an effect is active,
         # not how many category-scoped instances back it (a Lifespan Fibrous plus a Battle Fibrous
-        # both active still shows a single Fibrous icon).
-        active_names = {name for _, name in active_effects}
+        # both active still shows a single Fibrous icon). The countdown prefers the Battle-scoped
+        # remaining_turns when both categories are active on the same name, since Lifespan's is
+        # always None (blank) -- same "Battle over Lifespan" precedent as Adrenaline's trigger
+        # preference (PROJECT_BRIEF.md §5.6), for the same reason: it's the one still ticking.
+        active_names = {name for _, name in displayed.active_effects}
         active = [name for name in EffectName if name in active_names]
         x, y = pos
         if mirrored:
@@ -728,8 +760,13 @@ class CombatScene:
             # left so the last icon's own right edge (start + (n-1) steps + one icon's width)
             # lands exactly at pos.x, then step forward as usual.
             x -= _BUFF_ICON_STEP * (len(active) - 1) + _BUFF_ICON_SIZE
+        duration_font = get_font(GameFont.ITHACA, _BUFF_ICON_DURATION_FONT_SIZE)
         for name in active:
             self._buff_icon_factory(name).render(surface, pygame.Vector2(x, y), _BUFF_ICON_SIZE)
+            remaining = displayed.remaining_turns.get((EffectCategory.BATTLE, name))
+            if remaining is not None:
+                label = duration_font.render(str(max(0, remaining)), True, _TEXT_COLOR)
+                surface.blit(label, (x + _BUFF_ICON_SIZE - label.get_width(), y))
             x += _BUFF_ICON_STEP
 
     def _draw_menu(self, surface: pygame.Surface) -> None:
