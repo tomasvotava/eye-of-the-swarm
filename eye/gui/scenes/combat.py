@@ -46,6 +46,8 @@ from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.tuning import (
     BATTLE_ACTING_HIGHLIGHT_COLOR,
     BATTLE_ANNOUNCEMENT_HOLD_SECONDS,
+    BATTLE_BUFF_ICON_HOP_DURATION_SECONDS,
+    BATTLE_BUFF_ICON_HOP_PIXELS,
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_STRENGTH,
@@ -80,6 +82,9 @@ _METER_HEIGHT = 8
 _BUFF_ICON_SIZE = 28
 _BUFF_ICON_STEP = 36
 _BUFF_ICON_DURATION_FONT_SIZE = 12
+# The _GAP _draw_combatant leaves under the meter bar is all the headroom a hopping icon has, so
+# raising BATTLE_BUFF_ICON_HOP_PIXELS past it is inert instead of a collision.
+_BUFF_ICON_HOP_CEILING = _GAP
 _OVERLAY_ICON_SIZE = 40
 _COMBATANT_SCALE_FACTOR = 3
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
@@ -270,6 +275,9 @@ class DisplayedCombatantState:
     # Scene-clock reading of the last impact, or None while nothing flashes. Per-combatant because
     # PhaseFocus.receiving also covers heals, revives and deaths, which are not impacts.
     hit_flash_started_at: float | None = None
+    # Scene-clock reading of each effect's tick hop; an absent key means that icon is at rest.
+    # Keyed by EffectName alone to match the row, which draws one icon per name whatever category.
+    effect_tick_started_at: dict[EffectName, float] = field(default_factory=dict)
 
 
 def _displayed_state_from(combatant: Combatant) -> DisplayedCombatantState:
@@ -649,14 +657,17 @@ class CombatScene:
         # Wraps _reaction_phase so the overlay holds for exactly the target's own flinch clip.
         reaction = self._reaction_phase(target)
         overlay = Overlay(target=target, effect=effect)
+        displayed = self._displayed_for(target)
 
         def on_start() -> None:
             reaction.on_start()
             self._overlay = overlay
+            displayed.effect_tick_started_at[effect] = self._elapsed_seconds
 
         def on_complete() -> None:
             reaction.on_complete()
             self._overlay = None
+            displayed.effect_tick_started_at.pop(effect, None)
 
         return replace(reaction, on_start=on_start, on_complete=on_complete)
 
@@ -830,6 +841,18 @@ class CombatScene:
             return 0.0
         return BATTLE_HIT_FLASH_STRENGTH * (1.0 - elapsed / BATTLE_HIT_FLASH_DURATION_SECONDS)
 
+    def _buff_icon_hop_offset(self, displayed: DisplayedCombatantState, effect: EffectName) -> int:
+        """How many pixels above its resting place `effect`'s icon sits this frame, 0 when at rest."""
+        started_at = displayed.effect_tick_started_at.get(effect)
+        if started_at is None:
+            return 0
+        elapsed = self._elapsed_seconds - started_at
+        if elapsed >= BATTLE_BUFF_ICON_HOP_DURATION_SECONDS:
+            return 0
+        peak = min(BATTLE_BUFF_ICON_HOP_PIXELS, _BUFF_ICON_HOP_CEILING)
+        phase = math.pi * elapsed / BATTLE_BUFF_ICON_HOP_DURATION_SECONDS
+        return round(peak * math.sin(phase))
+
     def _pulse_mix(self) -> float:
         """How far a highlighted HP bar's fill sits toward its role colour this frame."""
         cycles = self._elapsed_seconds / BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS
@@ -900,11 +923,13 @@ class CombatScene:
             x -= _BUFF_ICON_STEP * (len(active) - 1) + _BUFF_ICON_SIZE
         duration_font = get_font(GameFont.ITHACA, _BUFF_ICON_DURATION_FONT_SIZE)
         for name in active:
-            self._buff_icon_factory(name).render(surface, pygame.Vector2(x, y), _BUFF_ICON_SIZE)
+            # Only y moves: x stays on the row's fixed step, and the countdown rides along.
+            icon_y = y - self._buff_icon_hop_offset(displayed, name)
+            self._buff_icon_factory(name).render(surface, pygame.Vector2(x, icon_y), _BUFF_ICON_SIZE)
             remaining = displayed.remaining_turns.get((EffectCategory.BATTLE, name))
             if remaining is not None:
                 label = duration_font.render(str(max(0, remaining)), True, _TEXT_COLOR)
-                surface.blit(label, (x + _BUFF_ICON_SIZE - label.get_width(), y))
+                surface.blit(label, (x + _BUFF_ICON_SIZE - label.get_width(), icon_y))
             x += _BUFF_ICON_STEP
 
     def _draw_menu(self, surface: pygame.Surface) -> None:
