@@ -3,7 +3,7 @@ from enum import StrEnum
 import pygame
 import pytest
 
-from eye.gui.animation import AnimationClip, Animator
+from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
 
 
 class _State(StrEnum):
@@ -37,6 +37,47 @@ def test_animator_construction_succeeds_when_every_state_has_a_clip() -> None:
     animator = Animator(clips, initial_state=_State.IDLE)
 
     assert animator.current_frame() is clips[_State.IDLE].frames[0]
+
+
+def test_animator_state_reports_the_current_state() -> None:
+    clips = {_State.IDLE: _clip(2), _State.WALK: _clip(3)}
+    animator = Animator(clips, initial_state=_State.IDLE)
+
+    animator.set_state(_State.WALK)
+
+    assert animator.state is _State.WALK
+
+
+def test_scale_sprite_is_a_no_op_passthrough_at_factor_one() -> None:
+    sprite = pygame.Surface((4, 4))
+
+    assert scale_sprite(sprite, 1) is sprite
+
+
+def test_scale_sprite_scales_dimensions_by_factor() -> None:
+    sprite = pygame.Surface((4, 6))
+
+    scaled = scale_sprite(sprite, 3)
+
+    assert scaled.get_size() == (12, 18)
+
+
+def test_scale_clip_is_a_no_op_passthrough_at_factor_one() -> None:
+    clip = _clip(2)
+
+    assert scale_clip(clip, 1) is clip
+
+
+def test_scale_clip_scales_every_frame_and_preserves_other_fields() -> None:
+    clip = AnimationClip(
+        frames=(pygame.Surface((2, 2)), pygame.Surface((2, 2))), frame_duration_seconds=0.1, loop=False
+    )
+
+    scaled = scale_clip(clip, 4)
+
+    assert [frame.get_size() for frame in scaled.frames] == [(8, 8), (8, 8)]
+    assert scaled.frame_duration_seconds == clip.frame_duration_seconds
+    assert scaled.loop is False
 
 
 def test_animator_construction_raises_when_a_state_has_no_clip() -> None:

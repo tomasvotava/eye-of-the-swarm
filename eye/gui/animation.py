@@ -1,7 +1,7 @@
 """Time-driven animation state machine, generic over each entity's own state enum (ADR 0011)."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 import pygame
@@ -22,6 +22,23 @@ class AnimationClip:
     @property
     def total_duration_seconds(self) -> float:
         return len(self.frames) * self.frame_duration_seconds
+
+
+def scale_sprite(sprite: pygame.Surface, factor: float) -> pygame.Surface:
+    """Scale a single sprite by `factor`, a no-op passthrough at `factor == 1`.
+
+    Meant to be called once per loaded sprite (e.g. while building a scene's own animator/static
+    fallback), not per draw() call -- scaling is uniform per entity, so paying for it every frame
+    is wasted work.
+    """
+    return sprite if factor == 1 else pygame.transform.scale_by(sprite, factor)
+
+
+def scale_clip(clip: AnimationClip, factor: float) -> AnimationClip:
+    """Scale every frame of `clip` by `factor`, a no-op passthrough at `factor == 1`."""
+    if factor == 1:
+        return clip
+    return replace(clip, frames=tuple(scale_sprite(frame, factor) for frame in clip.frames))
 
 
 class Animator[TState: StrEnum]:
@@ -59,6 +76,10 @@ class Animator[TState: StrEnum]:
                 self._frame_index = len(clip.frames) - 1
                 self._elapsed_seconds = 0.0
                 break
+
+    @property
+    def state(self) -> TState:
+        return self._state
 
     def current_frame(self) -> pygame.Surface:
         return self._clips[self._state].frames[self._frame_index]

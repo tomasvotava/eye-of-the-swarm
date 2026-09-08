@@ -15,7 +15,7 @@ import pygame
 import pygame.typing
 
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
-from eye.gui.animation import Animator
+from eye.gui.animation import Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
@@ -140,10 +140,14 @@ class ExplorationScene:
         # mirrors DevAssetViewerScene's identical guard for this identical key/enum (ADR 0011).
         self._player_animator: Animator[PlayerAnimationState] | None = None
         if atlas.has_animation_set(SpriteKey.PLAYER):
-            self._player_animator = Animator(
-                atlas.get_animation_set(SpriteKey.PLAYER, PlayerAnimationState),
-                initial_state=_animation_state_for_phase(starting_phase),
-            )
+            clips = {
+                state: scale_clip(clip, _PLAYER_SCALE_FACTOR)
+                for state, clip in atlas.get_animation_set(SpriteKey.PLAYER, PlayerAnimationState).items()
+            }
+            self._player_animator = Animator(clips, initial_state=_animation_state_for_phase(starting_phase))
+        # Fallback for a placeholder atlas with no player animation data -- scaled once here
+        # rather than on every draw().
+        self._player_static_sprite = scale_sprite(atlas.get(SpriteKey.PLAYER), _PLAYER_SCALE_FACTOR)
 
     @classmethod
     def for_new_generation(cls, generation: Generation, game: Game, atlas: SpriteAtlas) -> ExplorationScene:
@@ -283,12 +287,9 @@ class ExplorationScene:
         return start + (end - start) * ratio
 
     def _draw_player(self, surface: pygame.Surface) -> None:
-        if self._player_animator is not None:
-            player = self._player_animator.current_frame()
-        else:
-            player = self._atlas.get(SpriteKey.PLAYER)
-        if _PLAYER_SCALE_FACTOR != 1:
-            player = pygame.transform.scale_by(player, _PLAYER_SCALE_FACTOR)
+        player = (
+            self._player_animator.current_frame() if self._player_animator is not None else self._player_static_sprite
+        )
         x = round(surface.get_width() * self._player_x_fraction())
         surface.blit(player, player.get_rect(center=(x, surface.get_rect().centery)))
 
