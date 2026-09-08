@@ -75,10 +75,15 @@ mechanism is exactly what this amendment replaces.
     drive two animators at once from one phase's `on_start` (attacker's `ATTACK`, target's `HIT`),
     since animators tick unconditionally every frame regardless of which phase is active — no
     separate "windup" event needed even for multi-hit combos.
-  - **`Announcement`** (center-screen icon + short text + hold, one shared visual language):
-    `EffectApplied`, `EffectExpired`, `TurnSkipped`, `ExtraActionTriggered`, `BattleEnded`.
+  - **`Announcement`** (icon + short text + hold, one shared visual language): `EffectApplied`,
+    `EffectExpired`, `TurnSkipped`, `ExtraActionTriggered`, `BattleEnded`. Where it is anchored
+    follows what it is about: an effect card carries the combatant the effect landed on and is
+    drawn over that combatant's own half of the screen — typeset to that half's width, so which of
+    the two it concerns is readable without parsing the subtitle — while a plain announcement
+    (`TurnSkipped`/`ExtraActionTriggered`/`BattleEnded`) concerns the fight rather than one side of
+    it and stays centered.
   - **`Overlay`** (lighter, target-local — reuses the `HIT` animation state plus a small icon at
-    the target's position, not a center-screen popup): `DotTicked`, `HealApplied`. These can
+    the target's position, not a card of its own): `DotTicked`, `HealApplied`. These can
     repeat every turn; a full `Announcement` each time would get old fast.
   - **`Tween`** alone (no animation-state change): `MeterFilled`, `MeterConsumed`.
   - `ActionChosen` is the one variant that's legitimately phase-less (`[]`).
