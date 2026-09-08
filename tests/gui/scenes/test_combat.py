@@ -44,17 +44,23 @@ from eye.gui.scenes.combat import (
     _MARGIN,
     _METER_HEIGHT,
     ACTION_KEYS,
+    Announcement,
     CombatAnimationState,
     CombatScene,
     DisplayedCombatantState,
     Phase,
     _build_combat_animator,
     _DeadVariant,
+    _describe_event,
     _hp_tween_phase,
     _LoadedCombatAnimationState,
     _resolve_enemy_sprite_key,
 )
-from eye.gui.tuning import BATTLE_DEATH_POSE_HOLD_SECONDS, BATTLE_VALUE_TWEEN_SECONDS
+from eye.gui.tuning import (
+    BATTLE_ANNOUNCEMENT_HOLD_SECONDS,
+    BATTLE_DEATH_POSE_HOLD_SECONDS,
+    BATTLE_VALUE_TWEEN_SECONDS,
+)
 from eye.gui.widgets import BuffIcon, TextBuffIcon
 from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
@@ -86,9 +92,11 @@ def _combatant(name: str = "Combatant") -> Combatant:
 
 
 # One instance of every BattleEvent variant -- used to check that `_phases_for` is exhaustive.
-# Death/Revive/HitLanded/HitReflected/SelfDamageTaken are the animation-driven swing events and
-# MeterFilled/MeterConsumed are tween-only; together they return real phases, while every other
-# variant stays stubbed to `[]` pending ADR 0013's remaining Announcement/Overlay treatments.
+# Death/Revive/HitLanded/HitReflected/SelfDamageTaken are the animation-driven swing events,
+# MeterFilled/MeterConsumed are tween-only, and EffectApplied/EffectExpired/TurnSkipped/
+# ExtraActionTriggered/BattleEnded get the Announcement treatment; together they return real
+# phases, while ActionChosen/DotTicked/HealApplied stay stubbed to `[]` (ActionChosen permanently,
+# DotTicked/HealApplied pending ADR 0013's remaining Overlay treatment, #174).
 _ONE_OF_EACH_BATTLE_EVENT: tuple[BattleEvent, ...] = (
     Death(combatant=_combatant()),
     Revive(combatant=_combatant(), revived_hp=5),
@@ -145,7 +153,11 @@ def _press(scene: CombatScene, key: int) -> None:
     scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=key))
 
 
-def _drive_to_transition(scene: CombatScene, max_frames: int = 200) -> PlaySceneTransition:
+def _drive_to_transition(scene: CombatScene, max_frames: int = 2000) -> PlaySceneTransition:
+    # Generous budget: beyond the animation-driven swing/tween phases (ADR 0013) already accounted
+    # for here, EffectApplied/EffectExpired/TurnSkipped/ExtraActionTriggered/BattleEnded now each
+    # hold for BATTLE_ANNOUNCEMENT_HOLD_SECONDS too, so a real strain that inflicts several
+    # buffs/debuffs over a multi-round fight needs many more 0.016s frames to fully resolve.
     for _ in range(max_frames):
         _press(scene, ACTION_KEYS[0])
         result = scene.update(0.016)
@@ -356,9 +368,10 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     # Short-labelled effects, so the assertion below exercises the row's positioning rather than
     # a pre-existing, orthogonal limitation where a long label (e.g. "Clouded Judgement") can
-    # itself render wider than one _BUFF_ICON_STEP.
+    # itself render wider than one _BUFF_ICON_STEP. The row now reads DisplayedCombatantState
+    # (ADR 0013), so populate that snapshot directly rather than live Combatant.effects.
     for effect in (EffectName.RUNT, EffectName.WILTY, EffectName.FIBROUS):
-        scene._battle.enemy.effects.apply(ActiveEffect(effect, EffectCategory.BATTLE, 5))
+        scene._enemy_displayed.active_effects.add(effect)
     surface = pygame.Surface((800, 600))
     surface.fill("black")
 
@@ -381,7 +394,8 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
 
 _ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded, HitReflected, SelfDamageTaken)
 _TWEEN_ONLY_EVENT_TYPES = (MeterFilled, MeterConsumed)
-_EVENT_TYPES_WITH_REAL_PHASES = _ANIMATION_DRIVEN_EVENT_TYPES + _TWEEN_ONLY_EVENT_TYPES
+_ANNOUNCEMENT_EVENT_TYPES = (EffectApplied, EffectExpired, TurnSkipped, ExtraActionTriggered, BattleEnded)
+_EVENT_TYPES_WITH_REAL_PHASES = _ANIMATION_DRIVEN_EVENT_TYPES + _TWEEN_ONLY_EVENT_TYPES + _ANNOUNCEMENT_EVENT_TYPES
 
 
 def test_phases_for_is_exhaustive_over_every_battle_event_variant() -> None:
@@ -800,11 +814,13 @@ def test_hp_tween_phase_interpolates_and_snaps_exactly_on_completion() -> None:
     assert displayed.hp == 60.0
 
 
-def test_buff_icons_still_read_live_combatant_state_not_the_displayed_snapshot() -> None:
-    # The buff row deliberately reads live Combatant state, not the DisplayedCombatantState
-    # snapshot -- see combat.py's _draw_combatant comment for why. Recording which EffectName
-    # values actually get rendered (rather than only inspecting the snapshot, which no drawing
-    # code reads) is what makes this catch a regression to reading the snapshot instead.
+def test_buff_icon_row_renders_the_displayed_snapshot_not_live_combatant_state() -> None:
+    # The buff row now reads DisplayedCombatantState.active_effects (ADR 0013), kept in sync by
+    # _effect_announcement_phase's on_start -- mirrors
+    # test_meter_bar_renders_the_displayed_snapshot_not_live_combatant_state's shape for the
+    # analogous HP/meter case. Recording which EffectName values actually get rendered (rather
+    # than only inspecting the snapshot, which no drawing code reads) is what makes this catch a
+    # regression to reading live Combatant state instead.
     rendered: list[EffectName] = []
 
     def _spy_factory(effect: EffectName) -> BuffIcon:
@@ -813,11 +829,39 @@ def test_buff_icons_still_read_live_combatant_state_not_the_displayed_snapshot()
 
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
-    scene._battle.player.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, 3))
+    scene._battle.player.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, 3))  # live only
 
+    scene.draw(pygame.Surface((800, 600)))
+    assert EffectName.FIBROUS not in rendered  # displayed snapshot hasn't been told about it yet
+
+    scene._player_displayed.active_effects.add(EffectName.FIBROUS)
     scene.draw(pygame.Surface((800, 600)))
 
     assert EffectName.FIBROUS in rendered
+
+
+def test_effect_applied_phase_adds_to_the_displayed_active_effects_on_start() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
+    )
+    assert EffectName.FIBROUS not in scene._player_displayed.active_effects
+
+    scene._phases_for(event)[0].on_start()
+
+    assert EffectName.FIBROUS in scene._player_displayed.active_effects
+
+
+def test_effect_expired_phase_discards_from_the_displayed_active_effects_on_start() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.active_effects.add(EffectName.FIBROUS)
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert EffectName.FIBROUS not in scene._player_displayed.active_effects
 
 
 def test_meter_bar_renders_the_displayed_snapshot_not_live_combatant_state() -> None:
@@ -864,3 +908,108 @@ def test_meter_filled_and_meter_consumed_tween_the_displayed_meter_over_the_hp_t
     assert consumed_phase[0].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS
     consumed_phase[0].on_complete()
     assert displayed.meter == 0.0
+
+
+def test_effect_applied_phase_sets_an_announcement_with_the_buff_icon_and_describe_event_text() -> None:
+    rendered_icons: list[BuffIcon] = []
+
+    def _spy_factory(effect: EffectName) -> BuffIcon:
+        icon = TextBuffIcon(effect)
+        rendered_icons.append(icon)
+        return icon
+
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
+    )
+
+    phases = scene._phases_for(event)
+
+    assert len(phases) == 1
+    assert phases[0].duration_seconds == BATTLE_ANNOUNCEMENT_HOLD_SECONDS
+    assert scene._announcement is None  # not set until on_start actually fires
+    phases[0].on_start()
+    assert scene._announcement is not None
+    assert scene._announcement.text == _describe_event(event)
+    assert scene._announcement.icon is rendered_icons[0]
+    phases[0].on_complete()
+    assert scene._announcement is None
+
+
+def test_effect_expired_phase_sets_an_announcement_with_the_buff_icon() -> None:
+    rendered_icons: list[BuffIcon] = []
+
+    def _spy_factory(effect: EffectName) -> BuffIcon:
+        icon = TextBuffIcon(effect)
+        rendered_icons.append(icon)
+        return icon
+
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+
+    phases = scene._phases_for(event)
+    phases[0].on_start()
+
+    assert scene._announcement == Announcement(text=_describe_event(event), icon=rendered_icons[0])
+
+
+def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_icon() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    events: tuple[BattleEvent, ...] = (
+        TurnSkipped(combatant=scene._battle.player),
+        ExtraActionTriggered(actor=scene._battle.player, extra_action_index=0),
+        BattleEnded(winner=scene._battle.player),
+    )
+
+    for event in events:
+        phases = scene._phases_for(event)
+        assert len(phases) == 1
+        phases[0].on_start()
+        assert scene._announcement == Announcement(text=_describe_event(event), icon=None)
+        phases[0].on_complete()
+        assert scene._announcement is None
+
+
+def test_announcement_phase_holds_for_the_tuned_duration_via_the_driver() -> None:
+    # Drives the real _advance_phases loop (not just calling on_start/on_complete directly), so it
+    # also exercises the announcement's real duration, not only its callbacks' effects.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    event = TurnSkipped(combatant=scene._battle.player)
+    scene._queue_events([event])
+
+    scene._advance_phases(0.0)  # the first event of a batch reveals immediately (ADR 0013)
+    assert scene._announcement == Announcement(text=_describe_event(event))
+
+    scene._advance_phases(BATTLE_ANNOUNCEMENT_HOLD_SECONDS / 2)
+    assert scene._announcement is not None  # still holding, short of the full duration
+
+    scene._advance_phases(BATTLE_ANNOUNCEMENT_HOLD_SECONDS / 2)
+    assert scene._announcement is None
+
+
+def test_draw_does_not_raise_with_an_announcement_set() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._announcement = Announcement(text="Test announcement", icon=TextBuffIcon(EffectName.FIBROUS))
+
+    scene.draw(pygame.Surface((800, 600)))
+
+
+def test_draw_renders_the_announcements_icon_when_set() -> None:
+    render_calls: list[tuple[pygame.Surface, pygame.Vector2]] = []
+
+    class _SpyIcon:
+        def render(self, surface: pygame.Surface, pos: pygame.Vector2) -> None:
+            render_calls.append((surface, pos))
+
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._announcement = Announcement(text="Test announcement", icon=_SpyIcon())
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert len(render_calls) == 1

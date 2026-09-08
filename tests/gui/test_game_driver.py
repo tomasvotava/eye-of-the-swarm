@@ -67,7 +67,11 @@ def _advance(driver: GameDriver) -> None:
     driver.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
 
 
-def _drive_battle_to_conclusion(driver: GameDriver, max_frames: int = 200) -> None:
+def _drive_battle_to_conclusion(driver: GameDriver, max_frames: int = 2000) -> None:
+    # Generous budget: EffectApplied/EffectExpired/TurnSkipped/ExtraActionTriggered/BattleEnded
+    # (ADR 0013's Announcement treatment) each hold for BATTLE_ANNOUNCEMENT_HOLD_SECONDS, so a real
+    # strain inflicting several buffs/debuffs over a multi-round fight needs many more 0.016s
+    # frames to fully resolve than the swing/tween-only phases alone required.
     for _ in range(max_frames):
         driver.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=ACTION_KEYS[0]))
         driver.update(0.016)
