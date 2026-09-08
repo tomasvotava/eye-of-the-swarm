@@ -34,10 +34,11 @@ from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
 from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
-from eye.gui.assets import SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
     _BAR_HEIGHT,
+    _COMBATANT_SCALE_FACTOR,
     _FONT_SIZE,
     _GAP,
     _MARGIN,
@@ -326,8 +327,8 @@ def test_draw_anchors_the_player_left_and_the_enemy_right() -> None:
 
     scene.draw(surface)
 
-    player_sprite = scene._atlas.get(SpriteKey.PLAYER)
-    enemy_sprite = scene._atlas.get(scene._enemy_sprite_key)
+    player_sprite = build_placeholder_atlas().get(SpriteKey.PLAYER)
+    enemy_sprite = build_placeholder_atlas().get(scene._enemy_sprite_key)
     # Both sprites are non-empty placeholder shapes drawn on a black background, so scanning each
     # column for any non-black pixel locates where each panel actually rendered without hardcoding
     # every sub-widget's position. Restricted to the sprite panels' own vertical band so the
@@ -355,7 +356,7 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
 
     scene.draw(surface)
 
-    enemy_sprite = scene._atlas.get(scene._enemy_sprite_key)
+    enemy_sprite = build_placeholder_atlas().get(scene._enemy_sprite_key)
     sprite_x = surface.get_width() - _MARGIN - enemy_sprite.get_width()
     icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
     # A generous band around the icon row's y-position, well clear of the menu/log which anchor
@@ -541,6 +542,44 @@ def test_build_combat_animator_returns_none_for_a_key_with_no_animation_clips() 
     assert _build_combat_animator(build_placeholder_atlas(), SpriteKey.BEATLE) is None
 
 
+def test_build_combat_animator_scales_every_frame_by_scale_factor(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)  # 4x4 test clip frames
+    atlas = build_art_atlas(tmp_path)
+
+    animator = _build_combat_animator(atlas, SpriteKey.BEATLE, scale_factor=3)
+
+    assert animator is not None
+    for state in CombatAnimationState:
+        animator.set_state(state)
+        assert animator.current_frame().get_size() == (12, 12)
+
+
+def test_combat_scene_scales_player_and_enemy_animators_by_combatant_scale_factor(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)  # 4x4 test clip frames
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)
+    atlas = build_art_atlas(tmp_path)
+    generation = _generation(strain_queue=[Strain.BEATLE])
+
+    scene = CombatScene(generation, _encounter(generation), atlas)
+
+    assert scene._player_animator is not None
+    assert scene._enemy_animator is not None
+    frame_size = round(4 * _COMBATANT_SCALE_FACTOR)
+    assert scene._player_animator.current_frame().get_size() == (frame_size, frame_size)
+    assert scene._enemy_animator.current_frame().get_size() == (frame_size, frame_size)
+
+
+def test_combat_scene_scales_static_fallback_sprites_by_combatant_scale_factor() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    assert scene._player_animator is None
+    assert scene._enemy_animator is None
+
+    sprite_size = round(PLACEHOLDER_SPRITE_SIZE * _COMBATANT_SCALE_FACTOR)
+    assert scene._player_static_sprite.get_size() == (sprite_size, sprite_size)
+    assert scene._enemy_static_sprite.get_size() == (sprite_size, sprite_size)
+
+
 def test_build_combat_animator_builds_the_full_four_state_clip_set(tmp_path: Path) -> None:
     _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)
     atlas = build_art_atlas(tmp_path)
@@ -687,17 +726,14 @@ def test_swing_phase_drives_source_attack_and_target_hit_then_resets_both_to_idl
 
     swing = scene._phases_for(_hit_landed(scene))[0]
     swing.on_start()
-    assert scene._player_animator.state == CombatAnimationState.ATTACK
-    assert scene._enemy_animator.state == CombatAnimationState.HIT
-
-    swing.on_complete()
-    # Explicit widened annotations: mypy narrows scene._player_animator.state (a property read
-    # through an `== ATTACK` assert above) and doesn't know on_complete()'s closures mutate it, so
-    # an unannotated local would keep the stale Literal[ATTACK] type and flag this as unreachable.
     player_state: CombatAnimationState = scene._player_animator.state
     enemy_state: CombatAnimationState = scene._enemy_animator.state
-    assert player_state == CombatAnimationState.IDLE
-    assert enemy_state == CombatAnimationState.IDLE
+    assert player_state == CombatAnimationState.ATTACK
+    assert enemy_state == CombatAnimationState.HIT
+
+    swing.on_complete()
+    assert scene._player_animator.state == CombatAnimationState.IDLE
+    assert scene._enemy_animator.state == CombatAnimationState.IDLE
 
 
 def test_reaction_phase_drives_hit_then_resets_to_idle(tmp_path: Path) -> None:
@@ -709,11 +745,11 @@ def test_reaction_phase_drives_hit_then_resets_to_idle(tmp_path: Path) -> None:
 
     reaction = scene._reaction_phase(scene._battle.player)
     reaction.on_start()
-    assert scene._player_animator.state == CombatAnimationState.HIT
+    player_state: CombatAnimationState = scene._player_animator.state
+    assert player_state == CombatAnimationState.HIT
 
     reaction.on_complete()
-    player_state: CombatAnimationState = scene._player_animator.state
-    assert player_state == CombatAnimationState.IDLE
+    assert scene._player_animator.state == CombatAnimationState.IDLE
 
 
 def test_advance_phases_leaves_displayed_hp_strictly_between_before_and_after_mid_tween() -> None:
