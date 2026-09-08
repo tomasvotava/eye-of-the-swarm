@@ -42,11 +42,16 @@ from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
-from eye.gui.tuning import BATTLE_DEATH_POSE_HOLD_SECONDS, BATTLE_VALUE_TWEEN_SECONDS
+from eye.gui.tuning import (
+    BATTLE_ANNOUNCEMENT_HOLD_SECONDS,
+    BATTLE_DEATH_POSE_HOLD_SECONDS,
+    BATTLE_VALUE_TWEEN_SECONDS,
+)
 from eye.gui.widgets import BuffIcon, TextBuffIcon
 from eye.session.generation import Generation
 
 _FONT_SIZE = 20
+_ANNOUNCEMENT_FONT_SIZE = 28
 _MARGIN = 8
 _GAP = 4
 _BAR_WIDTH = 230
@@ -262,6 +267,17 @@ def _meter_tween_phase(displayed: DisplayedCombatantState, end_meter: int) -> Ph
     return Phase(duration_seconds=BATTLE_VALUE_TWEEN_SECONDS, on_progress=on_progress, on_complete=on_complete)
 
 
+@dataclass(frozen=True, slots=True)
+class Announcement:
+    """Center-screen icon + short text treatment (ADR 0013). Doubles as both a Phase's payload and
+    `CombatScene`'s displayed announcement state -- mirrors `DisplayedCombatantState`'s dual role
+    as "what a phase mutates" and "what draw() reads", just replaced wholesale on each transition
+    rather than tweened field-by-field, since an announcement has no partial-progress value."""
+
+    text: str
+    icon: BuffIcon | None = None
+
+
 class CombatScene:
     def __init__(
         self,
@@ -282,6 +298,7 @@ class CombatScene:
         self._current_phases: deque[Phase] = deque()
         self._phase_elapsed: float = 0.0
         self._phase_started: bool = False
+        self._announcement: Announcement | None = None
         self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER, _COMBATANT_SCALE_FACTOR)
         self._enemy_animator = _build_combat_animator(atlas, self._enemy_sprite_key, _COMBATANT_SCALE_FACTOR)
         # Fallback for a key with no animation clips at all -- BRAMBLE/UNKNOWN, or any
@@ -442,10 +459,42 @@ class CombatScene:
 
         return Phase(duration_seconds=duration, on_start=on_start, on_complete=on_complete)
 
+    def _announcement_phase(self, announcement: Announcement) -> Phase:
+        # A bound method, not a free function taking a passed-in mutable object like
+        # _hp_tween_phase/_meter_tween_phase -- those are parameterized per-combatant, but there's
+        # only ever one announcement in flight for the whole scene, so this closes over
+        # self._announcement directly (same shape as _swing_phase/_reaction_phase closing over
+        # self._animator_for).
+        def on_start() -> None:
+            self._announcement = announcement
+
+        def on_complete() -> None:
+            self._announcement = None
+
+        return Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)
+
+    def _effect_announcement_phase(self, event: EffectApplied | EffectExpired, *, applied: bool) -> Phase:
+        # Toggles DisplayedCombatantState.active_effects in the same on_start that reveals the
+        # announcement, not on_complete -- the HUD buff-icon row and the "is affected by"/"wears
+        # off" popup must change in the same frame, since both are announcing the same event.
+        displayed = self._displayed_for(event.target)
+        announcement = Announcement(text=_describe_event(event), icon=self._buff_icon_factory(event.effect))
+
+        def on_start() -> None:
+            self._announcement = announcement
+            if applied:
+                displayed.active_effects.add(event.effect)
+            else:
+                displayed.active_effects.discard(event.effect)
+
+        def on_complete() -> None:
+            self._announcement = None
+
+        return Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)
+
     def _phases_for(self, event: BattleEvent) -> list[Phase]:
-        # EffectApplied/EffectExpired/TurnSkipped/ExtraActionTriggered/BattleEnded/DotTicked/
-        # HealApplied are deliberately phase-less for now -- they get Announcement/Overlay
-        # treatments per ADR 0013 once those land. ActionChosen is permanently phase-less.
+        # DotTicked/HealApplied are deliberately phase-less for now -- they get the Overlay
+        # treatment per ADR 0013 once #174 lands. ActionChosen is permanently phase-less.
         match event:
             case ActionChosen():
                 return []
@@ -474,16 +523,12 @@ class CombatScene:
                     Phase(duration_seconds=0.0, on_start=on_start),
                     _hp_tween_phase(self._displayed_for(combatant), revived_hp),
                 ]
-            case TurnSkipped():
-                return []
             case EffectApplied():
-                return []
+                return [self._effect_announcement_phase(event, applied=True)]
             case EffectExpired():
-                return []
-            case ExtraActionTriggered():
-                return []
-            case BattleEnded():
-                return []
+                return [self._effect_announcement_phase(event, applied=False)]
+            case TurnSkipped() | ExtraActionTriggered() | BattleEnded():
+                return [self._announcement_phase(Announcement(text=_describe_event(event)))]
             case MeterFilled(combatant=combatant, meter_after=meter_after):
                 return [_meter_tween_phase(self._displayed_for(combatant), meter_after)]
             case MeterConsumed(combatant=combatant, meter_after=meter_after):
@@ -526,6 +571,7 @@ class CombatScene:
             mirrored=True,
         )
         self._draw_menu(surface)
+        self._draw_announcement(surface)
 
     def _draw_combatant(
         self,
@@ -570,12 +616,10 @@ class CombatScene:
         self._draw_bar(
             surface, meter_rect, max(0.0, displayed.meter) / combatant.base_stats.meter_capacity, _METER_COLOR
         )
-        # Buff icons deliberately still read live Combatant state, not DisplayedCombatantState:
-        # EffectApplied/EffectExpired are still phase-less (their Announcement treatment is
-        # pending per ADR 0013), so switching this over now would freeze the row at its
-        # construction-time snapshot for the whole battle -- worse than an always-live read.
         icon_row_x = bar_right if mirrored else bar_left
-        self._draw_buff_icons(surface, combatant, (icon_row_x, meter_rect.bottom + _GAP), mirrored=mirrored)
+        self._draw_buff_icons(
+            surface, displayed.active_effects, (icon_row_x, meter_rect.bottom + _GAP), mirrored=mirrored
+        )
 
     def _draw_bar(
         self, surface: pygame.Surface, rect: pygame.Rect, ratio: float, color: pygame.typing.ColorLike
@@ -586,9 +630,12 @@ class CombatScene:
         pygame.draw.rect(surface, color, filled)
 
     def _draw_buff_icons(
-        self, surface: pygame.Surface, combatant: Combatant, pos: tuple[int, int], *, mirrored: bool
+        self, surface: pygame.Surface, active_effects: set[EffectName], pos: tuple[int, int], *, mirrored: bool
     ) -> None:
-        active = [name for name in EffectName if combatant.effects.has(name)]
+        # Reads DisplayedCombatantState.active_effects, not live Combatant.effects (ADR 0013) --
+        # kept in sync by _effect_announcement_phase's on_start, so the icon appears/disappears in
+        # step with its own "is affected by"/"wears off" announcement rather than jumping ahead.
+        active = [name for name in EffectName if name in active_effects]
         x, y = pos
         if mirrored:
             # pos.x is the row's right edge on the mirrored side; the BuffIcon protocol exposes
@@ -615,3 +662,17 @@ class CombatScene:
             surface.blit(font.render(label, True, _TEXT_COLOR), row.topleft)
         hint = font.render("1-9: choose   Up/Down + Enter: choose", True, _TEXT_COLOR)
         surface.blit(hint, (_MARGIN, top + len(available) * _FONT_SIZE))
+
+    def _draw_announcement(self, surface: pygame.Surface) -> None:
+        if self._announcement is None:
+            return
+        font = get_font(GameFont.ITHACA, _ANNOUNCEMENT_FONT_SIZE)
+        text_surface = font.render(self._announcement.text, True, _TEXT_COLOR)
+        text_pos = (
+            surface.get_width() // 2 - text_surface.get_width() // 2,
+            surface.get_height() // 2,
+        )
+        if self._announcement.icon is not None:
+            icon_pos = pygame.Vector2(surface.get_width() // 2 - _BUFF_ICON_STEP // 2, text_pos[1] - _FONT_SIZE - _GAP)
+            self._announcement.icon.render(surface, icon_pos)
+        surface.blit(text_surface, text_pos)
