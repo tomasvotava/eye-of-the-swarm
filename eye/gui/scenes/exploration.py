@@ -7,13 +7,14 @@ deferred until the player's sprite reaches the marker. Owned and routed by `Game
 never constructs a sibling scene itself.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import Enum, StrEnum, auto
 from typing import assert_never
 
 import pygame
 import pygame.typing
 
+from eye.combat.effects import EffectName
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.animation import Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
@@ -26,6 +27,7 @@ from eye.gui.tuning import (
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
+from eye.gui.widgets import BuffIcon, SpriteBuffIcon
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -35,6 +37,8 @@ _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _HUD_MARGIN = 8
 _ICON_MARGIN = 8
 _PLAYER_SCALE_FACTOR = 3.0
+_BUFF_ICON_SIZE = 28
+_BUFF_ICON_STEP = 36
 
 type _ScreenEvent = EffectGranted | ResourceGranted | NothingHappened
 
@@ -123,6 +127,7 @@ class ExplorationScene:
         generation: Generation,
         game: Game,
         atlas: SpriteAtlas,
+        buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
         *,
         starting_phase: _Phase,
         pending_events: Sequence[SessionEvent] = (),
@@ -130,11 +135,24 @@ class ExplorationScene:
         self._generation = generation
         self._game = game
         self._atlas = atlas
+        if buff_icon_factory is not None:
+            self._buff_icon_factory = buff_icon_factory
+        else:
+            # One instance per effect: SpriteBuffIcon caches its scaled surfaces on itself.
+            sprite_icons = {effect: SpriteBuffIcon(atlas, effect) for effect in EffectName}
+            self._buff_icon_factory = sprite_icons.__getitem__
         self._phase = starting_phase
         self._pending_events = pending_events
         self._walk_elapsed_seconds = 0.0
         self._pending_action: ExplorationAction | None = None
         self._last_message = "You explore outward from the hive."
+        # Refreshed only at a marker arrival, never read live: pending_events is this screen's
+        # outcome, already applied by advance() but not revealed until the walk reaches the marker
+        # (ADR 0012).
+        unrevealed = {event.effect for event in pending_events if isinstance(event, EffectGranted)}
+        self._displayed_effects = tuple(
+            effect for effect in generation.active_lifespan_effects if effect not in unrevealed
+        )
 
         # None when the atlas has no player animation data (e.g. build_placeholder_atlas()) --
         # mirrors DevAssetViewerScene's identical guard for this identical key/enum (ADR 0011).
@@ -149,21 +167,33 @@ class ExplorationScene:
         self._player_static_sprite = scale_sprite(atlas.get(SpriteKey.PLAYER), _PLAYER_SCALE_FACTOR)
 
     @classmethod
-    def for_new_generation(cls, generation: Generation, game: Game, atlas: SpriteAtlas) -> ExplorationScene:
+    def for_new_generation(
+        cls,
+        generation: Generation,
+        game: Game,
+        atlas: SpriteAtlas,
+        buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
+    ) -> ExplorationScene:
         """Joins the cycle at `AT_ENTRY` for the first screen beyond spawn. The spawn/home-turf
         position itself is never walked -- it holds no `advance()`-generated encounter, matured
         turf being safe by definition -- so this fires `advance()` once immediately rather than
         waiting for a `WALKING_TO_EXIT` arrival that will never come for this screen (ADR 0012)."""
         events = generation.advance()
-        return cls(generation, game, atlas, starting_phase=_Phase.AT_ENTRY, pending_events=events)
+        return cls(generation, game, atlas, buff_icon_factory, starting_phase=_Phase.AT_ENTRY, pending_events=events)
 
     @classmethod
-    def resuming_after_combat(cls, generation: Generation, game: Game, atlas: SpriteAtlas) -> ExplorationScene:
+    def resuming_after_combat(
+        cls,
+        generation: Generation,
+        game: Game,
+        atlas: SpriteAtlas,
+        buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
+    ) -> ExplorationScene:
         """Joins directly at `RESOLVED`, positioned at the marker. The walk there already happened
         in the `ExplorationScene` instance that existed before the `EnterCombat` swap, and that
         screen's `advance()` already fired before combat took over, so this does not call it
         again (ADR 0012)."""
-        return cls(generation, game, atlas, starting_phase=_Phase.RESOLVED)
+        return cls(generation, game, atlas, buff_icon_factory, starting_phase=_Phase.RESOLVED)
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN:
@@ -247,6 +277,8 @@ class ExplorationScene:
         events, self._pending_events = self._pending_events, ()
         self._set_phase(_Phase.RESOLVED)
         self._walk_elapsed_seconds = 0.0
+        # The reveal point: advance() applied the pickup back when the screen loaded.
+        self._displayed_effects = self._generation.active_lifespan_effects
 
         encounter = next((event for event in events if isinstance(event, EnemyEncountered)), None)
         if encounter is not None:
@@ -264,6 +296,7 @@ class ExplorationScene:
         self._draw_encounter(surface)
         self._draw_player(surface)
         self._draw_status_icons(surface)
+        self._draw_buff_icons(surface)
         self._draw_hud(surface)
 
     def _draw_background(self, surface: pygame.Surface) -> None:
@@ -313,6 +346,18 @@ class ExplorationScene:
         if self._game.matured_turf_positions:
             turf = self._atlas.get(SpriteKey.TURF)
             surface.blit(turf, (x, _ICON_MARGIN))
+
+    def _draw_buff_icons(self, surface: pygame.Surface) -> None:
+        # No countdown beside an icon: a Lifespan effect runs until the generation ends, so it has
+        # no remaining_turns to show (PROJECT_BRIEF.md §5.6).
+        active = self._displayed_effects
+        if not active:
+            return
+        # Top-right, clear of the top-left status icons and the bottom-left HUD text.
+        x = surface.get_width() - _ICON_MARGIN - _BUFF_ICON_STEP * (len(active) - 1) - _BUFF_ICON_SIZE
+        for effect in active:
+            self._buff_icon_factory(effect).render(surface, pygame.Vector2(x, _ICON_MARGIN), _BUFF_ICON_SIZE)
+            x += _BUFF_ICON_STEP
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
         font = get_font(GameFont.ITHACA, _FONT_SIZE)

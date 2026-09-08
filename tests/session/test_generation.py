@@ -110,6 +110,45 @@ def test_character_lifespan_effects_apply_to_the_player_combatant_in_battle() ->
     assert first_hit.damage == expected
 
 
+def test_active_lifespan_effects_lists_only_the_characters_lifespan_scoped_effects() -> None:
+    character = _character()
+    character.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.LIFESPAN, None))
+    character.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, 3))
+    generation = _generation(character=character)
+
+    assert generation.active_lifespan_effects == (EffectName.FIBROUS,)
+
+
+def test_active_lifespan_effects_reports_a_name_held_in_both_categories_once() -> None:
+    # Separate slots in the registry (PROJECT_BRIEF.md §5.6), but the row shows only whether held.
+    character = _character()
+    character.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.LIFESPAN, None))
+    character.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, 3))
+    generation = _generation(character=character)
+
+    assert generation.active_lifespan_effects == (EffectName.FIBROUS,)
+
+
+def test_active_lifespan_effects_is_empty_when_only_battle_effects_are_held() -> None:
+    character = _character()
+    character.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, 3))
+    generation = _generation(character=character)
+
+    assert generation.active_lifespan_effects == ()
+
+
+def test_active_lifespan_effects_is_a_snapshot_unaffected_by_later_changes() -> None:
+    character = _character()
+    character.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character)
+
+    snapshot = generation.active_lifespan_effects
+    character.effects.apply(ActiveEffect(EffectName.NOURISHED, EffectCategory.LIFESPAN, None))
+
+    assert snapshot == (EffectName.FIBROUS,)
+    assert set(generation.active_lifespan_effects) == {EffectName.FIBROUS, EffectName.NOURISHED}
+
+
 def test_pending_seeds_and_spores_gained_match_the_exploration_runs_accumulators() -> None:
     generation = _generation(kind_queue=[EncounterKind.NOTHING])
 

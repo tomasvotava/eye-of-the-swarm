@@ -12,6 +12,9 @@ from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
+    _BUFF_ICON_SIZE,
+    _BUFF_ICON_STEP,
+    _ICON_MARGIN,
     _PLAYER_SCALE_FACTOR,
     KEY_ACTIONS,
     ExplorationAction,
@@ -21,6 +24,7 @@ from eye.gui.scenes.exploration import (
     _resolve_encounter_sprite_key,
 )
 from eye.gui.tuning import ENTRY_X_FRACTION, WALK_TO_ENCOUNTER_DURATION_SECONDS, WALK_TO_EXIT_DURATION_SECONDS
+from eye.gui.widgets import SpriteBuffIcon
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -406,3 +410,139 @@ def test_draw_with_animation_data_blits_the_animator_frame(tmp_path: Path) -> No
     x = round(surface.get_width() * ENTRY_X_FRACTION)
     sampled = surface.get_at((x, surface.get_height() // 2))
     assert sampled == expected.get_at((expected.get_width() // 2, expected.get_height() // 2))
+
+
+class _SpyBuffIcon:
+    def __init__(self, effect: EffectName, calls: list[tuple[EffectName, pygame.Vector2, int]]) -> None:
+        self._effect = effect
+        self._calls = calls
+
+    def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
+        self._calls.append((self._effect, pos, size))
+
+
+def _scene_with_spy_icons(
+    kind_queue: Sequence[EncounterKind] = (),
+) -> tuple[ExplorationScene, Generation, list[tuple[EffectName, pygame.Vector2, int]]]:
+    calls: list[tuple[EffectName, pygame.Vector2, int]] = []
+    game = Game(ScriptedEncounterRandom(kind_queue))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(
+        generation, game, build_placeholder_atlas(), buff_icon_factory=lambda effect: _SpyBuffIcon(effect, calls)
+    )
+    return scene, generation, calls
+
+
+def test_draw_renders_one_buff_icon_per_active_lifespan_effect() -> None:
+    scene, generation, calls = _scene_with_spy_icons([EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)
+    active = generation.active_lifespan_effects
+    assert active  # the pickup granted something to draw
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert [effect for effect, _, _ in calls] == list(active)
+
+
+def test_draw_renders_no_buff_icons_when_nothing_is_active() -> None:
+    scene, generation, calls = _scene_with_spy_icons([EncounterKind.NOTHING])
+    _resolve_next_screen(scene)
+    assert generation.active_lifespan_effects == ()
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert calls == []
+
+
+def test_buff_icon_row_runs_along_the_top_edge_anchored_to_the_right() -> None:
+    scene, generation, calls = _scene_with_spy_icons([EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)
+    surface = pygame.Surface((800, 600))
+
+    scene.draw(surface)
+
+    count = len(generation.active_lifespan_effects)
+    first_x = surface.get_width() - _ICON_MARGIN - _BUFF_ICON_STEP * (count - 1) - _BUFF_ICON_SIZE
+    expected = [
+        (pygame.Vector2(first_x + index * _BUFF_ICON_STEP, _ICON_MARGIN), _BUFF_ICON_SIZE) for index in range(count)
+    ]
+    assert [(pos, size) for _, pos, size in calls] == expected
+
+
+def test_exploration_scene_defaults_to_sprite_buff_icons_reused_across_frames() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+
+    icon = scene._buff_icon_factory(EffectName.FIBROUS)
+
+    assert isinstance(icon, SpriteBuffIcon)
+    assert scene._buff_icon_factory(EffectName.FIBROUS) is icon
+
+
+def test_resuming_after_combat_uses_the_given_buff_icon_factory() -> None:
+    calls: list[tuple[EffectName, pygame.Vector2, int]] = []
+    game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP]))
+    generation = game.start_generation()
+    generation.advance()  # the pickup this scene is resuming next to
+
+    scene = ExplorationScene.resuming_after_combat(
+        generation, game, build_placeholder_atlas(), buff_icon_factory=lambda effect: _SpyBuffIcon(effect, calls)
+    )
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert [effect for effect, _, _ in calls] == list(generation.active_lifespan_effects)
+
+
+def test_draw_with_active_effects_and_the_default_icons_does_not_raise() -> None:
+    game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
+    _resolve_next_screen(scene)
+    assert generation.active_lifespan_effects
+
+    scene.draw(pygame.Surface((800, 600)))
+
+
+def test_buff_icon_row_withholds_a_newly_granted_effect_until_the_walk_resolves() -> None:
+    scene, generation, calls = _scene_with_spy_icons([EncounterKind.EFFECT_PICKUP])
+    # advance() already granted the effect while the player is still walking to it (ADR 0012).
+    granted = generation.active_lifespan_effects
+    assert granted
+    surface = pygame.Surface((800, 600))
+
+    scene.draw(surface)  # AT_ENTRY, the pickup not reached yet
+    assert calls == []
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
+    scene.draw(surface)  # mid-walk
+    assert calls == []
+
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # arrives at the marker, RESOLVED
+    scene.draw(surface)
+
+    assert [effect for effect, _, _ in calls] == list(granted)
+
+
+def test_buff_icon_row_withholds_an_effect_granted_by_a_later_screens_advance() -> None:
+    # The steady-state path: screens after the first load at a WALKING_TO_EXIT arrival.
+    scene, generation, calls = _scene_with_spy_icons([EncounterKind.NOTHING, EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)  # screen 1, empty
+    assert generation.active_lifespan_effects == ()
+    surface = pygame.Surface((800, 600))
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads: advance() applies the pickup
+    granted = generation.active_lifespan_effects
+    assert granted
+    scene.draw(surface)  # AT_ENTRY, the pickup not reached yet
+    assert calls == []
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
+    scene.draw(surface)  # mid-walk
+    assert calls == []
+
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # arrives at the marker, RESOLVED
+    scene.draw(surface)
+
+    assert [effect for effect, _, _ in calls] == list(granted)
