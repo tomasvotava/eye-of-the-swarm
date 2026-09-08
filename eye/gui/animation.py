@@ -27,9 +27,8 @@ class AnimationClip:
 def scale_sprite(sprite: pygame.Surface, factor: float) -> pygame.Surface:
     """Scale a single sprite by `factor`, a no-op passthrough at `factor == 1`.
 
-    Meant to be called once per loaded sprite (e.g. while building a scene's own animator/static
-    fallback), not per draw() call -- scaling is uniform per entity, so paying for it every frame
-    is wasted work.
+    Meant for a caller building a scene's own animator/static fallback once, up front -- an
+    entity's scale factor is fixed, so nothing is gained by recomputing it on every draw() call.
     """
     return sprite if factor == 1 else pygame.transform.scale_by(sprite, factor)
 

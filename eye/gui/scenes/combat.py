@@ -188,7 +188,8 @@ def _build_combat_animator(
     full 4-state clip set: `IDLE`/`ATTACK`/`HIT` loaded from disk (with `loop=False` forced onto
     the one-shot `ATTACK`/`HIT` clips -- `build_art_atlas` itself only sets `loop=True` defaults,
     per ADR 0013), `DEAD` synthesized as a one-frame `loop=False` clip from the static `dead.png`
-    variant. Every frame is scaled by `scale_factor` here, once, rather than on every draw() call.
+    variant. Every frame is scaled by `scale_factor` up front, once, since an entity's scale is
+    fixed for the animator's lifetime.
     """
     if not atlas.has_animation_set(key):
         return None
@@ -270,7 +271,6 @@ class CombatScene:
         buff_icon_factory: Callable[[EffectName], BuffIcon] = TextBuffIcon,
     ) -> None:
         self._generation = generation
-        self._atlas = atlas
         self._buff_icon_factory = buff_icon_factory
         self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
         self._battle: Battle = generation.start_battle(encounter)
@@ -284,8 +284,8 @@ class CombatScene:
         self._phase_started: bool = False
         self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER, _COMBATANT_SCALE_FACTOR)
         self._enemy_animator = _build_combat_animator(atlas, self._enemy_sprite_key, _COMBATANT_SCALE_FACTOR)
-        # Fallback for a key with no animation clips at all (e.g. BRAMBLE/UNKNOWN, or a
-        # build_placeholder_atlas()-based test) -- scaled once here rather than on every draw().
+        # Fallback for a key with no animation clips at all -- BRAMBLE/UNKNOWN, or any
+        # build_placeholder_atlas()-based test, since a placeholder atlas has no animation data.
         self._player_static_sprite = scale_sprite(atlas.get(SpriteKey.PLAYER), _COMBATANT_SCALE_FACTOR)
         self._enemy_static_sprite = scale_sprite(atlas.get(self._enemy_sprite_key), _COMBATANT_SCALE_FACTOR)
         # Seeded before battle.start()'s own events are queued (ADR 0013) -- displayed state must

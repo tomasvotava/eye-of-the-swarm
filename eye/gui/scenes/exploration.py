@@ -145,8 +145,7 @@ class ExplorationScene:
                 for state, clip in atlas.get_animation_set(SpriteKey.PLAYER, PlayerAnimationState).items()
             }
             self._player_animator = Animator(clips, initial_state=_animation_state_for_phase(starting_phase))
-        # Fallback for a placeholder atlas with no player animation data -- scaled once here
-        # rather than on every draw().
+        # Fallback for a placeholder atlas with no player animation data (same guard as above).
         self._player_static_sprite = scale_sprite(atlas.get(SpriteKey.PLAYER), _PLAYER_SCALE_FACTOR)
 
     @classmethod

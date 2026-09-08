@@ -9,9 +9,10 @@ from eye.combat.effects import EffectName
 from eye.exploration.encounters import Biome, EncounterKind, ResourceKind, Strain
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
-from eye.gui.assets import SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
+    _PLAYER_SCALE_FACTOR,
     KEY_ACTIONS,
     ExplorationAction,
     ExplorationScene,
@@ -311,6 +312,22 @@ def test_with_animation_data_the_player_animator_is_built(tmp_path: Path) -> Non
     scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING])
 
     assert scene._player_animator is not None
+
+
+def test_player_animator_frames_are_scaled_by_player_scale_factor(tmp_path: Path) -> None:
+    scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING])  # 4x4 test clip frames
+    assert scene._player_animator is not None
+
+    frame_size = round(4 * _PLAYER_SCALE_FACTOR)
+    assert scene._player_animator.current_frame().get_size() == (frame_size, frame_size)
+
+
+def test_player_static_sprite_fallback_is_scaled_by_player_scale_factor() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])  # placeholder atlas has no player animation data
+    assert scene._player_animator is None
+
+    sprite_size = round(PLACEHOLDER_SPRITE_SIZE * _PLAYER_SCALE_FACTOR)
+    assert scene._player_static_sprite.get_size() == (sprite_size, sprite_size)
 
 
 def test_player_animation_state_is_idle_at_entry_and_walk_during_the_walk_to_the_encounter(
