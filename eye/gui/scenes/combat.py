@@ -314,6 +314,11 @@ def _meter_tween_phase(displayed: DisplayedCombatantState, end_meter: int) -> Ph
     return Phase(duration_seconds=BATTLE_VALUE_TWEEN_SECONDS, on_progress=on_progress, on_complete=on_complete)
 
 
+def _discard_displayed_effect(displayed: DisplayedCombatantState, key: tuple[EffectCategory, EffectName]) -> None:
+    displayed.active_effects.discard(key)
+    displayed.remaining_turns.pop(key, None)
+
+
 @dataclass(frozen=True, slots=True)
 class CombatantLayout:
     """Where one combatant's sprite and HUD panel sit on a surface.
@@ -646,6 +651,11 @@ class CombatScene:
             # EffectCategory.BATTLE), so the key to discard is inferred rather than read off the
             # event. This breaks if a future domain change ever expires a Lifespan effect this way.
             key = (EffectCategory.BATTLE, event.effect)
+            if self._battle.is_over:
+                # End-of-battle cleanup expires every effect at once, so a card apiece would bury
+                # the fight's own result. is_over is exact here: update() withholds every domain
+                # call while phases or events are pending, so it cannot flip mid-batch.
+                return [Phase(duration_seconds=0.0, on_start=lambda: _discard_displayed_effect(displayed, key))]
             duration = "Wears off"
             remaining_turns = None
         # Player and enemy both hold every effect type (PROJECT_BRIEF.md §5.6), so the subtitle
@@ -662,8 +672,7 @@ class CombatScene:
                 displayed.active_effects.add(key)
                 displayed.remaining_turns[key] = remaining_turns
             else:
-                displayed.active_effects.discard(key)
-                displayed.remaining_turns.pop(key, None)
+                _discard_displayed_effect(displayed, key)
 
         def on_complete() -> None:
             self._announcement = None

@@ -1320,6 +1320,7 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
 
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    assert not scene._battle.is_over  # the announcing case
     event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
 
     phases = scene._phases_for(event)
@@ -1329,6 +1330,28 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
         text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
         card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="Player — Wears off"),
     )
+
+
+def test_effect_expiry_from_end_of_battle_cleanup_clears_the_display_without_announcing() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    key = (EffectCategory.BATTLE, EffectName.FIBROUS)
+    scene._player_displayed.active_effects.add(key)
+    scene._player_displayed.remaining_turns[key] = 2
+    scene._battle.enemy.current_hp = 0
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+
+    phases = scene._phases_for(event)
+
+    assert len(phases) == 1
+    # A silent phase that still held would read as dead air.
+    assert phases[0].duration_seconds == 0.0
+    phases[0].on_start()
+    assert scene._announcement is None
+    assert key not in scene._player_displayed.active_effects
+    assert key not in scene._player_displayed.remaining_turns
+    phases[0].on_complete()
+    assert scene._announcement is None
 
 
 def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_card() -> None:
