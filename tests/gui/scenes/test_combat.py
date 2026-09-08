@@ -34,14 +34,16 @@ from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
 from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
+from eye.gui.app import _WINDOW_SIZE
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
-from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
-    _ANNOUNCEMENT_FONT_SIZE,
+    _ANNOUNCEMENT_COLUMN_MARGIN,
     _ANNOUNCEMENT_ICON_SCALE,
     _ANNOUNCEMENT_ICON_SIZE,
+    _ANNOUNCEMENT_PROSE_FONT_SIZE,
     _ANNOUNCEMENT_SUBTITLE_FONT_SIZE,
+    _ANNOUNCEMENT_TITLE_FONT_SIZE,
     _BAR_HEIGHT,
     _BAR_WIDTH,
     _BUFF_ICON_DURATION_FONT_SIZE,
@@ -69,6 +71,7 @@ from eye.gui.scenes.combat import (
     _combatant_layout,
     _DeadVariant,
     _describe_event,
+    _fitted_font,
     _hp_tween_phase,
     _label,
     _LoadedCombatAnimationState,
@@ -91,6 +94,8 @@ from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
 _STATS = Stats(max_hp=20, attack=5, defense=2, meter_capacity=100, meter_fill_rate=1)
+# A colour the scene never paints, so colorkeying it leaves exactly the drawn pixels behind.
+_UNDRAWN: pygame.typing.ColorLike = "navy"
 
 
 def _write_clip(directory: Path, name: str, frame_count: int = 2, frame_size: int = 4, fps: float = 8) -> None:
@@ -1444,7 +1449,9 @@ def test_effect_applied_phase_sets_an_effect_card_announcement_with_title_and_su
     phases[0].on_start()
     assert scene._announcement == Announcement(
         text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
-        card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="Player — 3 turns"),
+        card=EffectCard(
+            title="Fibrous", icon=rendered_icons[0], subtitle="Player — 3 turns", target=scene._battle.player
+        ),
     )
     phases[0].on_complete()
     assert scene._announcement is None
@@ -1503,7 +1510,9 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
 
     assert scene._announcement == Announcement(
         text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
-        card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="Player — Wears off"),
+        card=EffectCard(
+            title="Fibrous", icon=rendered_icons[0], subtitle="Player — Wears off", target=scene._battle.player
+        ),
     )
 
 
@@ -1578,7 +1587,12 @@ def test_draw_does_not_raise_with_an_effect_card_announcement_set() -> None:
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene._announcement = Announcement(
         text="Lowers attack",
-        card=EffectCard(title="Runt", icon=TextBuffIcon(EffectName.RUNT), subtitle="Player — 3 turns"),
+        card=EffectCard(
+            title="Runt",
+            icon=TextBuffIcon(EffectName.RUNT),
+            subtitle="Player — 3 turns",
+            target=scene._battle.player,
+        ),
     )
 
     scene.draw(pygame.Surface((800, 600)))
@@ -1593,49 +1607,80 @@ def test_draw_renders_the_effect_cards_icon_at_the_icon_boxs_top_left_and_size()
 
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._announcement = Announcement(
-        text="Lowers attack", card=EffectCard(title="Runt", icon=_SpyIcon(), subtitle="Player — 3 turns")
-    )
     surface = pygame.Surface((800, 600))
+    subtitle = "Player — 3 turns"
+    prose = "Lowers attack"
 
-    scene.draw(surface)
+    for target, mirrored in ((scene._battle.player, False), (scene._battle.enemy, True)):
+        render_calls.clear()
+        scene._announcement = Announcement(
+            text=prose, card=EffectCard(title="Runt", icon=_SpyIcon(), subtitle=subtitle, target=target)
+        )
 
-    # Mirrors _draw_effect_announcement's own geometry: the icon must fill the drawn box exactly
-    # (position and size), not the old TextBuffIcon-sized, roughly-centered placeholder offset.
-    icon_box_size = int(_ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE)
-    title_height = get_font(GameFont.ITHACA, icon_box_size // 2).render("Runt", True, "white").get_height()
-    prose_height = (
-        get_font(GameFont.ITHACA, _ANNOUNCEMENT_FONT_SIZE).render("Lowers attack", True, "white").get_height()
+        scene.draw(surface)
+
+        # Mirrors _draw_effect_announcement's own geometry, centered on its own combatant's half.
+        column_width = surface.get_width() // 2 - _ANNOUNCEMENT_COLUMN_MARGIN * 2
+        icon_box_size = min(int(_ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE), column_width)
+        title_height = (
+            _fitted_font(("Runt",), _ANNOUNCEMENT_TITLE_FONT_SIZE, column_width).render("Runt", True, "white").height
+        )
+        prose_height = (
+            _fitted_font(prose.split(), _ANNOUNCEMENT_PROSE_FONT_SIZE, column_width).render(prose, True, "white").height
+        )
+        subtitle_height = (
+            _fitted_font((subtitle,), _ANNOUNCEMENT_SUBTITLE_FONT_SIZE, column_width)
+            .render(subtitle, True, "white")
+            .height
+        )
+        block_height = title_height + icon_box_size + prose_height + subtitle_height + _GAP * 3
+        center_x = _combatant_layout(surface, mirrored=mirrored).sprite_center[0]
+        top = surface.get_height() // 2 - block_height // 2
+        expected_pos = pygame.Vector2(center_x - icon_box_size // 2, top + title_height + _GAP)
+
+        assert len(render_calls) == 1
+        pos, size = render_calls[0]
+        assert pos == expected_pos
+        assert size == icon_box_size
+
+
+def test_every_effect_card_stays_inside_its_combatants_half_of_the_real_window() -> None:
+    # Every label and description is measured on both sides: character count doesn't predict
+    # rendered width in a proportional font, and the mirrored side anchors from a different origin.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    width, height = _WINDOW_SIZE
+    halves = (
+        (scene._battle.player, pygame.Rect(0, 0, width // 2, height)),
+        (scene._battle.enemy, pygame.Rect(width // 2, 0, width // 2, height)),
     )
-    subtitle_height = (
-        get_font(GameFont.ITHACA, _ANNOUNCEMENT_SUBTITLE_FONT_SIZE)
-        .render("Player — 3 turns", True, "white")
-        .get_height()
-    )
-    block_height = title_height + icon_box_size + prose_height + subtitle_height + _GAP * 3
-    center_x = surface.get_width() // 2
-    top = surface.get_height() // 2 - block_height // 2
-    expected_pos = pygame.Vector2(center_x - icon_box_size // 2, top + title_height + _GAP)
-
-    assert len(render_calls) == 1
-    pos, size = render_calls[0]
-    assert pos == expected_pos
-    assert size == icon_box_size
-
-    assert len(render_calls) == 1
-
-
-def test_effect_card_title_fits_the_real_window_width_at_the_default_icon_scale() -> None:
-    # Title font size is derived from the icon box (_ANNOUNCEMENT_ICON_SCALE * _ANNOUNCEMENT_ICON_
-    # SIZE // 2) rather than independently tuned, so a scale bump could silently make an effect
-    # name overflow the real 640-wide window -- guard every label at today's default, not just an
-    # assumed-widest one (character count doesn't predict rendered width in a proportional font).
-    icon_box_size = int(_ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE)
-    font = get_font(GameFont.ITHACA, icon_box_size // 2)
 
     for effect in EffectName:
-        title_surface = font.render(_label(effect), True, "white")
-        assert title_surface.get_width() <= 640, _label(effect)
+        for target, half in halves:
+            surface = pygame.Surface((width, height))
+            # Not black: the card's backdrop panel is black too, and would be keyed straight out.
+            surface.fill(_UNDRAWN)
+            scene._announcement = Announcement(
+                text=EFFECT_DESCRIPTIONS[effect],
+                card=EffectCard(
+                    title=_label(effect),
+                    icon=scene._buff_icon_factory(effect),
+                    # The longest duration phrasing _duration_subtitle can produce.
+                    subtitle=f"{target.name} — Until battle ends",
+                    target=target,
+                ),
+            )
+
+            scene._draw_announcement(
+                surface, _combatant_layout(surface, mirrored=False), _combatant_layout(surface, mirrored=True)
+            )
+
+            surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
+            drawn = surface.get_bounding_rect()
+
+            # An empty rect is contained by any half, so containment alone would pass on nothing.
+            assert drawn.size != (0, 0), (_label(effect), target.name)
+            assert half.contains(drawn), (_label(effect), target.name)
 
 
 def test_swing_phase_focuses_the_source_as_acting_and_the_target_as_receiving() -> None:
