@@ -47,11 +47,18 @@ from eye.gui.tuning import (
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
-from eye.gui.widgets import BuffIcon, TextBuffIcon
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, TextBuffIcon
 from eye.session.generation import Generation
 
 _FONT_SIZE = 20
 _ANNOUNCEMENT_FONT_SIZE = 28
+_ANNOUNCEMENT_SUBTITLE_FONT_SIZE = 14
+# Real effect icon art is planned at 64x64; the scale factor is a separate knob from
+# _COMBATANT_SCALE_FACTOR (defaults to the same value) so it can be tuned independently of
+# combatant sprites -- also retypesets the effect-card title, whose font size is deliberately
+# derived from this box's height (see _draw_effect_announcement) rather than tuned separately.
+_ANNOUNCEMENT_ICON_SIZE = 64
+_ANNOUNCEMENT_ICON_SCALE = 3
 _MARGIN = 8
 _GAP = 4
 _BAR_WIDTH = 230
@@ -92,6 +99,16 @@ def _duration(category: EffectCategory, remaining_turns: int | None) -> str:
     if remaining_turns is None:
         return " until the battle ends"
     return f" for {remaining_turns} turn{'s' if remaining_turns != 1 else ''}"
+
+
+def _duration_subtitle(category: EffectCategory, remaining_turns: int | None) -> str:
+    # Standalone phrasing for the effect-announcement card's subtitle line, as opposed to
+    # _duration()'s mid-sentence connective form used by _describe_event's log line.
+    if category is EffectCategory.LIFESPAN:
+        return "This generation"
+    if remaining_turns is None:
+        return "Until battle ends"
+    return f"{remaining_turns} turn{'s' if remaining_turns != 1 else ''}"
 
 
 def _resolve_enemy_sprite_key(strain_name: str) -> SpriteKey:
@@ -223,14 +240,22 @@ class DisplayedCombatantState:
 
     hp: float
     meter: float
-    active_effects: set[EffectName] = field(default_factory=set)
+    # Keyed by (category, name), not just name: PROJECT_BRIEF.md §5.6's refresh-not-stack rule is
+    # scoped per category -- a Lifespan Fibrous and a Battle Fibrous are tracked (and can both be
+    # active) independently, so a name-only set would conflate them.
+    active_effects: set[tuple[EffectCategory, EffectName]] = field(default_factory=set)
 
 
 def _displayed_state_from(combatant: Combatant) -> DisplayedCombatantState:
     return DisplayedCombatantState(
         hp=float(combatant.current_hp),
         meter=float(combatant.current_meter),
-        active_effects={name for name in EffectName if combatant.effects.has(name)},
+        active_effects={
+            (category, name)
+            for category in EffectCategory
+            for name in EffectName
+            if combatant.effects.has(name, category=category)
+        },
     )
 
 
@@ -268,14 +293,30 @@ def _meter_tween_phase(displayed: DisplayedCombatantState, end_meter: int) -> Ph
 
 
 @dataclass(frozen=True, slots=True)
+class EffectCard:
+    """The title/icon/subtitle bundle for an effect-tied `Announcement` (`EffectApplied`/
+    `EffectExpired`) -- bundled as one type, not three independently-optional `Announcement`
+    fields, since a plain announcement (`TurnSkipped`/`ExtraActionTriggered`/`BattleEnded`) never
+    carries any of them: all three or none, not any invalid partial combination."""
+
+    title: str
+    icon: BuffIcon
+    subtitle: str
+
+
+@dataclass(frozen=True, slots=True)
 class Announcement:
     """Center-screen icon + short text treatment (ADR 0013). Doubles as both a Phase's payload and
     `CombatScene`'s displayed announcement state -- mirrors `DisplayedCombatantState`'s dual role
     as "what a phase mutates" and "what draw() reads", just replaced wholesale on each transition
-    rather than tweened field-by-field, since an announcement has no partial-progress value."""
+    rather than tweened field-by-field, since an announcement has no partial-progress value.
+
+    `text` is the sole line for a plain announcement (`card` is `None`), or the effect's short
+    prose description when `card` is set for the effect-card layout.
+    """
 
     text: str
-    icon: BuffIcon | None = None
+    card: EffectCard | None = None
 
 
 class CombatScene:
@@ -473,24 +514,44 @@ class CombatScene:
 
         return Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)
 
-    def _effect_announcement_phase(self, event: EffectApplied | EffectExpired, *, applied: bool) -> Phase:
+    def _effect_announcement_phase(self, event: EffectApplied | EffectExpired) -> list[Phase]:
         # Toggles DisplayedCombatantState.active_effects in the same on_start that reveals the
         # announcement, not on_complete -- the HUD buff-icon row and the "is affected by"/"wears
         # off" popup must change in the same frame, since both are announcing the same event.
         displayed = self._displayed_for(event.target)
-        announcement = Announcement(text=_describe_event(event), icon=self._buff_icon_factory(event.effect))
+        if isinstance(event, EffectApplied):
+            key = (event.category, event.effect)
+            if key in displayed.active_effects:
+                # A reapplication (PROJECT_BRIEF.md §5.6's refresh-not-stack rule, scoped per
+                # category) of an effect already showing in this same category -- the icon stays
+                # put and its duration silently resets domain-side; announcing it again every time
+                # (e.g. repeated Barbed Struggle uses) would spam the same popup. A different
+                # category's instance of the same effect name is a genuinely new application (the
+                # brief's own Lifespan-Fibrous-plus-Battle-Fibrous example), not a reapplication.
+                return []
+            subtitle = _duration_subtitle(event.category, event.remaining_turns)
+        else:
+            # EffectExpired carries no category (only ever fired for a Battle-scoped effect today
+            # -- Battle._expire_battle_effects/_clear_battle_effects both filter to
+            # EffectCategory.BATTLE), so the key to discard is inferred rather than read off the
+            # event. This breaks if a future domain change ever expires a Lifespan effect this way.
+            key = (EffectCategory.BATTLE, event.effect)
+            subtitle = "Wears off"
+        card = EffectCard(title=_label(event.effect), icon=self._buff_icon_factory(event.effect), subtitle=subtitle)
+        announcement = Announcement(text=EFFECT_DESCRIPTIONS[event.effect], card=card)
+        applied = isinstance(event, EffectApplied)
 
         def on_start() -> None:
             self._announcement = announcement
             if applied:
-                displayed.active_effects.add(event.effect)
+                displayed.active_effects.add(key)
             else:
-                displayed.active_effects.discard(event.effect)
+                displayed.active_effects.discard(key)
 
         def on_complete() -> None:
             self._announcement = None
 
-        return Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)
+        return [Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)]
 
     def _phases_for(self, event: BattleEvent) -> list[Phase]:
         # DotTicked/HealApplied are deliberately phase-less for now -- they get the Overlay
@@ -523,10 +584,8 @@ class CombatScene:
                     Phase(duration_seconds=0.0, on_start=on_start),
                     _hp_tween_phase(self._displayed_for(combatant), revived_hp),
                 ]
-            case EffectApplied():
-                return [self._effect_announcement_phase(event, applied=True)]
-            case EffectExpired():
-                return [self._effect_announcement_phase(event, applied=False)]
+            case EffectApplied() | EffectExpired():
+                return self._effect_announcement_phase(event)
             case TurnSkipped() | ExtraActionTriggered() | BattleEnded():
                 return [self._announcement_phase(Announcement(text=_describe_event(event)))]
             case MeterFilled(combatant=combatant, meter_after=meter_after):
@@ -630,12 +689,21 @@ class CombatScene:
         pygame.draw.rect(surface, color, filled)
 
     def _draw_buff_icons(
-        self, surface: pygame.Surface, active_effects: set[EffectName], pos: tuple[int, int], *, mirrored: bool
+        self,
+        surface: pygame.Surface,
+        active_effects: set[tuple[EffectCategory, EffectName]],
+        pos: tuple[int, int],
+        *,
+        mirrored: bool,
     ) -> None:
         # Reads DisplayedCombatantState.active_effects, not live Combatant.effects (ADR 0013) --
         # kept in sync by _effect_announcement_phase's on_start, so the icon appears/disappears in
         # step with its own "is affected by"/"wears off" announcement rather than jumping ahead.
-        active = [name for name in EffectName if name in active_effects]
+        # One icon per name regardless of category -- the row shows *whether* an effect is active,
+        # not how many category-scoped instances back it (a Lifespan Fibrous plus a Battle Fibrous
+        # both active still shows a single Fibrous icon).
+        active_names = {name for _, name in active_effects}
+        active = [name for name in EffectName if name in active_names]
         x, y = pos
         if mirrored:
             # pos.x is the row's right edge on the mirrored side; the BuffIcon protocol exposes
@@ -666,13 +734,44 @@ class CombatScene:
     def _draw_announcement(self, surface: pygame.Surface) -> None:
         if self._announcement is None:
             return
+        if self._announcement.card is None:
+            self._draw_plain_announcement(surface, self._announcement)
+        else:
+            self._draw_effect_announcement(surface, self._announcement.text, self._announcement.card)
+
+    def _draw_plain_announcement(self, surface: pygame.Surface, announcement: Announcement) -> None:
         font = get_font(GameFont.ITHACA, _ANNOUNCEMENT_FONT_SIZE)
-        text_surface = font.render(self._announcement.text, True, _TEXT_COLOR)
-        text_pos = (
-            surface.get_width() // 2 - text_surface.get_width() // 2,
-            surface.get_height() // 2,
-        )
-        if self._announcement.icon is not None:
-            icon_pos = pygame.Vector2(surface.get_width() // 2 - _BUFF_ICON_STEP // 2, text_pos[1] - _FONT_SIZE - _GAP)
-            self._announcement.icon.render(surface, icon_pos)
+        text_surface = font.render(announcement.text, True, _TEXT_COLOR)
+        text_pos = (surface.get_width() // 2 - text_surface.get_width() // 2, surface.get_height() // 2)
         surface.blit(text_surface, text_pos)
+
+    def _draw_effect_announcement(self, surface: pygame.Surface, prose: str, card: EffectCard) -> None:
+        # Card layout: title (largest) / icon box / prose (middle) / subtitle (smallest), stacked and
+        # centered as one block. Title font size is half the icon box's height, so it stays
+        # proportional if _ANNOUNCEMENT_ICON_SCALE changes rather than needing its own tuned constant.
+        icon_box_size = _ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE
+        title_font = get_font(GameFont.ITHACA, icon_box_size // 2)
+        title_surface = title_font.render(card.title, True, _TEXT_COLOR)
+        prose_surface = get_font(GameFont.ITHACA, _ANNOUNCEMENT_FONT_SIZE).render(prose, True, _TEXT_COLOR)
+        subtitle_font = get_font(GameFont.ITHACA, _ANNOUNCEMENT_SUBTITLE_FONT_SIZE)
+        subtitle_surface = subtitle_font.render(card.subtitle, True, _TEXT_COLOR)
+
+        block_height = title_surface.height + icon_box_size + prose_surface.height + subtitle_surface.height + _GAP * 3
+        center_x = surface.get_width() // 2
+        top = surface.get_height() // 2 - block_height // 2
+
+        surface.blit(title_surface, (center_x - title_surface.width // 2, top))
+        icon_rect = pygame.Rect(
+            center_x - icon_box_size // 2, top + title_surface.height + _GAP, icon_box_size, icon_box_size
+        )
+        pygame.draw.rect(surface, _TEXT_COLOR, icon_rect, width=2)
+        # BuffIcon.render's pos is a blit top-left, not a center -- offset by half the HUD row's
+        # own nominal icon size (the only size the protocol implies, per _draw_buff_icons) so a
+        # TextBuffIcon-sized placeholder lands roughly centered in the box on both axes.
+        icon_pos = pygame.Vector2(icon_rect.centerx - _BUFF_ICON_STEP // 2, icon_rect.centery - _FONT_SIZE // 2)
+        card.icon.render(surface, icon_pos)
+
+        prose_top = icon_rect.bottom + _GAP
+        surface.blit(prose_surface, (center_x - prose_surface.width // 2, prose_top))
+        subtitle_top = prose_top + prose_surface.height + _GAP
+        surface.blit(subtitle_surface, (center_x - subtitle_surface.width // 2, subtitle_top))

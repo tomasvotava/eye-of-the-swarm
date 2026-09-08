@@ -14,5 +14,5 @@ EXIT_X_FRACTION = 0.9
 # Battle event playback (ADR 0013). Animation-driven phases derive their own duration from clip
 # data instead -- these cover the phase kinds that have no clip to time against.
 BATTLE_VALUE_TWEEN_SECONDS = 0.25
-BATTLE_ANNOUNCEMENT_HOLD_SECONDS = 1.0
+BATTLE_ANNOUNCEMENT_HOLD_SECONDS = 1.5
 BATTLE_DEATH_POSE_HOLD_SECONDS = 1.0

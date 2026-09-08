@@ -4,6 +4,7 @@ and `SkillTreeLeaf` are `Protocol`s so a future art epic can swap in a richer im
 `TextBuffIcon`/`TextSkillTreeLeaf` are this epic's only implementations, drawing plain text.
 """
 
+from collections.abc import Mapping
 from enum import Enum, auto
 from typing import Protocol
 
@@ -37,6 +38,25 @@ class SkillTreeLeaf(Protocol):
 
 def _effect_label(effect: EffectName) -> str:
     return effect.name.replace("_", " ").title()
+
+
+# PROJECT_BRIEF.md §9.7: a short, functional description of what each effect does, distinct from
+# its flavor name (`_effect_label`).
+EFFECT_DESCRIPTIONS: Mapping[EffectName, str] = {
+    EffectName.TOXICITY: "Lowers HP after every turn",
+    EffectName.NOURISHED: "Heals a little each turn",
+    EffectName.CLOUDED_JUDGEMENT: "Confuses the next action",
+    EffectName.LIGNEOUS_PERIDERM: "Raises defense",
+    EffectName.SPLINTERED: "Lowers defense",
+    EffectName.SPIKY_SKIN: "Reflects some damage back at the attacker",
+    EffectName.ADRENALINE: "Revives once on death with Fibrous effect",
+    EffectName.FIBROUS: "Raises attack",
+    EffectName.RUNT: "Lowers attack",
+    EffectName.UPROOTED: "May grant an extra action",
+    EffectName.WILTY: "May cause sudden death",
+    EffectName.VEGETATIVE: "May skip the turn",
+    EffectName.RESONANCE: "Primes the next battle's meter",
+}
 
 
 class TextBuffIcon:

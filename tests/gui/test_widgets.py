@@ -1,7 +1,7 @@
 import pygame
 
 from eye.combat.effects import EffectName
-from eye.gui.widgets import SkillNodeState, TextBuffIcon, TextSkillTreeLeaf
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, SkillNodeState, TextBuffIcon, TextSkillTreeLeaf
 from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
 
 
@@ -37,3 +37,9 @@ def test_text_skill_tree_leaf_render_does_not_raise_when_available() -> None:
 
 def test_text_skill_tree_leaf_render_does_not_raise_when_purchased() -> None:
     TextSkillTreeLeaf().render(_surface(), pygame.Rect(0, 0, 64, 16), _node(), SkillNodeState.PURCHASED)
+
+
+def test_effect_descriptions_covers_every_effect_name() -> None:
+    for effect in EffectName:
+        assert effect in EFFECT_DESCRIPTIONS
+        assert EFFECT_DESCRIPTIONS[effect]  # non-empty
