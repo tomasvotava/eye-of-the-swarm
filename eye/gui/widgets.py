@@ -1,16 +1,19 @@
 """Compound widget seam for buff/debuff and skill-tree-node display (ADR 0009). Both `BuffIcon`
-and `SkillTreeLeaf` are `Protocol`s so a future art epic can swap in a richer implementation
-(icon + text + state styling) at each scene's factory call site without touching scene code.
-`TextBuffIcon`/`TextSkillTreeLeaf` are this epic's only implementations, drawing plain text.
+and `SkillTreeLeaf` are `Protocol`s so an art epic can swap in a richer implementation (icon +
+text + state styling) at each scene's factory call site without touching scene code.
+`SpriteBuffIcon` (ADR 0011) is `CombatScene`'s production default; `TextBuffIcon` remains as a
+plain-text fallback/test double. `TextSkillTreeLeaf` is still `SkillTreeLeaf`'s only
+implementation -- its own art epic hasn't landed yet.
 """
 
 from collections.abc import Mapping
 from enum import Enum, auto
-from typing import Protocol
+from typing import Protocol, assert_never
 
 import pygame
 
 from eye.combat.effects import EFFECT_POLARITY, EffectName, EffectPolarity
+from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.skilltree.tree import SkillNode
 
@@ -23,7 +26,7 @@ _PURCHASED_COLOR: pygame.typing.ColorLike = "limegreen"
 
 
 class BuffIcon(Protocol):
-    def render(self, surface: pygame.Surface, pos: pygame.Vector2) -> None: ...
+    def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None: ...
 
 
 class SkillNodeState(Enum):
@@ -63,9 +66,64 @@ class TextBuffIcon:
     def __init__(self, effect: EffectName) -> None:
         self.effect = effect
 
-    def render(self, surface: pygame.Surface, pos: pygame.Vector2) -> None:
+    def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
         color = _BUFF_COLOR if EFFECT_POLARITY[self.effect] is EffectPolarity.BUFF else _DEBUFF_COLOR
         surface.blit(get_font(GameFont.ITHACA, _FONT_SIZE).render(_effect_label(self.effect), True, color), pos)
+
+
+def _sprite_key_for(effect: EffectName) -> SpriteKey:
+    match effect:
+        case EffectName.TOXICITY:
+            return SpriteKey.EFFECT_TOXICITY
+        case EffectName.NOURISHED:
+            return SpriteKey.EFFECT_NOURISHED
+        case EffectName.CLOUDED_JUDGEMENT:
+            return SpriteKey.EFFECT_CLOUDED_JUDGEMENT
+        case EffectName.LIGNEOUS_PERIDERM:
+            return SpriteKey.EFFECT_LIGNEOUS_PERIDERM
+        case EffectName.SPLINTERED:
+            return SpriteKey.EFFECT_SPLINTERED
+        case EffectName.SPIKY_SKIN:
+            return SpriteKey.EFFECT_SPIKY_SKIN
+        case EffectName.ADRENALINE:
+            return SpriteKey.EFFECT_ADRENALINE
+        case EffectName.FIBROUS:
+            return SpriteKey.EFFECT_FIBROUS
+        case EffectName.RUNT:
+            return SpriteKey.EFFECT_RUNT
+        case EffectName.UPROOTED:
+            return SpriteKey.EFFECT_UPROOTED
+        case EffectName.WILTY:
+            return SpriteKey.EFFECT_WILTY
+        case EffectName.VEGETATIVE:
+            return SpriteKey.EFFECT_VEGETATIVE
+        case EffectName.RESONANCE:
+            return SpriteKey.EFFECT_RESONANCE
+        case _:
+            assert_never(effect)
+
+
+class SpriteBuffIcon:
+    """`BuffIcon` backed by real art (ADR 0011) -- `CombatScene`'s default `buff_icon_factory`.
+    An effect with no sprite delivered yet (currently RESONANCE) is not special-cased here: its
+    `SpriteKey` still resolves, and `SpriteAtlas` itself falls back to the placeholder shape for a
+    key with no sprite.png on disk."""
+
+    def __init__(self, atlas: SpriteAtlas, effect: EffectName) -> None:
+        self._surface = atlas.get(_sprite_key_for(effect))
+        # A caller may render the same icon at more than one size (CombatScene's HUD row and
+        # Announcement card differ) -- cached per size after first use, since an icon instance is
+        # built once per effect and reused across frames (see CombatScene's default factory),
+        # rather than rescaled on every render() call (eye/gui/animation.py's scale_sprite
+        # docstring: nothing is gained by recomputing a fixed scale every frame).
+        self._scaled: dict[int, pygame.Surface] = {}
+
+    def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
+        scaled = self._scaled.get(size)
+        if scaled is None:
+            scaled = pygame.transform.smoothscale(self._surface, (size, size))
+            self._scaled[size] = scaled
+        surface.blit(scaled, pos)
 
 
 _STATE_COLORS: dict[SkillNodeState, pygame.typing.ColorLike] = {
