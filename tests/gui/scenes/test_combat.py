@@ -615,7 +615,6 @@ def test_death_phase_holds_for_the_tuned_duration_and_sets_the_dead_state(tmp_pa
     atlas = build_art_atlas(tmp_path)
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), atlas)
-    dead_surface = atlas.get_variant_set(SpriteKey.PLAYER, _DeadVariant)[_DeadVariant.DEAD]
 
     phases = scene._phases_for(Death(combatant=scene._battle.player))
 
@@ -623,7 +622,7 @@ def test_death_phase_holds_for_the_tuned_duration_and_sets_the_dead_state(tmp_pa
     assert phases[0].duration_seconds == BATTLE_DEATH_POSE_HOLD_SECONDS
     phases[0].on_start()
     assert scene._player_animator is not None
-    assert scene._player_animator.current_frame() is dead_surface
+    assert scene._player_animator.state == CombatAnimationState.DEAD
 
 
 def test_death_phase_defensively_snaps_hp_with_no_preceding_tween() -> None:
@@ -681,8 +680,6 @@ def test_swing_phase_drives_source_attack_and_target_hit_then_resets_both_to_idl
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)
     atlas = build_art_atlas(tmp_path)
-    player_clips = atlas.get_animation_set(SpriteKey.PLAYER, _LoadedCombatAnimationState)
-    enemy_clips = atlas.get_animation_set(SpriteKey.BEATLE, _LoadedCombatAnimationState)
     generation = _generation(strain_queue=[Strain.BEATLE])
     scene = CombatScene(generation, _encounter(generation), atlas)
     assert scene._player_animator is not None
@@ -690,28 +687,33 @@ def test_swing_phase_drives_source_attack_and_target_hit_then_resets_both_to_idl
 
     swing = scene._phases_for(_hit_landed(scene))[0]
     swing.on_start()
-    assert scene._player_animator.current_frame() is player_clips[_LoadedCombatAnimationState.ATTACK].frames[0]
-    assert scene._enemy_animator.current_frame() is enemy_clips[_LoadedCombatAnimationState.HIT].frames[0]
+    assert scene._player_animator.state == CombatAnimationState.ATTACK
+    assert scene._enemy_animator.state == CombatAnimationState.HIT
 
     swing.on_complete()
-    assert scene._player_animator.current_frame() is player_clips[_LoadedCombatAnimationState.IDLE].frames[0]
-    assert scene._enemy_animator.current_frame() is enemy_clips[_LoadedCombatAnimationState.IDLE].frames[0]
+    # Explicit widened annotations: mypy narrows scene._player_animator.state (a property read
+    # through an `== ATTACK` assert above) and doesn't know on_complete()'s closures mutate it, so
+    # an unannotated local would keep the stale Literal[ATTACK] type and flag this as unreachable.
+    player_state: CombatAnimationState = scene._player_animator.state
+    enemy_state: CombatAnimationState = scene._enemy_animator.state
+    assert player_state == CombatAnimationState.IDLE
+    assert enemy_state == CombatAnimationState.IDLE
 
 
 def test_reaction_phase_drives_hit_then_resets_to_idle(tmp_path: Path) -> None:
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     atlas = build_art_atlas(tmp_path)
-    player_clips = atlas.get_animation_set(SpriteKey.PLAYER, _LoadedCombatAnimationState)
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), atlas)
     assert scene._player_animator is not None
 
     reaction = scene._reaction_phase(scene._battle.player)
     reaction.on_start()
-    assert scene._player_animator.current_frame() is player_clips[_LoadedCombatAnimationState.HIT].frames[0]
+    assert scene._player_animator.state == CombatAnimationState.HIT
 
     reaction.on_complete()
-    assert scene._player_animator.current_frame() is player_clips[_LoadedCombatAnimationState.IDLE].frames[0]
+    player_state: CombatAnimationState = scene._player_animator.state
+    assert player_state == CombatAnimationState.IDLE
 
 
 def test_advance_phases_leaves_displayed_hp_strictly_between_before_and_after_mid_tween() -> None:

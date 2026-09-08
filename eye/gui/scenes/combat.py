@@ -38,7 +38,7 @@ from eye.combat.events import (
 )
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
-from eye.gui.animation import AnimationClip, Animator
+from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
@@ -180,13 +180,15 @@ class _DeadVariant(StrEnum):
     DEAD = "dead"
 
 
-def _build_combat_animator(atlas: SpriteAtlas, key: SpriteKey) -> Animator[CombatAnimationState] | None:
+def _build_combat_animator(
+    atlas: SpriteAtlas, key: SpriteKey, scale_factor: float = 1
+) -> Animator[CombatAnimationState] | None:
     """Returns `None` for a key with no animation clips at all -- the static-sprite fallback path
     BRAMBLE/UNKNOWN and any `build_placeholder_atlas()`-based test takes. Otherwise builds the
     full 4-state clip set: `IDLE`/`ATTACK`/`HIT` loaded from disk (with `loop=False` forced onto
     the one-shot `ATTACK`/`HIT` clips -- `build_art_atlas` itself only sets `loop=True` defaults,
     per ADR 0013), `DEAD` synthesized as a one-frame `loop=False` clip from the static `dead.png`
-    variant.
+    variant. Every frame is scaled by `scale_factor` here, once, rather than on every draw() call.
     """
     if not atlas.has_animation_set(key):
         return None
@@ -203,6 +205,7 @@ def _build_combat_animator(atlas: SpriteAtlas, key: SpriteKey) -> Animator[Comba
     clips[CombatAnimationState.DEAD] = AnimationClip(
         frames=(dead_surface,), frame_duration_seconds=BATTLE_DEATH_POSE_HOLD_SECONDS, loop=False
     )
+    clips = {state: scale_clip(clip, scale_factor) for state, clip in clips.items()}
     return Animator(clips, initial_state=CombatAnimationState.IDLE)
 
 
@@ -279,8 +282,12 @@ class CombatScene:
         self._current_phases: deque[Phase] = deque()
         self._phase_elapsed: float = 0.0
         self._phase_started: bool = False
-        self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER)
-        self._enemy_animator = _build_combat_animator(atlas, self._enemy_sprite_key)
+        self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER, _COMBATANT_SCALE_FACTOR)
+        self._enemy_animator = _build_combat_animator(atlas, self._enemy_sprite_key, _COMBATANT_SCALE_FACTOR)
+        # Fallback for a key with no animation clips at all (e.g. BRAMBLE/UNKNOWN, or a
+        # build_placeholder_atlas()-based test) -- scaled once here rather than on every draw().
+        self._player_static_sprite = scale_sprite(atlas.get(SpriteKey.PLAYER), _COMBATANT_SCALE_FACTOR)
+        self._enemy_static_sprite = scale_sprite(atlas.get(self._enemy_sprite_key), _COMBATANT_SCALE_FACTOR)
         # Seeded before battle.start()'s own events are queued (ADR 0013) -- displayed state must
         # reflect pre-battle values until start()'s events (e.g. a Resonance meter prefill) are
         # actually revealed, not whatever start() already mutated live Combatant state to.
@@ -505,7 +512,7 @@ class CombatScene:
         self._draw_combatant(
             surface,
             self._battle.player,
-            SpriteKey.PLAYER,
+            self._player_static_sprite,
             self._player_animator,
             self._player_displayed,
             mirrored=False,
@@ -513,7 +520,7 @@ class CombatScene:
         self._draw_combatant(
             surface,
             self._battle.enemy,
-            self._enemy_sprite_key,
+            self._enemy_static_sprite,
             self._enemy_animator,
             self._enemy_displayed,
             mirrored=True,
@@ -524,7 +531,7 @@ class CombatScene:
         self,
         surface: pygame.Surface,
         combatant: Combatant,
-        sprite_key: SpriteKey,
+        static_sprite: pygame.Surface,
         animator: Animator[CombatAnimationState] | None,
         displayed: DisplayedCombatantState,
         *,
@@ -533,9 +540,7 @@ class CombatScene:
         # mirrored=True anchors the whole panel to the surface's right edge instead of the left,
         # so the player and enemy sit on opposite sides of the screen facing each other.
         font = get_font(GameFont.ITHACA, _FONT_SIZE)
-        sprite = animator.current_frame() if animator is not None else self._atlas.get(sprite_key)
-        if _COMBATANT_SCALE_FACTOR != 1:
-            sprite = pygame.transform.scale_by(sprite, _COMBATANT_SCALE_FACTOR)
+        sprite = animator.current_frame() if animator is not None else static_sprite
         sprite_y = surface.height // 2 - sprite.height // 2
         top = _MARGIN
         if mirrored:
