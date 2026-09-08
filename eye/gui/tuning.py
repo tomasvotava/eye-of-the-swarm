@@ -32,3 +32,9 @@ BATTLE_RECEIVING_HIGHLIGHT_COLOR: pygame.typing.ColorLike = "orangered"
 BATTLE_HIT_FLASH_COLOR: pygame.typing.ColorLike = "white"
 BATTLE_HIT_FLASH_STRENGTH = 0.75
 BATTLE_HIT_FLASH_DURATION_SECONDS = 0.12
+
+# The hop a HUD buff-row icon makes when its own effect ticks. The distance is the arc's peak in
+# pixels, clamped by the scene to the row's clearance (_BUFF_ICON_HOP_CEILING); the duration is one
+# whole up-and-down, kept inside the flinch clip carrying it.
+BATTLE_BUFF_ICON_HOP_PIXELS = 4
+BATTLE_BUFF_ICON_HOP_DURATION_SECONDS = 0.35

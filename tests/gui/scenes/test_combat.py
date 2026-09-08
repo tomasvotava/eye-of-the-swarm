@@ -45,6 +45,7 @@ from eye.gui.scenes.combat import (
     _BAR_HEIGHT,
     _BAR_WIDTH,
     _BUFF_ICON_DURATION_FONT_SIZE,
+    _BUFF_ICON_HOP_CEILING,
     _BUFF_ICON_SIZE,
     _COMBATANT_SCALE_FACTOR,
     _FONT_SIZE,
@@ -76,6 +77,8 @@ from eye.gui.scenes.combat import (
 from eye.gui.tuning import (
     BATTLE_ACTING_HIGHLIGHT_COLOR,
     BATTLE_ANNOUNCEMENT_HOLD_SECONDS,
+    BATTLE_BUFF_ICON_HOP_DURATION_SECONDS,
+    BATTLE_BUFF_ICON_HOP_PIXELS,
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS,
     BATTLE_HIT_FLASH_DURATION_SECONDS,
@@ -982,6 +985,170 @@ def test_draw_renders_the_overlay_icon_above_the_targets_own_sprite(mirrored: bo
     assert render_calls == [(expected_pos, _OVERLAY_ICON_SIZE)]
     # Target-local, not the Announcement's center-screen block (ADR 0013).
     assert expected_pos.x != surface.get_width() // 2 - _OVERLAY_ICON_SIZE // 2
+
+
+def _heal_applied(scene: CombatScene, amount: int = 2) -> HealApplied:
+    return HealApplied(
+        target=scene._battle.enemy,
+        effect=EffectName.NOURISHED,
+        amount=amount,
+        target_hp_after=scene._battle.enemy.current_hp + amount,
+    )
+
+
+def test_a_dot_tick_hops_only_the_ticking_effects_icon_in_that_row() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.active_effects.update(
+        {(EffectCategory.BATTLE, EffectName.TOXICITY), (EffectCategory.BATTLE, EffectName.FIBROUS)}
+    )
+
+    scene._phases_for(_dot_ticked(scene))[0].on_start()
+    scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
+
+    assert scene._buff_icon_hop_offset(scene._player_displayed, EffectName.TOXICITY) > 0
+    assert scene._buff_icon_hop_offset(scene._player_displayed, EffectName.FIBROUS) == 0
+
+
+def test_a_dot_tick_leaves_the_other_combatants_icon_of_the_same_effect_at_rest() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    for displayed in (scene._player_displayed, scene._enemy_displayed):
+        displayed.active_effects.add((EffectCategory.BATTLE, EffectName.TOXICITY))
+
+    scene._phases_for(_dot_ticked(scene))[0].on_start()
+    scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
+
+    assert scene._buff_icon_hop_offset(scene._player_displayed, EffectName.TOXICITY) > 0
+    assert scene._buff_icon_hop_offset(scene._enemy_displayed, EffectName.TOXICITY) == 0
+
+
+def test_a_heal_hops_the_healing_effects_icon_on_the_combatant_it_heals() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._enemy_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.NOURISHED))
+
+    scene._phases_for(_heal_applied(scene))[0].on_start()
+    scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
+
+    assert scene._buff_icon_hop_offset(scene._enemy_displayed, EffectName.NOURISHED) > 0
+    assert scene._buff_icon_hop_offset(scene._player_displayed, EffectName.NOURISHED) == 0
+
+
+def test_the_icon_hop_leaves_the_row_and_settles_back_within_its_own_duration() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    displayed = scene._player_displayed
+    assert scene._buff_icon_hop_offset(displayed, EffectName.TOXICITY) == 0  # at rest before the tick
+
+    phase = scene._phases_for(_dot_ticked(scene))[0]
+    phase.on_start()
+    assert scene._buff_icon_hop_offset(displayed, EffectName.TOXICITY) == 0  # the arc starts on the ground
+
+    scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
+    assert scene._buff_icon_hop_offset(displayed, EffectName.TOXICITY) == min(
+        BATTLE_BUFF_ICON_HOP_PIXELS, _BUFF_ICON_HOP_CEILING
+    )
+
+    scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
+    assert scene._buff_icon_hop_offset(displayed, EffectName.TOXICITY) == 0
+
+    phase.on_complete()
+    assert EffectName.TOXICITY not in displayed.effect_tick_started_at
+
+
+def test_draw_lifts_the_hopping_icon_and_leaves_its_neighbour_where_it_was() -> None:
+    row_renders: list[tuple[EffectName, pygame.Vector2]] = []
+
+    class _SpyIcon:
+        def __init__(self, effect: EffectName) -> None:
+            self.effect = effect
+
+        def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
+            # The overlay above the sprite renders through this same factory at its own size.
+            if size == _BUFF_ICON_SIZE:
+                row_renders.append((self.effect, pygame.Vector2(pos)))
+
+    def _spy_factory(effect: EffectName) -> BuffIcon:
+        return _SpyIcon(effect)
+
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    scene._player_displayed.active_effects.update(
+        {(EffectCategory.BATTLE, EffectName.TOXICITY), (EffectCategory.BATTLE, EffectName.FIBROUS)}
+    )
+    surface = pygame.Surface((800, 600))
+    scene.draw(surface)
+    at_rest = dict(row_renders)
+    row_renders.clear()
+
+    scene._phases_for(_dot_ticked(scene))[0].on_start()
+    scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
+    scene.draw(surface)
+    mid_hop = dict(row_renders)
+
+    assert mid_hop[EffectName.TOXICITY].x == at_rest[EffectName.TOXICITY].x
+    assert mid_hop[EffectName.TOXICITY].y < at_rest[EffectName.TOXICITY].y
+    assert mid_hop[EffectName.FIBROUS] == at_rest[EffectName.FIBROUS]
+
+
+def test_draw_keeps_a_hopping_icon_flush_inside_the_mirrored_rows_right_edge() -> None:
+    # The hop is purely vertical, so the mirrored side's right-edge anchoring is unaffected.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    for effect in (EffectName.RUNT, EffectName.TOXICITY):
+        scene._enemy_displayed.active_effects.add((EffectCategory.BATTLE, effect))
+    event = DotTicked(
+        target=scene._battle.enemy,
+        effect=EffectName.TOXICITY,
+        damage=1,
+        target_hp_after=scene._battle.enemy.current_hp - 1,
+    )
+    scene._phases_for(event)[0].on_start()
+    scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
+    surface = pygame.Surface((800, 600))
+    surface.fill("black")
+
+    scene.draw(surface)
+
+    hop = scene._buff_icon_hop_offset(scene._enemy_displayed, EffectName.TOXICITY)
+    assert hop > 0, "expected the icon to be off the ground"
+    icon_row_x = (surface.get_width() - _MARGIN) - _GAP
+    icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
+    # Sampled from the icon's lifted top, so the rows the hop moves it into are inside the band.
+    icon_band = range(icon_row_top - hop, icon_row_top + _FONT_SIZE * 2)
+    black = pygame.Color("black")
+    icon_columns = [x for x in range(surface.get_width()) if any(surface.get_at((x, y)) != black for y in icon_band)]
+
+    assert icon_columns, "expected the enemy's buff icons to render"
+    assert max(icon_columns) == icon_row_x - 1
+
+
+@pytest.mark.parametrize("mirrored", [False, True])
+def test_a_hopping_icon_never_climbs_into_the_meter_bar_above_its_row(mirrored: bool) -> None:
+    # Comparing the meter bar's own rows before and after, so the icon's peak isn't pinned down.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    target = scene._battle.enemy if mirrored else scene._battle.player
+    displayed = scene._enemy_displayed if mirrored else scene._player_displayed
+    displayed.active_effects.add((EffectCategory.BATTLE, EffectName.TOXICITY))
+    meter_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _GAP
+    meter_rows = range(meter_top, meter_top + _METER_HEIGHT)
+    surface = pygame.Surface((800, 600))
+
+    surface.fill("black")
+    scene.draw(surface)
+    at_rest = [[surface.get_at((x, y)) for x in range(surface.get_width())] for y in meter_rows]
+
+    event = DotTicked(target=target, effect=EffectName.TOXICITY, damage=1, target_hp_after=target.current_hp - 1)
+    scene._phases_for(event)[0].on_start()
+    scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
+    surface.fill("black")
+    scene.draw(surface)
+    mid_hop = [[surface.get_at((x, y)) for x in range(surface.get_width())] for y in meter_rows]
+
+    assert scene._buff_icon_hop_offset(displayed, EffectName.TOXICITY) > 0  # really at the arc's peak
+    assert mid_hop == at_rest
 
 
 def test_advance_phases_leaves_displayed_hp_strictly_between_before_and_after_mid_tween() -> None:
