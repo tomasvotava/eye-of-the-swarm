@@ -327,20 +327,28 @@ def test_draw_anchors_the_player_left_and_the_enemy_right() -> None:
 
     scene.draw(surface)
 
-    player_sprite = build_placeholder_atlas().get(SpriteKey.PLAYER)
-    enemy_sprite = build_placeholder_atlas().get(scene._enemy_sprite_key)
-    # Both sprites are non-empty placeholder shapes drawn on a black background, so scanning each
-    # column for any non-black pixel locates where each panel actually rendered without hardcoding
-    # every sub-widget's position. Restricted to the sprite panels' own vertical band so the
-    # bottom-anchored menu/log (which always render near the left edge) can't mask a regression.
+    player_sprite = scene._player_static_sprite
+    enemy_sprite = scene._enemy_static_sprite
+    # Both sprites are non-empty placeholder shapes (a circle or rect, either way touching every
+    # edge of its own bounding box) drawn on a black background, so scanning each column for any
+    # non-black pixel locates each panel's exact left/right edge without hardcoding every
+    # sub-widget's position. Restricted to the sprites' own vertically centered band (mirrors
+    # _draw_combatant's sprite_y) so the bottom-anchored menu/log (which always render near the
+    # left edge) can't mask a regression.
     black = pygame.Color("black")
-    panel_band = range(_MARGIN, _MARGIN + max(player_sprite.get_height(), enemy_sprite.get_height()))
+    sprite_height = max(player_sprite.get_height(), enemy_sprite.get_height())
+    sprite_top = surface.get_height() // 2 - sprite_height // 2
+    panel_band = range(sprite_top, sprite_top + sprite_height)
     non_black_columns = [
         x for x in range(surface.get_width()) if any(surface.get_at((x, y)) != black for y in panel_band)
     ]
     assert non_black_columns, "expected the combat scene to draw something"
-    assert min(non_black_columns) < player_sprite.get_width() + _MARGIN
-    assert max(non_black_columns) > surface.get_width() - enemy_sprite.get_width() - _MARGIN
+    # Mirrors _draw_combatant's own sprite_x formula: quarter-width anchored, not flush against
+    # the surface's left/right margin.
+    player_x = surface.get_width() // 4 - player_sprite.get_width() // 2
+    enemy_x = surface.get_width() // 4 * 3 - enemy_sprite.get_width() // 2
+    assert min(non_black_columns) == player_x
+    assert max(non_black_columns) == enemy_x + enemy_sprite.get_width() - 1
 
 
 def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> None:
