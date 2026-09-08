@@ -49,7 +49,9 @@ from eye.gui.scenes.combat import (
     _COMBATANT_SCALE_FACTOR,
     _FONT_SIZE,
     _GAP,
+    _HP_COLOR,
     _MARGIN,
+    _METER_COLOR,
     _METER_HEIGHT,
     _OVERLAY_ICON_SIZE,
     ACTION_KEYS,
@@ -61,6 +63,7 @@ from eye.gui.scenes.combat import (
     EffectCard,
     Overlay,
     Phase,
+    PhaseFocus,
     _build_combat_animator,
     _combatant_layout,
     _DeadVariant,
@@ -71,8 +74,11 @@ from eye.gui.scenes.combat import (
     _resolve_enemy_sprite_key,
 )
 from eye.gui.tuning import (
+    BATTLE_ACTING_HIGHLIGHT_COLOR,
     BATTLE_ANNOUNCEMENT_HOLD_SECONDS,
     BATTLE_DEATH_POSE_HOLD_SECONDS,
+    BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS,
+    BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
 from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon, TextBuffIcon
@@ -1461,3 +1467,169 @@ def test_effect_card_title_fits_the_real_window_width_at_the_default_icon_scale(
     for effect in EffectName:
         title_surface = font.render(_label(effect), True, "white")
         assert title_surface.get_width() <= 640, _label(effect)
+
+
+def test_swing_phase_focuses_the_source_as_acting_and_the_target_as_receiving() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    swing = scene._phases_for(_hit_landed(scene))[0]
+    assert scene._phase_focus is None  # not set until on_start actually fires
+
+    swing.on_start()
+
+    assert scene._phase_focus == PhaseFocus(acting=scene._battle.player, receiving=scene._battle.enemy)
+    assert scene._highlight_color_for(scene._battle.player) == BATTLE_ACTING_HIGHLIGHT_COLOR
+    assert scene._highlight_color_for(scene._battle.enemy) == BATTLE_RECEIVING_HIGHLIGHT_COLOR
+
+
+def test_reaction_phase_focuses_only_the_receiving_combatant() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    scene._reaction_phase(scene._battle.player).on_start()
+
+    assert scene._phase_focus == PhaseFocus(receiving=scene._battle.player)
+    assert scene._highlight_color_for(scene._battle.enemy) is None
+
+
+def test_overlay_phase_focuses_the_target_as_receiving() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    scene._phases_for(_dot_ticked(scene))[0].on_start()
+
+    assert scene._phase_focus == PhaseFocus(receiving=scene._battle.player)
+
+
+def test_focus_outlives_the_animation_phase_that_set_it_and_covers_the_trailing_hp_tween() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    hp_before = scene._enemy_displayed.hp
+    event = _hit_landed(scene)
+    scene._queue_events([event])
+
+    scene._advance_phases(0.0)  # the zero-length placeholder swing completes; its hp tween begins
+    assert scene._current_phases[0].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS
+    assert scene._phase_focus == PhaseFocus(acting=scene._battle.player, receiving=scene._battle.enemy)
+
+    scene._advance_phases(BATTLE_VALUE_TWEEN_SECONDS / 2)
+    assert event.target_hp_after < scene._enemy_displayed.hp < hp_before  # the bar really is moving
+    assert scene._phase_focus == PhaseFocus(acting=scene._battle.player, receiving=scene._battle.enemy)
+
+
+def test_focus_clears_when_the_next_event_concerns_nobody() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    meter_filled = MeterFilled(combatant=scene._battle.player, amount=10, meter_after=10)
+    scene._queue_events([_hit_landed(scene), meter_filled])
+
+    scene._advance_phases(0.0)
+    scene._advance_phases(BATTLE_VALUE_TWEEN_SECONDS)  # finishes the hit, starts the meter tween
+
+    assert scene._current_phases
+    assert scene._phase_focus is None
+
+
+def test_the_next_events_focus_is_established_by_the_same_call_that_drains_the_previous() -> None:
+    # The two hits run in opposite directions, so the focus that comes back can only be the second's.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    player, enemy = scene._battle.player, scene._battle.enemy
+    riposte = HitLanded(
+        source=enemy,
+        target=player,
+        action=ActionKind.STRUGGLE,
+        hit_index=0,
+        hit_count=1,
+        damage=4,
+        target_hp_after=player.current_hp - 4,
+    )
+    scene._queue_events([_hit_landed(scene), riposte])
+
+    scene._advance_phases(0.0)
+    assert scene._phase_focus == PhaseFocus(acting=player, receiving=enemy)
+
+    scene._advance_phases(BATTLE_VALUE_TWEEN_SECONDS)  # drains the first hit and takes up the second
+
+    assert scene._phase_focus == PhaseFocus(acting=enemy, receiving=player)
+
+
+def test_death_focuses_the_fallen_combatant_for_its_whole_pose() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._queue_events([Death(combatant=scene._battle.player)])
+
+    scene._advance_phases(0.0)
+
+    assert scene._current_phases[0].duration_seconds == BATTLE_DEATH_POSE_HOLD_SECONDS
+    assert scene._phase_focus == PhaseFocus(receiving=scene._battle.player)
+
+
+def test_revive_focus_covers_the_hp_climb_that_follows_its_state_switch() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.hp = 0.0
+    scene._queue_events([Revive(combatant=scene._battle.player, revived_hp=10)])
+
+    scene._advance_phases(0.0)  # the zero-length state switch completes; the hp tween begins
+    assert scene._current_phases[0].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS
+    assert scene._phase_focus == PhaseFocus(receiving=scene._battle.player)
+
+    scene._advance_phases(BATTLE_VALUE_TWEEN_SECONDS / 2)
+    assert 0.0 < scene._player_displayed.hp < 10.0  # the bar really is climbing
+    assert scene._phase_focus == PhaseFocus(receiving=scene._battle.player)
+
+
+def test_role_highlight_colors_do_not_collide_with_the_bars_they_tint() -> None:
+    # Compared as resolved channels so respelling a colour can't slip a collision past this.
+    panel_colors = [tuple(pygame.Color(_HP_COLOR)), tuple(pygame.Color(_METER_COLOR))]
+    acting = tuple(pygame.Color(BATTLE_ACTING_HIGHLIGHT_COLOR))
+    receiving = tuple(pygame.Color(BATTLE_RECEIVING_HIGHLIGHT_COLOR))
+
+    assert acting not in panel_colors
+    assert receiving not in panel_colors
+    assert acting != receiving
+
+
+def test_focus_clears_once_the_reveal_queue_drains() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._queue_events([_hit_landed(scene)])
+
+    scene._advance_phases(0.0)
+    scene._advance_phases(BATTLE_VALUE_TWEEN_SECONDS)
+
+    assert not scene._current_phases
+    assert not scene._pending_events
+    assert scene._phase_focus is None
+
+
+def test_update_advances_the_scene_clock_by_the_frames_delta() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    scene.update(0.016)
+    scene.update(0.016)
+
+    assert scene._elapsed_seconds == pytest.approx(0.032)
+
+
+def test_pulse_is_driven_by_the_scene_clock_not_the_in_flight_phases_own_elapsed_time() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    at_rest = scene._pulse_mix()
+    scene._elapsed_seconds = BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS / 4
+
+    assert scene._phase_elapsed == 0.0
+    assert scene._pulse_mix() != at_rest
+
+
+def test_draw_does_not_raise_while_a_swing_highlight_is_active() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._phases_for(_hit_landed(scene))[0].on_start()
+    scene._elapsed_seconds = BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS / 2  # peak of the pulse
+
+    scene.draw(pygame.Surface((800, 600)))

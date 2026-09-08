@@ -7,6 +7,7 @@ one that reads `generation.died` and decides whether that means a return to expl
 to the skill tree, mirroring `eye/tui/combat.py::play_battle()`, which never decides that either.
 """
 
+import math
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -43,8 +44,12 @@ from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.tuning import (
+    BATTLE_ACTING_HIGHLIGHT_COLOR,
     BATTLE_ANNOUNCEMENT_HOLD_SECONDS,
     BATTLE_DEATH_POSE_HOLD_SECONDS,
+    BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS,
+    BATTLE_HIGHLIGHT_PULSE_STRENGTH,
+    BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
 from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon
@@ -392,6 +397,17 @@ class Overlay:
     effect: EffectName
 
 
+@dataclass(frozen=True, slots=True)
+class PhaseFocus:
+    """Which combatants the in-flight phase concerns. Scoped to a whole `BattleEvent`, so a hit's
+    highlight covers the HP tween trailing its swing. Never derived from `Battle.turn_phase`, which
+    already describes whoever acts next, not whoever the player is watching (ADR 0013).
+    """
+
+    acting: Combatant | None = None
+    receiving: Combatant | None = None
+
+
 class CombatScene:
     def __init__(
         self,
@@ -422,6 +438,9 @@ class CombatScene:
         self._phase_started: bool = False
         self._announcement: Announcement | None = None
         self._overlay: Overlay | None = None
+        self._phase_focus: PhaseFocus | None = None
+        # Scene-wide, unlike _phase_elapsed, so the pulse never restarts at a phase boundary.
+        self._elapsed_seconds: float = 0.0
         self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER, _COMBATANT_SCALE_FACTOR)
         self._enemy_animator = _build_combat_animator(atlas, self._enemy_sprite_key, _COMBATANT_SCALE_FACTOR)
         # Fallback for a key with no animation clips at all -- BRAMBLE/UNKNOWN, or any
@@ -459,6 +478,7 @@ class CombatScene:
             self._pending_action_index = self._cursor_index
 
     def update(self, dt: float) -> PlaySceneTransition | None:
+        self._elapsed_seconds += dt
         # Ticks every real frame regardless of which phase (if any) is active (ADR 0013) -- not
         # folded into _advance_phases, which can run its zero-duration cascade loop more than once
         # per call and must not tick an animator's real elapsed time more than once per frame.
@@ -530,6 +550,8 @@ class CombatScene:
     def _advance_phases(self, dt: float) -> None:
         while True:
             if not self._current_phases:
+                # The only point with nothing in flight, so the only point a focus expires.
+                self._phase_focus = None
                 if not self._pending_events:
                     return
                 self._start_next_event()
@@ -567,6 +589,7 @@ class CombatScene:
         target_duration = target_animator.duration_of(CombatAnimationState.HIT) if target_animator else 0.0
 
         def on_start() -> None:
+            self._phase_focus = PhaseFocus(acting=source, receiving=target)
             if source_animator is not None:
                 source_animator.set_state(CombatAnimationState.ATTACK)
             if target_animator is not None:
@@ -586,6 +609,7 @@ class CombatScene:
         duration = animator.duration_of(CombatAnimationState.HIT) if animator else 0.0
 
         def on_start() -> None:
+            self._phase_focus = PhaseFocus(receiving=combatant)
             if animator is not None:
                 animator.set_state(CombatAnimationState.HIT)
 
@@ -689,6 +713,7 @@ class CombatScene:
                 displayed = self._displayed_for(combatant)
 
                 def on_start() -> None:
+                    self._phase_focus = PhaseFocus(receiving=combatant)
                     # Defensive snap: a Wilty-triggered death sets current_hp directly and emits
                     # no event for the GUI to tween against.
                     displayed.hp = float(max(0, combatant.current_hp))
@@ -700,6 +725,9 @@ class CombatScene:
                 animator = self._animator_for(combatant)
 
                 def on_start() -> None:
+                    # Set on the instant state switch rather than the tween that follows, so the
+                    # focus is already standing when the bar starts climbing.
+                    self._phase_focus = PhaseFocus(receiving=combatant)
                     if animator is not None:
                         animator.set_state(CombatAnimationState.IDLE)
 
@@ -756,6 +784,22 @@ class CombatScene:
             return animator.current_frame()
         return self._player_static_sprite if combatant is self._battle.player else self._enemy_static_sprite
 
+    def _highlight_color_for(self, combatant: Combatant) -> pygame.typing.ColorLike | None:
+        """The colour for `combatant`'s role in the phase on screen, or `None`. Receiving wins over
+        acting when a combatant is somehow both."""
+        if self._phase_focus is None:
+            return None
+        if combatant is self._phase_focus.receiving:
+            return BATTLE_RECEIVING_HIGHLIGHT_COLOR
+        if combatant is self._phase_focus.acting:
+            return BATTLE_ACTING_HIGHLIGHT_COLOR
+        return None
+
+    def _pulse_mix(self) -> float:
+        """How far a highlighted HP bar's fill sits toward its role colour this frame."""
+        cycles = self._elapsed_seconds / BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS
+        return BATTLE_HIGHLIGHT_PULSE_STRENGTH * (1.0 - math.cos(math.tau * cycles)) / 2.0
+
     def _draw_combatant(
         self,
         surface: pygame.Surface,
@@ -768,13 +812,16 @@ class CombatScene:
         top = _MARGIN
         surface.blit(sprite, layout.sprite_topleft(sprite))
 
-        name = font.render(combatant.name, True, _TEXT_COLOR)
+        # Steady on the name (who), pulsing on the HP bar (the value about to move).
+        highlight = self._highlight_color_for(combatant)
+        name = font.render(combatant.name, True, highlight if highlight is not None else _TEXT_COLOR)
         name_x = layout.bar_right - name.get_width() if layout.mirrored else layout.bar_left
         surface.blit(name, (name_x, top))
 
         current_hp = max(0.0, displayed.hp)
         hp_rect = pygame.Rect(layout.bar_left, top + _FONT_SIZE, _BAR_WIDTH, _BAR_HEIGHT)
-        self._draw_bar(surface, hp_rect, current_hp / combatant.base_stats.max_hp, _HP_COLOR)
+        hp_color = _HP_COLOR if highlight is None else pygame.Color(_HP_COLOR).lerp(highlight, self._pulse_mix())
+        self._draw_bar(surface, hp_rect, current_hp / combatant.base_stats.max_hp, hp_color)
         hp_label = font.render(f"{round(current_hp)}/{combatant.base_stats.max_hp}", True, _TEXT_COLOR)
         hp_label_x = hp_rect.left - _GAP - hp_label.get_width() if layout.mirrored else hp_rect.right + _GAP
         surface.blit(hp_label, (hp_label_x, hp_rect.top))
