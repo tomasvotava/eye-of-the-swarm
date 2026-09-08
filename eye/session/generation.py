@@ -7,7 +7,7 @@ from eye.character import Character
 from eye.combat.actions import ActionDefinition
 from eye.combat.ai import GreedyAI
 from eye.combat.battle import Battle
-from eye.combat.effects import EffectRegistry
+from eye.combat.effects import EffectCategory, EffectName, EffectRegistry
 from eye.combat.stats import Combatant, Stats
 from eye.exploration.events import EnemyEncountered
 from eye.exploration.run import ExplorationRun
@@ -74,6 +74,13 @@ class Generation:
     @property
     def is_seed_ready(self) -> bool:
         return self._exploration.is_seed_ready
+
+    @property
+    def active_lifespan_effects(self) -> tuple[EffectName, ...]:
+        """Snapshot of the Lifespan-scoped effects the character holds, in `EffectName` order, each
+        named once. A Battle-scoped effect of the same name is a separate slot (PROJECT_BRIEF.md §5.6)."""
+        effects = self._character.effects
+        return tuple(name for name in EffectName if effects.has(name, category=EffectCategory.LIFESPAN))
 
     def plant_seed(self) -> list[SessionEvent]:
         if self.died:
