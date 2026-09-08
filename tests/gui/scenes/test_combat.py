@@ -51,6 +51,7 @@ from eye.gui.scenes.combat import (
     _GAP,
     _MARGIN,
     _METER_HEIGHT,
+    _OVERLAY_ICON_SIZE,
     ACTION_KEYS,
     Announcement,
     CombatAnimationState,
@@ -58,6 +59,7 @@ from eye.gui.scenes.combat import (
     CombatScene,
     DisplayedCombatantState,
     EffectCard,
+    Overlay,
     Phase,
     _build_combat_animator,
     _combatant_layout,
@@ -104,11 +106,6 @@ def _combatant(name: str = "Combatant") -> Combatant:
 
 
 # One instance of every BattleEvent variant -- used to check that `_phases_for` is exhaustive.
-# Death/Revive/HitLanded/HitReflected/SelfDamageTaken are the animation-driven swing events,
-# MeterFilled/MeterConsumed are tween-only, and EffectApplied/EffectExpired/TurnSkipped/
-# ExtraActionTriggered/BattleEnded get the Announcement treatment; together they return real
-# phases, while ActionChosen/DotTicked/HealApplied stay stubbed to `[]` (ActionChosen permanently,
-# DotTicked/HealApplied pending ADR 0013's remaining Overlay treatment, #174).
 _ONE_OF_EACH_BATTLE_EVENT: tuple[BattleEvent, ...] = (
     Death(combatant=_combatant()),
     Revive(combatant=_combatant(), revived_hp=5),
@@ -484,7 +481,10 @@ def test_combatant_layout_centers_each_frame_on_the_sprite_anchor() -> None:
 _ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded, HitReflected, SelfDamageTaken)
 _TWEEN_ONLY_EVENT_TYPES = (MeterFilled, MeterConsumed)
 _ANNOUNCEMENT_EVENT_TYPES = (EffectApplied, EffectExpired, TurnSkipped, ExtraActionTriggered, BattleEnded)
-_EVENT_TYPES_WITH_REAL_PHASES = _ANIMATION_DRIVEN_EVENT_TYPES + _TWEEN_ONLY_EVENT_TYPES + _ANNOUNCEMENT_EVENT_TYPES
+_OVERLAY_EVENT_TYPES = (DotTicked, HealApplied)
+_EVENT_TYPES_WITH_REAL_PHASES = (
+    _ANIMATION_DRIVEN_EVENT_TYPES + _TWEEN_ONLY_EVENT_TYPES + _ANNOUNCEMENT_EVENT_TYPES + _OVERLAY_EVENT_TYPES
+)
 
 
 def test_phases_for_is_exhaustive_over_every_battle_event_variant() -> None:
@@ -496,13 +496,13 @@ def test_phases_for_is_exhaustive_over_every_battle_event_variant() -> None:
         scene._phases_for(event)
 
 
-def test_phases_for_returns_empty_for_variants_not_yet_animated() -> None:
+def test_phases_for_returns_no_phases_only_for_action_chosen() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
-    for event in _ONE_OF_EACH_BATTLE_EVENT:
-        if not isinstance(event, _EVENT_TYPES_WITH_REAL_PHASES):
-            assert scene._phases_for(event) == []
+    phase_less = [event for event in _ONE_OF_EACH_BATTLE_EVENT if scene._phases_for(event) == []]
+
+    assert [type(event) for event in phase_less] == [ActionChosen]
 
 
 def test_phases_for_returns_real_phases_for_every_animated_or_tweened_event() -> None:
@@ -861,6 +861,119 @@ def test_reaction_phase_drives_hit_then_resets_to_idle(tmp_path: Path) -> None:
 
     reaction.on_complete()
     assert scene._player_animator.state == CombatAnimationState.IDLE
+
+
+def _dot_ticked(scene: CombatScene, damage: int = 3) -> DotTicked:
+    return DotTicked(
+        target=scene._battle.player,
+        effect=EffectName.TOXICITY,
+        damage=damage,
+        target_hp_after=scene._battle.player.current_hp - damage,
+    )
+
+
+def test_overlay_phase_drives_the_targets_hit_state_then_resets_it_to_idle(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
+    atlas = build_art_atlas(tmp_path)
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), atlas)
+    assert scene._player_animator is not None
+
+    overlay_phase = scene._phases_for(_dot_ticked(scene))[0]
+    overlay_phase.on_start()
+    player_state: CombatAnimationState = scene._player_animator.state
+    assert player_state == CombatAnimationState.HIT
+
+    overlay_phase.on_complete()
+    assert scene._player_animator.state == CombatAnimationState.IDLE
+
+
+def test_overlay_phase_lasts_exactly_the_targets_own_hit_clip(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value, hit_fps=2)
+    atlas = build_art_atlas(tmp_path)
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), atlas)
+
+    phases = scene._phases_for(_dot_ticked(scene))
+
+    assert phases[0].duration_seconds == pytest.approx(1.0)
+
+
+def test_overlay_phase_shows_the_effect_at_the_target_on_start_and_clears_it_on_complete() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    phases = scene._phases_for(_dot_ticked(scene))
+    assert scene._overlay is None
+
+    phases[0].on_start()
+    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.TOXICITY)
+
+    phases[0].on_complete()
+    assert scene._overlay is None
+
+
+def test_dot_ticked_tweens_the_targets_displayed_hp_down_after_its_overlay() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    hp_before = scene._player_displayed.hp
+    event = _dot_ticked(scene, damage=4)
+
+    phases = scene._phases_for(event)
+
+    assert len(phases) == 2
+    assert phases[1].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS
+    phases[1].on_progress(0.5)
+    assert event.target_hp_after < scene._player_displayed.hp < hp_before
+    phases[1].on_complete()
+    assert scene._player_displayed.hp == float(event.target_hp_after)
+
+
+def test_heal_applied_tweens_the_targets_displayed_hp_up_after_its_overlay() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.hp = 5.0
+    event = HealApplied(target=scene._battle.player, effect=EffectName.NOURISHED, amount=4, target_hp_after=9)
+
+    phases = scene._phases_for(event)
+
+    assert len(phases) == 2
+    phases[0].on_start()
+    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.NOURISHED)
+    phases[1].on_progress(0.5)
+    assert scene._player_displayed.hp == pytest.approx(7.0)
+    phases[1].on_complete()
+    assert scene._player_displayed.hp == 9.0
+
+
+@pytest.mark.parametrize("mirrored", [False, True])
+def test_draw_renders_the_overlay_icon_above_the_targets_own_sprite(mirrored: bool) -> None:
+    render_calls: list[tuple[pygame.Vector2, int]] = []
+
+    class _SpyIcon:
+        def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
+            render_calls.append((pos, size))
+
+    def _spy_factory(effect: EffectName) -> BuffIcon:
+        return _SpyIcon()
+
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    target = scene._battle.enemy if mirrored else scene._battle.player
+    scene._overlay = Overlay(target=target, effect=EffectName.TOXICITY)
+    surface = pygame.Surface((800, 600))
+
+    scene.draw(surface)
+
+    layout = _combatant_layout(surface, mirrored=mirrored)
+    sprite = scene._enemy_static_sprite if mirrored else scene._player_static_sprite
+    expected_pos = pygame.Vector2(
+        layout.sprite_center[0] - _OVERLAY_ICON_SIZE // 2,
+        layout.sprite_topleft(sprite)[1] - _GAP - _OVERLAY_ICON_SIZE,
+    )
+    assert render_calls == [(expected_pos, _OVERLAY_ICON_SIZE)]
+    # Target-local, not the Announcement's center-screen block (ADR 0013).
+    assert expected_pos.x != surface.get_width() // 2 - _OVERLAY_ICON_SIZE // 2
 
 
 def test_advance_phases_leaves_displayed_hp_strictly_between_before_and_after_mid_tween() -> None:

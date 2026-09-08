@@ -72,6 +72,7 @@ _METER_HEIGHT = 8
 _BUFF_ICON_SIZE = 28
 _BUFF_ICON_STEP = 36
 _BUFF_ICON_DURATION_FONT_SIZE = 12
+_OVERLAY_ICON_SIZE = 40
 _COMBATANT_SCALE_FACTOR = 3
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _BAR_BG_COLOR: pygame.typing.ColorLike = "dimgray"
@@ -378,6 +379,14 @@ class Announcement:
     card: EffectCard | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class Overlay:
+    """The target-local counterpart to `Announcement` (ADR 0013): an icon drawn at `target`."""
+
+    target: Combatant
+    effect: EffectName
+
+
 class CombatScene:
     def __init__(
         self,
@@ -407,6 +416,7 @@ class CombatScene:
         self._phase_elapsed: float = 0.0
         self._phase_started: bool = False
         self._announcement: Announcement | None = None
+        self._overlay: Overlay | None = None
         self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER, _COMBATANT_SCALE_FACTOR)
         self._enemy_animator = _build_combat_animator(atlas, self._enemy_sprite_key, _COMBATANT_SCALE_FACTOR)
         # Fallback for a key with no animation clips at all -- BRAMBLE/UNKNOWN, or any
@@ -580,6 +590,21 @@ class CombatScene:
 
         return Phase(duration_seconds=duration, on_start=on_start, on_complete=on_complete)
 
+    def _overlay_phase(self, target: Combatant, effect: EffectName) -> Phase:
+        # Wraps _reaction_phase so the overlay holds for exactly the target's own flinch clip.
+        reaction = self._reaction_phase(target)
+        overlay = Overlay(target=target, effect=effect)
+
+        def on_start() -> None:
+            reaction.on_start()
+            self._overlay = overlay
+
+        def on_complete() -> None:
+            reaction.on_complete()
+            self._overlay = None
+
+        return replace(reaction, on_start=on_start, on_complete=on_complete)
+
     def _announcement_phase(self, announcement: Announcement) -> Phase:
         # A bound method, not a free function taking a passed-in mutable object like
         # _hp_tween_phase/_meter_tween_phase -- those are parameterized per-combatant, but there's
@@ -646,8 +671,7 @@ class CombatScene:
         return [Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)]
 
     def _phases_for(self, event: BattleEvent) -> list[Phase]:
-        # DotTicked/HealApplied are deliberately phase-less for now -- they get the Overlay
-        # treatment per ADR 0013 once #174 lands. ActionChosen is permanently phase-less.
+        # ActionChosen is the one variant with nothing of its own to reveal (ADR 0013).
         match event:
             case ActionChosen():
                 return []
@@ -656,10 +680,8 @@ class CombatScene:
                 displayed = self._displayed_for(combatant)
 
                 def on_start() -> None:
-                    # Defensive snap, not an assumption that a preceding event already tweened HP
-                    # correctly -- a DotTicked- or Wilty-triggered death has no such predecessor
-                    # (DotTicked's own phase is still [] here; Wilty sets current_hp with no event
-                    # at all). _handle_potential_death only ever fires Death once current_hp <= 0.
+                    # Defensive snap: a Wilty-triggered death sets current_hp directly and emits
+                    # no event for the GUI to tween against.
                     displayed.hp = float(max(0, combatant.current_hp))
                     if animator is not None:
                         animator.set_state(CombatAnimationState.DEAD)
@@ -696,45 +718,44 @@ class CombatScene:
                     self._reaction_phase(combatant),
                     _hp_tween_phase(self._displayed_for(combatant), combatant_hp_after),
                 ]
-            case DotTicked():
-                return []
-            case HealApplied():
-                return []
+            case DotTicked(target=target, effect=effect, target_hp_after=target_hp_after):
+                return [
+                    self._overlay_phase(target, effect),
+                    _hp_tween_phase(self._displayed_for(target), target_hp_after),
+                ]
+            case HealApplied(target=target, effect=effect, target_hp_after=target_hp_after):
+                return [
+                    self._overlay_phase(target, effect),
+                    _hp_tween_phase(self._displayed_for(target), target_hp_after),
+                ]
             case _:
                 assert_never(event)
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
-        self._draw_combatant(
-            surface,
-            self._battle.player,
-            self._player_static_sprite,
-            self._player_animator,
-            self._player_displayed,
-            _combatant_layout(surface, mirrored=False),
-        )
-        self._draw_combatant(
-            surface,
-            self._battle.enemy,
-            self._enemy_static_sprite,
-            self._enemy_animator,
-            self._enemy_displayed,
-            _combatant_layout(surface, mirrored=True),
-        )
+        player_layout = _combatant_layout(surface, mirrored=False)
+        enemy_layout = _combatant_layout(surface, mirrored=True)
+        self._draw_combatant(surface, self._battle.player, self._player_displayed, player_layout)
+        self._draw_combatant(surface, self._battle.enemy, self._enemy_displayed, enemy_layout)
         self._draw_menu(surface)
+        self._draw_overlay(surface, player_layout, enemy_layout)
         self._draw_announcement(surface)
+
+    def _current_sprite(self, combatant: Combatant) -> pygame.Surface:
+        animator = self._animator_for(combatant)
+        if animator is not None:
+            return animator.current_frame()
+        return self._player_static_sprite if combatant is self._battle.player else self._enemy_static_sprite
 
     def _draw_combatant(
         self,
         surface: pygame.Surface,
         combatant: Combatant,
-        static_sprite: pygame.Surface,
-        animator: Animator[CombatAnimationState] | None,
         displayed: DisplayedCombatantState,
         layout: CombatantLayout,
     ) -> None:
         font = get_font(GameFont.ITHACA, _FONT_SIZE)
-        sprite = animator.current_frame() if animator is not None else static_sprite
+        sprite = self._current_sprite(combatant)
         top = _MARGIN
         surface.blit(sprite, layout.sprite_topleft(sprite))
 
@@ -808,6 +829,19 @@ class CombatScene:
             surface.blit(font.render(label, True, _TEXT_COLOR), row.topleft)
         hint = font.render("1-9: choose   Up/Down + Enter: choose", True, _TEXT_COLOR)
         surface.blit(hint, (_MARGIN, top + len(available) * _FONT_SIZE))
+
+    def _draw_overlay(
+        self, surface: pygame.Surface, player_layout: CombatantLayout, enemy_layout: CombatantLayout
+    ) -> None:
+        if self._overlay is None:
+            return
+        target = self._overlay.target
+        layout = player_layout if target is self._battle.player else enemy_layout
+        icon_x = layout.sprite_center[0] - _OVERLAY_ICON_SIZE // 2
+        icon_y = layout.sprite_topleft(self._current_sprite(target))[1] - _GAP - _OVERLAY_ICON_SIZE
+        self._buff_icon_factory(self._overlay.effect).render(
+            surface, pygame.Vector2(icon_x, icon_y), _OVERLAY_ICON_SIZE
+        )
 
     def _draw_announcement(self, surface: pygame.Surface) -> None:
         if self._announcement is None:
