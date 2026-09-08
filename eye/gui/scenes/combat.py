@@ -529,14 +529,18 @@ class CombatScene:
                 # category's instance of the same effect name is a genuinely new application (the
                 # brief's own Lifespan-Fibrous-plus-Battle-Fibrous example), not a reapplication.
                 return []
-            subtitle = _duration_subtitle(event.category, event.remaining_turns)
+            duration = _duration_subtitle(event.category, event.remaining_turns)
         else:
             # EffectExpired carries no category (only ever fired for a Battle-scoped effect today
             # -- Battle._expire_battle_effects/_clear_battle_effects both filter to
             # EffectCategory.BATTLE), so the key to discard is inferred rather than read off the
             # event. This breaks if a future domain change ever expires a Lifespan effect this way.
             key = (EffectCategory.BATTLE, event.effect)
-            subtitle = "Wears off"
+            duration = "Wears off"
+        # Player and enemy both hold every effect type (PROJECT_BRIEF.md §5.6), so the subtitle
+        # names who it's on, not just how long -- otherwise a Runt on the enemy and a Runt on the
+        # player are visually indistinguishable while the card is up.
+        subtitle = f"{event.target.name} — {duration}"
         card = EffectCard(title=_label(event.effect), icon=self._buff_icon_factory(event.effect), subtitle=subtitle)
         announcement = Announcement(text=EFFECT_DESCRIPTIONS[event.effect], card=card)
         applied = isinstance(event, EffectApplied)

@@ -977,7 +977,7 @@ def test_effect_applied_phase_sets_an_effect_card_announcement_with_title_and_su
     phases[0].on_start()
     assert scene._announcement == Announcement(
         text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
-        card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="3 turns"),
+        card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="Player — 3 turns"),
     )
     phases[0].on_complete()
     assert scene._announcement is None
@@ -993,7 +993,7 @@ def test_effect_applied_phase_subtitles_a_lifespan_effect_and_an_indefinite_batt
     scene._phases_for(lifespan_event)[0].on_start()
     assert scene._announcement is not None
     assert scene._announcement.card is not None
-    assert scene._announcement.card.subtitle == "This generation"
+    assert scene._announcement.card.subtitle == "Player — This generation"
 
     indefinite_event = EffectApplied(
         target=scene._battle.player, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE, remaining_turns=None
@@ -1001,7 +1001,7 @@ def test_effect_applied_phase_subtitles_a_lifespan_effect_and_an_indefinite_batt
     scene._phases_for(indefinite_event)[0].on_start()
     assert scene._announcement is not None
     assert scene._announcement.card is not None
-    assert scene._announcement.card.subtitle == "Until battle ends"
+    assert scene._announcement.card.subtitle == "Player — Until battle ends"
 
 
 def test_effect_applied_phase_is_suppressed_when_the_effect_is_already_active_in_the_same_category() -> None:
@@ -1035,7 +1035,7 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
 
     assert scene._announcement == Announcement(
         text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
-        card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="Wears off"),
+        card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="Player — Wears off"),
     )
 
 
@@ -1087,7 +1087,8 @@ def test_draw_does_not_raise_with_an_effect_card_announcement_set() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene._announcement = Announcement(
-        text="Lowers attack", card=EffectCard(title="Runt", icon=TextBuffIcon(EffectName.RUNT), subtitle="3 turns")
+        text="Lowers attack",
+        card=EffectCard(title="Runt", icon=TextBuffIcon(EffectName.RUNT), subtitle="Player — 3 turns"),
     )
 
     scene.draw(pygame.Surface((800, 600)))
@@ -1103,7 +1104,7 @@ def test_draw_renders_the_effect_cards_icon_when_set() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene._announcement = Announcement(
-        text="Lowers attack", card=EffectCard(title="Runt", icon=_SpyIcon(), subtitle="3 turns")
+        text="Lowers attack", card=EffectCard(title="Runt", icon=_SpyIcon(), subtitle="Player — 3 turns")
     )
 
     scene.draw(pygame.Surface((800, 600)))
