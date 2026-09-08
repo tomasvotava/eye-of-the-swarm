@@ -35,8 +35,11 @@ from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
 from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
+    _ANNOUNCEMENT_ICON_SCALE,
+    _ANNOUNCEMENT_ICON_SIZE,
     _BAR_HEIGHT,
     _COMBATANT_SCALE_FACTOR,
     _FONT_SIZE,
@@ -48,11 +51,13 @@ from eye.gui.scenes.combat import (
     CombatAnimationState,
     CombatScene,
     DisplayedCombatantState,
+    EffectCard,
     Phase,
     _build_combat_animator,
     _DeadVariant,
     _describe_event,
     _hp_tween_phase,
+    _label,
     _LoadedCombatAnimationState,
     _resolve_enemy_sprite_key,
 )
@@ -61,7 +66,7 @@ from eye.gui.tuning import (
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
-from eye.gui.widgets import BuffIcon, TextBuffIcon
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, TextBuffIcon
 from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
@@ -371,7 +376,7 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
     # itself render wider than one _BUFF_ICON_STEP. The row now reads DisplayedCombatantState
     # (ADR 0013), so populate that snapshot directly rather than live Combatant.effects.
     for effect in (EffectName.RUNT, EffectName.WILTY, EffectName.FIBROUS):
-        scene._enemy_displayed.active_effects.add(effect)
+        scene._enemy_displayed.active_effects.add((EffectCategory.BATTLE, effect))
     surface = pygame.Surface((800, 600))
     surface.fill("black")
 
@@ -834,7 +839,7 @@ def test_buff_icon_row_renders_the_displayed_snapshot_not_live_combatant_state()
     scene.draw(pygame.Surface((800, 600)))
     assert EffectName.FIBROUS not in rendered  # displayed snapshot hasn't been told about it yet
 
-    scene._player_displayed.active_effects.add(EffectName.FIBROUS)
+    scene._player_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.FIBROUS))
     scene.draw(pygame.Surface((800, 600)))
 
     assert EffectName.FIBROUS in rendered
@@ -846,22 +851,62 @@ def test_effect_applied_phase_adds_to_the_displayed_active_effects_on_start() ->
     event = EffectApplied(
         target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
     )
-    assert EffectName.FIBROUS not in scene._player_displayed.active_effects
+    key = (EffectCategory.BATTLE, EffectName.FIBROUS)
+    assert key not in scene._player_displayed.active_effects
 
     scene._phases_for(event)[0].on_start()
 
-    assert EffectName.FIBROUS in scene._player_displayed.active_effects
+    assert key in scene._player_displayed.active_effects
 
 
 def test_effect_expired_phase_discards_from_the_displayed_active_effects_on_start() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._player_displayed.active_effects.add(EffectName.FIBROUS)
+    key = (EffectCategory.BATTLE, EffectName.FIBROUS)
+    scene._player_displayed.active_effects.add(key)
     event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
 
     scene._phases_for(event)[0].on_start()
 
-    assert EffectName.FIBROUS not in scene._player_displayed.active_effects
+    assert key not in scene._player_displayed.active_effects
+
+
+def test_effect_applied_phase_is_not_suppressed_for_a_different_category_of_the_same_effect() -> None:
+    # PROJECT_BRIEF.md §5.6: refresh-not-stack is scoped *per category* -- a Lifespan Fibrous
+    # already active does not suppress a genuinely new Battle-scoped Fibrous application (the
+    # brief's own worked example: both apply at once and combine additively).
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.active_effects.add((EffectCategory.LIFESPAN, EffectName.FIBROUS))
+    event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
+    )
+
+    phases = scene._phases_for(event)
+
+    assert len(phases) == 1
+    phases[0].on_start()
+    assert scene._player_displayed.active_effects == {
+        (EffectCategory.LIFESPAN, EffectName.FIBROUS),
+        (EffectCategory.BATTLE, EffectName.FIBROUS),
+    }
+
+
+def test_effect_expired_phase_only_discards_the_battle_scoped_key() -> None:
+    # A Lifespan instance of the same effect name must survive a Battle instance's expiry -- the
+    # HUD icon (keyed by name only, see _draw_buff_icons) stays showing for as long as any
+    # category-scoped instance remains.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.active_effects = {
+        (EffectCategory.LIFESPAN, EffectName.FIBROUS),
+        (EffectCategory.BATTLE, EffectName.FIBROUS),
+    }
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._player_displayed.active_effects == {(EffectCategory.LIFESPAN, EffectName.FIBROUS)}
 
 
 def test_meter_bar_renders_the_displayed_snapshot_not_live_combatant_state() -> None:
@@ -910,7 +955,7 @@ def test_meter_filled_and_meter_consumed_tween_the_displayed_meter_over_the_hp_t
     assert displayed.meter == 0.0
 
 
-def test_effect_applied_phase_sets_an_announcement_with_the_buff_icon_and_describe_event_text() -> None:
+def test_effect_applied_phase_sets_an_effect_card_announcement_with_title_and_subtitle() -> None:
     rendered_icons: list[BuffIcon] = []
 
     def _spy_factory(effect: EffectName) -> BuffIcon:
@@ -930,14 +975,50 @@ def test_effect_applied_phase_sets_an_announcement_with_the_buff_icon_and_descri
     assert phases[0].duration_seconds == BATTLE_ANNOUNCEMENT_HOLD_SECONDS
     assert scene._announcement is None  # not set until on_start actually fires
     phases[0].on_start()
-    assert scene._announcement is not None
-    assert scene._announcement.text == _describe_event(event)
-    assert scene._announcement.icon is rendered_icons[0]
+    assert scene._announcement == Announcement(
+        text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
+        card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="3 turns"),
+    )
     phases[0].on_complete()
     assert scene._announcement is None
 
 
-def test_effect_expired_phase_sets_an_announcement_with_the_buff_icon() -> None:
+def test_effect_applied_phase_subtitles_a_lifespan_effect_and_an_indefinite_battle_effect() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    lifespan_event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.RESONANCE, category=EffectCategory.LIFESPAN, remaining_turns=None
+    )
+    scene._phases_for(lifespan_event)[0].on_start()
+    assert scene._announcement is not None
+    assert scene._announcement.card is not None
+    assert scene._announcement.card.subtitle == "This generation"
+
+    indefinite_event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE, remaining_turns=None
+    )
+    scene._phases_for(indefinite_event)[0].on_start()
+    assert scene._announcement is not None
+    assert scene._announcement.card is not None
+    assert scene._announcement.card.subtitle == "Until battle ends"
+
+
+def test_effect_applied_phase_is_suppressed_when_the_effect_is_already_active_in_the_same_category() -> None:
+    # PROJECT_BRIEF.md §5.6: reapplying an already-active effect refreshes it rather than
+    # stacking -- repeatedly triggering the same debuff (e.g. Barbed Struggle every turn) must not
+    # re-announce it each time, only the first time it actually becomes active in that category.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.RUNT))
+    event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.RUNT, category=EffectCategory.BATTLE, remaining_turns=3
+    )
+
+    assert scene._phases_for(event) == []
+
+
+def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_subtitle() -> None:
     rendered_icons: list[BuffIcon] = []
 
     def _spy_factory(effect: EffectName) -> BuffIcon:
@@ -952,10 +1033,13 @@ def test_effect_expired_phase_sets_an_announcement_with_the_buff_icon() -> None:
     phases = scene._phases_for(event)
     phases[0].on_start()
 
-    assert scene._announcement == Announcement(text=_describe_event(event), icon=rendered_icons[0])
+    assert scene._announcement == Announcement(
+        text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
+        card=EffectCard(title="Fibrous", icon=rendered_icons[0], subtitle="Wears off"),
+    )
 
 
-def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_icon() -> None:
+def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_card() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     events: tuple[BattleEvent, ...] = (
@@ -968,7 +1052,7 @@ def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_icon()
         phases = scene._phases_for(event)
         assert len(phases) == 1
         phases[0].on_start()
-        assert scene._announcement == Announcement(text=_describe_event(event), icon=None)
+        assert scene._announcement == Announcement(text=_describe_event(event))
         phases[0].on_complete()
         assert scene._announcement is None
 
@@ -991,15 +1075,25 @@ def test_announcement_phase_holds_for_the_tuned_duration_via_the_driver() -> Non
     assert scene._announcement is None
 
 
-def test_draw_does_not_raise_with_an_announcement_set() -> None:
+def test_draw_does_not_raise_with_a_plain_announcement_set() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._announcement = Announcement(text="Test announcement", icon=TextBuffIcon(EffectName.FIBROUS))
+    scene._announcement = Announcement(text="Test announcement")
 
     scene.draw(pygame.Surface((800, 600)))
 
 
-def test_draw_renders_the_announcements_icon_when_set() -> None:
+def test_draw_does_not_raise_with_an_effect_card_announcement_set() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._announcement = Announcement(
+        text="Lowers attack", card=EffectCard(title="Runt", icon=TextBuffIcon(EffectName.RUNT), subtitle="3 turns")
+    )
+
+    scene.draw(pygame.Surface((800, 600)))
+
+
+def test_draw_renders_the_effect_cards_icon_when_set() -> None:
     render_calls: list[tuple[pygame.Surface, pygame.Vector2]] = []
 
     class _SpyIcon:
@@ -1008,8 +1102,21 @@ def test_draw_renders_the_announcements_icon_when_set() -> None:
 
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._announcement = Announcement(text="Test announcement", icon=_SpyIcon())
+    scene._announcement = Announcement(
+        text="Lowers attack", card=EffectCard(title="Runt", icon=_SpyIcon(), subtitle="3 turns")
+    )
 
     scene.draw(pygame.Surface((800, 600)))
 
     assert len(render_calls) == 1
+
+
+def test_effect_card_title_fits_the_real_window_width_at_the_default_icon_scale() -> None:
+    # Title font size is derived from the icon box (_ANNOUNCEMENT_ICON_SCALE * _ANNOUNCEMENT_ICON_
+    # SIZE // 2) rather than independently tuned, so a scale bump could silently make the widest
+    # effect name overflow the real 640-wide window -- guard the widest name at today's default.
+    widest_label = max((_label(effect) for effect in EffectName), key=len)
+    icon_box_size = _ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE
+    title_surface = get_font(GameFont.ITHACA, icon_box_size // 2).render(widest_label, True, "white")
+
+    assert title_surface.get_width() <= 640
