@@ -39,6 +39,22 @@ class SpriteKey(StrEnum):
     GOLEM = "golem"
     PHIDIZVIK = "phidizvik"
     TUMBLEWEED = "tumbleweed"
+    # One member per EffectName (widgets.py's SpriteBuffIcon maps between them) -- RESONANCE has
+    # no art yet, and gets no special treatment: it falls back to the placeholder shape below like
+    # any other key with no sprite.png on disk (ADR 0011's per-key, not-all-or-nothing contract).
+    EFFECT_TOXICITY = "effect_toxicity"
+    EFFECT_NOURISHED = "effect_nourished"
+    EFFECT_CLOUDED_JUDGEMENT = "effect_clouded_judgement"
+    EFFECT_LIGNEOUS_PERIDERM = "effect_ligneous_periderm"
+    EFFECT_SPLINTERED = "effect_splintered"
+    EFFECT_SPIKY_SKIN = "effect_spiky_skin"
+    EFFECT_ADRENALINE = "effect_adrenaline"
+    EFFECT_FIBROUS = "effect_fibrous"
+    EFFECT_RUNT = "effect_runt"
+    EFFECT_UPROOTED = "effect_uprooted"
+    EFFECT_WILTY = "effect_wilty"
+    EFFECT_VEGETATIVE = "effect_vegetative"
+    EFFECT_RESONANCE = "effect_resonance"
 
 
 class SpriteAtlas:
@@ -120,6 +136,19 @@ _PLACEHOLDER_SHAPES: Mapping[SpriteKey, _PlaceholderShape] = {
     SpriteKey.GOLEM: _PlaceholderShape(color="slategray", is_circle=True),
     SpriteKey.PHIDIZVIK: _PlaceholderShape(color="teal", is_circle=True),
     SpriteKey.TUMBLEWEED: _PlaceholderShape(color="peru", is_circle=True),
+    SpriteKey.EFFECT_TOXICITY: _PlaceholderShape(color="darkorchid", is_circle=False),
+    SpriteKey.EFFECT_NOURISHED: _PlaceholderShape(color="mediumseagreen", is_circle=False),
+    SpriteKey.EFFECT_CLOUDED_JUDGEMENT: _PlaceholderShape(color="slateblue", is_circle=False),
+    SpriteKey.EFFECT_LIGNEOUS_PERIDERM: _PlaceholderShape(color="darkgoldenrod", is_circle=False),
+    SpriteKey.EFFECT_SPLINTERED: _PlaceholderShape(color="indianred", is_circle=False),
+    SpriteKey.EFFECT_SPIKY_SKIN: _PlaceholderShape(color="crimson", is_circle=False),
+    SpriteKey.EFFECT_ADRENALINE: _PlaceholderShape(color="orangered", is_circle=False),
+    SpriteKey.EFFECT_FIBROUS: _PlaceholderShape(color="chartreuse", is_circle=False),
+    SpriteKey.EFFECT_RUNT: _PlaceholderShape(color="rosybrown", is_circle=False),
+    SpriteKey.EFFECT_UPROOTED: _PlaceholderShape(color="deepskyblue", is_circle=False),
+    SpriteKey.EFFECT_WILTY: _PlaceholderShape(color="dimgray", is_circle=False),
+    SpriteKey.EFFECT_VEGETATIVE: _PlaceholderShape(color="olivedrab", is_circle=False),
+    SpriteKey.EFFECT_RESONANCE: _PlaceholderShape(color="gold", is_circle=False),
 }
 
 

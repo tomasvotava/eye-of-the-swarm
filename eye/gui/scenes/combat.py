@@ -47,23 +47,29 @@ from eye.gui.tuning import (
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, TextBuffIcon
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon
 from eye.session.generation import Generation
 
 _FONT_SIZE = 20
 _ANNOUNCEMENT_FONT_SIZE = 28
 _ANNOUNCEMENT_SUBTITLE_FONT_SIZE = 14
-# Real effect icon art is planned at 64x64; the scale factor is a separate knob from
-# _COMBATANT_SCALE_FACTOR (defaults to the same value) so it can be tuned independently of
-# combatant sprites -- also retypesets the effect-card title, whose font size is deliberately
-# derived from this box's height (see _draw_effect_announcement) rather than tuned separately.
-_ANNOUNCEMENT_ICON_SIZE = 64
-_ANNOUNCEMENT_ICON_SCALE = 3
+# SIZE is the shipped effect-icon art's native pixel size (210x210); SCALE is a separate knob
+# from _COMBATANT_SCALE_FACTOR so the announcement box can be tuned independently of combatant
+# sprites. The two together set icon_box_size, which also retypesets the effect-card title (its
+# font size is derived from this box's height in _draw_effect_announcement, not tuned separately)
+# -- so SIZE is NOT safe to bump to match a future re-export at a different native resolution
+# without re-checking layout: raising icon_box_size raises the title font too, and can push a
+# label past the real 640px window width. 0.9 (not 1.0) is what keeps every effect label under
+# that width today -- test_effect_card_title_fits_the_real_window_width_at_the_default_icon_scale
+# checks every label, not just an assumed-widest one; re-run it after changing either constant.
+_ANNOUNCEMENT_ICON_SIZE = 210
+_ANNOUNCEMENT_ICON_SCALE = 0.9
 _MARGIN = 8
 _GAP = 4
 _BAR_WIDTH = 230
 _BAR_HEIGHT = 16
 _METER_HEIGHT = 8
+_BUFF_ICON_SIZE = 64
 _BUFF_ICON_STEP = 90
 _COMBATANT_SCALE_FACTOR = 3
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
@@ -325,10 +331,18 @@ class CombatScene:
         generation: Generation,
         encounter: EnemyEncountered,
         atlas: SpriteAtlas,
-        buff_icon_factory: Callable[[EffectName], BuffIcon] = TextBuffIcon,
+        buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
     ) -> None:
         self._generation = generation
-        self._buff_icon_factory = buff_icon_factory
+        if buff_icon_factory is not None:
+            self._buff_icon_factory = buff_icon_factory
+        else:
+            # Built once per effect, not per render() call: SpriteBuffIcon caches its scaled
+            # surfaces on itself, which only pays off if the same instance is reused across
+            # frames rather than reconstructed from the atlas every time (ADR 0011's
+            # scale_sprite precedent -- a fixed scale is computed once, not every draw() call).
+            sprite_icons = {effect: SpriteBuffIcon(atlas, effect) for effect in EffectName}
+            self._buff_icon_factory = sprite_icons.__getitem__
         self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
         self._battle: Battle = generation.start_battle(encounter)
         self._pending_query: PlayerTurnNeedsAction | None = None
@@ -710,13 +724,12 @@ class CombatScene:
         active = [name for name in EffectName if name in active_names]
         x, y = pos
         if mirrored:
-            # pos.x is the row's right edge on the mirrored side; the BuffIcon protocol exposes
-            # no width to right-align each icon individually, so shift the whole row's start left
-            # by its total width instead and step forward as usual -- the row still ends flush at
-            # pos.x rather than growing off the sprite/surface edge.
-            x -= _BUFF_ICON_STEP * len(active)
+            # pos.x is the row's right edge on the mirrored side -- shift the whole row's start
+            # left so the last icon's own right edge (start + (n-1) steps + one icon's width)
+            # lands exactly at pos.x, then step forward as usual.
+            x -= _BUFF_ICON_STEP * (len(active) - 1) + _BUFF_ICON_SIZE
         for name in active:
-            self._buff_icon_factory(name).render(surface, pygame.Vector2(x, y))
+            self._buff_icon_factory(name).render(surface, pygame.Vector2(x, y), _BUFF_ICON_SIZE)
             x += _BUFF_ICON_STEP
 
     def _draw_menu(self, surface: pygame.Surface) -> None:
@@ -753,7 +766,7 @@ class CombatScene:
         # Card layout: title (largest) / icon box / prose (middle) / subtitle (smallest), stacked and
         # centered as one block. Title font size is half the icon box's height, so it stays
         # proportional if _ANNOUNCEMENT_ICON_SCALE changes rather than needing its own tuned constant.
-        icon_box_size = _ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE
+        icon_box_size = int(_ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE)
         title_font = get_font(GameFont.ITHACA, icon_box_size // 2)
         title_surface = title_font.render(card.title, True, _TEXT_COLOR)
         prose_surface = get_font(GameFont.ITHACA, _ANNOUNCEMENT_FONT_SIZE).render(prose, True, _TEXT_COLOR)
@@ -769,11 +782,7 @@ class CombatScene:
             center_x - icon_box_size // 2, top + title_surface.height + _GAP, icon_box_size, icon_box_size
         )
         pygame.draw.rect(surface, _TEXT_COLOR, icon_rect, width=2)
-        # BuffIcon.render's pos is a blit top-left, not a center -- offset by half the HUD row's
-        # own nominal icon size (the only size the protocol implies, per _draw_buff_icons) so a
-        # TextBuffIcon-sized placeholder lands roughly centered in the box on both axes.
-        icon_pos = pygame.Vector2(icon_rect.centerx - _BUFF_ICON_STEP // 2, icon_rect.centery - _FONT_SIZE // 2)
-        card.icon.render(surface, icon_pos)
+        card.icon.render(surface, pygame.Vector2(icon_rect.topleft), icon_box_size)
 
         prose_top = icon_rect.bottom + _GAP
         surface.blit(prose_surface, (center_x - prose_surface.width // 2, prose_top))

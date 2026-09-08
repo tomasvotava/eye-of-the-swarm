@@ -77,6 +77,24 @@ def test_build_art_atlas_falls_back_to_the_placeholder_when_the_directory_has_no
     assert atlas.get(SpriteKey.BRAMBLE).get_size() == (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
 
 
+def test_build_art_atlas_loads_an_effect_sprite_at_its_native_size(tmp_path: Path) -> None:
+    # Real effect-icon art ships at 210x210 -- build_art_atlas loads it at its native size (any
+    # resizing to a render target happens at render time, per SpriteBuffIcon).
+    _write_static_sprite(tmp_path / SpriteKey.EFFECT_FIBROUS.value, size=(210, 210))
+
+    atlas = build_art_atlas(tmp_path)
+
+    assert atlas.get(SpriteKey.EFFECT_FIBROUS).get_size() == (210, 210)
+
+
+def test_build_art_atlas_falls_back_to_the_placeholder_for_an_effect_with_no_art_yet(tmp_path: Path) -> None:
+    # An effect key with no sprite folder on disk (RESONANCE, today) gets no special-casing --
+    # just the ordinary missing-directory fallback every other key already has (ADR 0011).
+    atlas = build_art_atlas(tmp_path)
+
+    assert atlas.get(SpriteKey.EFFECT_RESONANCE).get_size() == (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+
+
 def test_build_art_atlas_resolves_a_clip_pair_via_get_animation_set(tmp_path: Path) -> None:
     _write_clip(tmp_path / SpriteKey.BRAMBLE.value, "idle", frame_count=3, fps=8)
 

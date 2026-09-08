@@ -38,8 +38,10 @@ from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, 
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
+    _ANNOUNCEMENT_FONT_SIZE,
     _ANNOUNCEMENT_ICON_SCALE,
     _ANNOUNCEMENT_ICON_SIZE,
+    _ANNOUNCEMENT_SUBTITLE_FONT_SIZE,
     _BAR_HEIGHT,
     _COMBATANT_SCALE_FACTOR,
     _FONT_SIZE,
@@ -66,7 +68,7 @@ from eye.gui.tuning import (
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, TextBuffIcon
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon, TextBuffIcon
 from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
@@ -371,10 +373,9 @@ def test_draw_anchors_the_player_left_and_the_enemy_right() -> None:
 def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    # Short-labelled effects, so the assertion below exercises the row's positioning rather than
-    # a pre-existing, orthogonal limitation where a long label (e.g. "Clouded Judgement") can
-    # itself render wider than one _BUFF_ICON_STEP. The row now reads DisplayedCombatantState
-    # (ADR 0013), so populate that snapshot directly rather than live Combatant.effects.
+    # SpriteBuffIcon (the default factory) renders every icon at a fixed size regardless of the
+    # effect's label, so these three aren't chosen for label width -- just to populate
+    # DisplayedCombatantState (ADR 0013) directly rather than live Combatant.effects.
     for effect in (EffectName.RUNT, EffectName.WILTY, EffectName.FIBROUS):
         scene._enemy_displayed.active_effects.add((EffectCategory.BATTLE, effect))
     surface = pygame.Surface((800, 600))
@@ -382,8 +383,9 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
 
     scene.draw(surface)
 
-    enemy_sprite = build_placeholder_atlas().get(scene._enemy_sprite_key)
-    sprite_x = surface.get_width() - _MARGIN - enemy_sprite.get_width()
+    # Mirrors _draw_combatant's own bar_right formula -- the mirrored row's anchor (pos.x), not
+    # the enemy sprite's position (which sits at a different x, 3/4-width-anchored).
+    icon_row_x = (surface.get_width() - _MARGIN) - _GAP
     icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
     # A generous band around the icon row's y-position, well clear of the menu/log which anchor
     # to the bottom of the surface -- isolates the icon row from the sprite/bars drawn above it.
@@ -392,9 +394,10 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
     icon_columns = [x for x in range(surface.get_width()) if any(surface.get_at((x, y)) != black for y in icon_band)]
 
     assert icon_columns, "expected the enemy's buff icons to render"
-    # The mirrored row anchors flush against the sprite instead of growing rightward past it --
-    # a small margin covers anti-aliased glyph edges, not a full icon-step's worth of drift.
-    assert max(icon_columns) < sprite_x + _GAP + 20
+    assert max(icon_columns) < surface.get_width()
+    # The mirrored row's own right edge lands exactly flush at icon_row_x -- deterministic since
+    # SpriteBuffIcon blits a hard-edged sprite, not anti-aliased text.
+    assert max(icon_columns) == icon_row_x - 1
 
 
 _ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded, HitReflected, SelfDamageTaken)
@@ -819,6 +822,15 @@ def test_hp_tween_phase_interpolates_and_snaps_exactly_on_completion() -> None:
     assert displayed.hp == 60.0
 
 
+def test_combat_scene_defaults_to_sprite_buff_icon_when_no_factory_is_given() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    icon = scene._buff_icon_factory(EffectName.FIBROUS)
+
+    assert isinstance(icon, SpriteBuffIcon)
+
+
 def test_buff_icon_row_renders_the_displayed_snapshot_not_live_combatant_state() -> None:
     # The buff row now reads DisplayedCombatantState.active_effects (ADR 0013), kept in sync by
     # _effect_announcement_phase's on_start -- mirrors
@@ -1094,30 +1106,55 @@ def test_draw_does_not_raise_with_an_effect_card_announcement_set() -> None:
     scene.draw(pygame.Surface((800, 600)))
 
 
-def test_draw_renders_the_effect_cards_icon_when_set() -> None:
-    render_calls: list[tuple[pygame.Surface, pygame.Vector2]] = []
+def test_draw_renders_the_effect_cards_icon_at_the_icon_boxs_top_left_and_size() -> None:
+    render_calls: list[tuple[pygame.Vector2, int]] = []
 
     class _SpyIcon:
-        def render(self, surface: pygame.Surface, pos: pygame.Vector2) -> None:
-            render_calls.append((surface, pos))
+        def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
+            render_calls.append((pos, size))
 
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene._announcement = Announcement(
         text="Lowers attack", card=EffectCard(title="Runt", icon=_SpyIcon(), subtitle="Player — 3 turns")
     )
+    surface = pygame.Surface((800, 600))
 
-    scene.draw(pygame.Surface((800, 600)))
+    scene.draw(surface)
+
+    # Mirrors _draw_effect_announcement's own geometry: the icon must fill the drawn box exactly
+    # (position and size), not the old TextBuffIcon-sized, roughly-centered placeholder offset.
+    icon_box_size = int(_ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE)
+    title_height = get_font(GameFont.ITHACA, icon_box_size // 2).render("Runt", True, "white").get_height()
+    prose_height = (
+        get_font(GameFont.ITHACA, _ANNOUNCEMENT_FONT_SIZE).render("Lowers attack", True, "white").get_height()
+    )
+    subtitle_height = (
+        get_font(GameFont.ITHACA, _ANNOUNCEMENT_SUBTITLE_FONT_SIZE)
+        .render("Player — 3 turns", True, "white")
+        .get_height()
+    )
+    block_height = title_height + icon_box_size + prose_height + subtitle_height + _GAP * 3
+    center_x = surface.get_width() // 2
+    top = surface.get_height() // 2 - block_height // 2
+    expected_pos = pygame.Vector2(center_x - icon_box_size // 2, top + title_height + _GAP)
+
+    assert len(render_calls) == 1
+    pos, size = render_calls[0]
+    assert pos == expected_pos
+    assert size == icon_box_size
 
     assert len(render_calls) == 1
 
 
 def test_effect_card_title_fits_the_real_window_width_at_the_default_icon_scale() -> None:
     # Title font size is derived from the icon box (_ANNOUNCEMENT_ICON_SCALE * _ANNOUNCEMENT_ICON_
-    # SIZE // 2) rather than independently tuned, so a scale bump could silently make the widest
-    # effect name overflow the real 640-wide window -- guard the widest name at today's default.
-    widest_label = max((_label(effect) for effect in EffectName), key=len)
-    icon_box_size = _ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE
-    title_surface = get_font(GameFont.ITHACA, icon_box_size // 2).render(widest_label, True, "white")
+    # SIZE // 2) rather than independently tuned, so a scale bump could silently make an effect
+    # name overflow the real 640-wide window -- guard every label at today's default, not just an
+    # assumed-widest one (character count doesn't predict rendered width in a proportional font).
+    icon_box_size = int(_ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE)
+    font = get_font(GameFont.ITHACA, icon_box_size // 2)
 
-    assert title_surface.get_width() <= 640
+    for effect in EffectName:
+        title_surface = font.render(_label(effect), True, "white")
+        assert title_surface.get_width() <= 640, _label(effect)
