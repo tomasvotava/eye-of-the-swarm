@@ -78,6 +78,8 @@ from eye.gui.tuning import (
     BATTLE_ANNOUNCEMENT_HOLD_SECONDS,
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS,
+    BATTLE_HIT_FLASH_DURATION_SECONDS,
+    BATTLE_HIT_FLASH_STRENGTH,
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
@@ -1631,5 +1633,84 @@ def test_draw_does_not_raise_while_a_swing_highlight_is_active() -> None:
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene._phases_for(_hit_landed(scene))[0].on_start()
     scene._elapsed_seconds = BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS / 2  # peak of the pulse
+
+    scene.draw(pygame.Surface((800, 600)))
+
+
+def test_swing_phase_flashes_the_target_only_and_clears_it_when_the_swing_completes() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    swing = scene._phases_for(_hit_landed(scene))[0]
+    assert scene._enemy_displayed.hit_flash_started_at is None  # not set until on_start actually fires
+
+    swing.on_start()
+    assert scene._enemy_displayed.hit_flash_started_at == scene._elapsed_seconds
+    assert scene._player_displayed.hit_flash_started_at is None  # the attacker is not being hit
+
+    swing.on_complete()
+    assert scene._enemy_displayed.hit_flash_started_at is None
+
+
+def test_reaction_phase_flashes_the_flinching_combatant() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    reaction = scene._reaction_phase(scene._battle.player)
+    reaction.on_start()
+    assert scene._player_displayed.hit_flash_started_at == scene._elapsed_seconds
+    assert scene._enemy_displayed.hit_flash_started_at is None
+
+    reaction.on_complete()
+    assert scene._player_displayed.hit_flash_started_at is None
+
+
+def test_overlay_phase_inherits_the_reactions_flash() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    overlay_phase = scene._phases_for(_dot_ticked(scene))[0]
+    overlay_phase.on_start()
+    assert scene._player_displayed.hit_flash_started_at == scene._elapsed_seconds
+
+    overlay_phase.on_complete()
+    assert scene._player_displayed.hit_flash_started_at is None
+
+
+def test_hit_flash_peaks_on_impact_and_decays_over_its_own_duration() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    displayed = scene._player_displayed
+    assert scene._hit_flash_strength(displayed) == 0.0  # nothing lit before a hit lands
+
+    scene._reaction_phase(scene._battle.player).on_start()
+    assert scene._hit_flash_strength(displayed) == pytest.approx(BATTLE_HIT_FLASH_STRENGTH)
+
+    scene._elapsed_seconds += BATTLE_HIT_FLASH_DURATION_SECONDS / 2
+    assert 0.0 < scene._hit_flash_strength(displayed) < BATTLE_HIT_FLASH_STRENGTH
+
+    scene._elapsed_seconds += BATTLE_HIT_FLASH_DURATION_SECONDS / 2
+    assert scene._hit_flash_strength(displayed) == 0.0
+
+
+def test_drawing_a_hit_flash_leaves_the_animators_cached_frame_untouched(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
+    atlas = build_art_atlas(tmp_path)
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene._reaction_phase(scene._battle.player).on_start()
+    frame = scene._current_sprite(scene._battle.player)
+    pixels_before = pygame.image.tobytes(frame, "RGBA")
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert scene._hit_flash_strength(scene._player_displayed) > 0.0  # the flash really was drawn
+    assert pygame.image.tobytes(frame, "RGBA") == pixels_before
+
+
+def test_draw_does_not_raise_while_a_hit_flash_is_active() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._phases_for(_hit_landed(scene))[0].on_start()
 
     scene.draw(pygame.Surface((800, 600)))

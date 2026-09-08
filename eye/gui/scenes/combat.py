@@ -49,6 +49,9 @@ from eye.gui.tuning import (
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_STRENGTH,
+    BATTLE_HIT_FLASH_COLOR,
+    BATTLE_HIT_FLASH_DURATION_SECONDS,
+    BATTLE_HIT_FLASH_STRENGTH,
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
@@ -264,6 +267,9 @@ class DisplayedCombatantState:
     # the one call site (Battle.resolve_enemy_turn) where the domain actually ticks Battle-scoped
     # durations, rather than reading Combatant.effects live (ADR 0013's invariant).
     remaining_turns: dict[tuple[EffectCategory, EffectName], int | None] = field(default_factory=dict)
+    # Scene-clock reading of the last impact, or None while nothing flashes. Per-combatant because
+    # PhaseFocus.receiving also covers heals, revives and deaths, which are not impacts.
+    hit_flash_started_at: float | None = None
 
 
 def _displayed_state_from(combatant: Combatant) -> DisplayedCombatantState:
@@ -360,6 +366,19 @@ def _combatant_layout(surface: pygame.Surface, *, mirrored: bool) -> CombatantLa
         bar_left=bar_left,
         bar_right=bar_right,
     )
+
+
+def _lit_by_hit_flash(sprite: pygame.Surface, strength: float) -> pygame.Surface:
+    """A copy of `sprite` with `strength` (0-1) of `BATTLE_HIT_FLASH_COLOR` added to its pixels.
+    Copied because an animator's frames are shared by every draw of that clip."""
+    color = pygame.Color(BATTLE_HIT_FLASH_COLOR)
+    lit = sprite.copy()
+    # RGB_ADD, not RGBA_ADD: adding alpha too would light up the sprite's transparent margin.
+    lit.fill(
+        (round(color.r * strength), round(color.g * strength), round(color.b * strength)),
+        special_flags=pygame.BLEND_RGB_ADD,
+    )
+    return lit
 
 
 @dataclass(frozen=True, slots=True)
@@ -588,14 +607,18 @@ class CombatScene:
         source_duration = source_animator.duration_of(CombatAnimationState.ATTACK) if source_animator else 0.0
         target_duration = target_animator.duration_of(CombatAnimationState.HIT) if target_animator else 0.0
 
+        target_displayed = self._displayed_for(target)
+
         def on_start() -> None:
             self._phase_focus = PhaseFocus(acting=source, receiving=target)
+            target_displayed.hit_flash_started_at = self._elapsed_seconds
             if source_animator is not None:
                 source_animator.set_state(CombatAnimationState.ATTACK)
             if target_animator is not None:
                 target_animator.set_state(CombatAnimationState.HIT)
 
         def on_complete() -> None:
+            target_displayed.hit_flash_started_at = None
             if source_animator is not None:
                 source_animator.set_state(CombatAnimationState.IDLE)
             if target_animator is not None:
@@ -607,13 +630,16 @@ class CombatScene:
         # Target-only treatment for a reflect/recoil hit (ADR 0013) -- no attacker swing to drive.
         animator = self._animator_for(combatant)
         duration = animator.duration_of(CombatAnimationState.HIT) if animator else 0.0
+        displayed = self._displayed_for(combatant)
 
         def on_start() -> None:
             self._phase_focus = PhaseFocus(receiving=combatant)
+            displayed.hit_flash_started_at = self._elapsed_seconds
             if animator is not None:
                 animator.set_state(CombatAnimationState.HIT)
 
         def on_complete() -> None:
+            displayed.hit_flash_started_at = None
             if animator is not None:
                 animator.set_state(CombatAnimationState.IDLE)
 
@@ -795,6 +821,15 @@ class CombatScene:
             return BATTLE_ACTING_HIGHLIGHT_COLOR
         return None
 
+    def _hit_flash_strength(self, displayed: DisplayedCombatantState) -> float:
+        """How hard `displayed`'s sprite is lit this frame: peaks on impact, falls linearly to 0."""
+        if displayed.hit_flash_started_at is None:
+            return 0.0
+        elapsed = self._elapsed_seconds - displayed.hit_flash_started_at
+        if elapsed >= BATTLE_HIT_FLASH_DURATION_SECONDS:
+            return 0.0
+        return BATTLE_HIT_FLASH_STRENGTH * (1.0 - elapsed / BATTLE_HIT_FLASH_DURATION_SECONDS)
+
     def _pulse_mix(self) -> float:
         """How far a highlighted HP bar's fill sits toward its role colour this frame."""
         cycles = self._elapsed_seconds / BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS
@@ -810,7 +845,9 @@ class CombatScene:
         font = get_font(GameFont.ITHACA, _FONT_SIZE)
         sprite = self._current_sprite(combatant)
         top = _MARGIN
-        surface.blit(sprite, layout.sprite_topleft(sprite))
+        flash_strength = self._hit_flash_strength(displayed)
+        drawn_sprite = _lit_by_hit_flash(sprite, flash_strength) if flash_strength > 0.0 else sprite
+        surface.blit(drawn_sprite, layout.sprite_topleft(sprite))
 
         # Steady on the name (who), pulsing on the HP bar (the value about to move).
         highlight = self._highlight_color_for(combatant)
