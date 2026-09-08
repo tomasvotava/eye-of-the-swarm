@@ -314,6 +314,44 @@ def _meter_tween_phase(displayed: DisplayedCombatantState, end_meter: int) -> Ph
 
 
 @dataclass(frozen=True, slots=True)
+class CombatantLayout:
+    """Where one combatant's sprite and HUD panel sit on a surface.
+
+    `mirrored` says which of `bar_left`/`bar_right` is the panel's outer edge, and so which way
+    content anchored to the panel grows.
+    """
+
+    mirrored: bool
+    sprite_center: tuple[int, int]
+    bar_left: int
+    bar_right: int
+
+    def sprite_topleft(self, sprite: pygame.Surface) -> tuple[int, int]:
+        """Blit position that centers `sprite` on `sprite_center`."""
+        return (self.sprite_center[0] - sprite.width // 2, self.sprite_center[1] - sprite.height // 2)
+
+
+def _combatant_layout(surface: pygame.Surface, *, mirrored: bool) -> CombatantLayout:
+    # mirrored=True hangs the panel off the right edge, so the two sides face each other.
+    if mirrored:
+        sprite_center_x = surface.get_width() // 4 * 3
+        bars_x = surface.get_width() - _MARGIN
+        bar_right = bars_x - _GAP
+        bar_left = bar_right - _BAR_WIDTH
+    else:
+        sprite_center_x = surface.get_width() // 4
+        bars_x = _MARGIN
+        bar_left = bars_x + _GAP
+        bar_right = bar_left + _BAR_WIDTH
+    return CombatantLayout(
+        mirrored=mirrored,
+        sprite_center=(sprite_center_x, surface.get_height() // 2),
+        bar_left=bar_left,
+        bar_right=bar_right,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class EffectCard:
     """The title/icon/subtitle bundle for an effect-tied `Announcement` (`EffectApplied`/
     `EffectExpired`) -- bundled as one type, not three independently-optional `Announcement`
@@ -673,7 +711,7 @@ class CombatScene:
             self._player_static_sprite,
             self._player_animator,
             self._player_displayed,
-            mirrored=False,
+            _combatant_layout(surface, mirrored=False),
         )
         self._draw_combatant(
             surface,
@@ -681,7 +719,7 @@ class CombatScene:
             self._enemy_static_sprite,
             self._enemy_animator,
             self._enemy_displayed,
-            mirrored=True,
+            _combatant_layout(surface, mirrored=True),
         )
         self._draw_menu(surface)
         self._draw_announcement(surface)
@@ -693,44 +731,30 @@ class CombatScene:
         static_sprite: pygame.Surface,
         animator: Animator[CombatAnimationState] | None,
         displayed: DisplayedCombatantState,
-        *,
-        mirrored: bool,
+        layout: CombatantLayout,
     ) -> None:
-        # mirrored=True anchors the whole panel to the surface's right edge instead of the left,
-        # so the player and enemy sit on opposite sides of the screen facing each other.
         font = get_font(GameFont.ITHACA, _FONT_SIZE)
         sprite = animator.current_frame() if animator is not None else static_sprite
-        sprite_y = surface.height // 2 - sprite.height // 2
         top = _MARGIN
-        if mirrored:
-            sprite_x = surface.get_width() // 4 * 3 - sprite.width // 2
-            bars_x = surface.get_width() - _MARGIN
-            bar_right = bars_x - _GAP
-            bar_left = bar_right - _BAR_WIDTH
-        else:
-            sprite_x = surface.get_width() // 4 - sprite.width // 2
-            bars_x = _MARGIN
-            bar_left = bars_x + _GAP
-            bar_right = bar_left + _BAR_WIDTH
-        surface.blit(sprite, (sprite_x, sprite_y))
+        surface.blit(sprite, layout.sprite_topleft(sprite))
 
         name = font.render(combatant.name, True, _TEXT_COLOR)
-        name_x = bar_right - name.get_width() if mirrored else bar_left
+        name_x = layout.bar_right - name.get_width() if layout.mirrored else layout.bar_left
         surface.blit(name, (name_x, top))
 
         current_hp = max(0.0, displayed.hp)
-        hp_rect = pygame.Rect(bar_left, top + _FONT_SIZE, _BAR_WIDTH, _BAR_HEIGHT)
+        hp_rect = pygame.Rect(layout.bar_left, top + _FONT_SIZE, _BAR_WIDTH, _BAR_HEIGHT)
         self._draw_bar(surface, hp_rect, current_hp / combatant.base_stats.max_hp, _HP_COLOR)
         hp_label = font.render(f"{round(current_hp)}/{combatant.base_stats.max_hp}", True, _TEXT_COLOR)
-        hp_label_x = hp_rect.left - _GAP - hp_label.get_width() if mirrored else hp_rect.right + _GAP
+        hp_label_x = hp_rect.left - _GAP - hp_label.get_width() if layout.mirrored else hp_rect.right + _GAP
         surface.blit(hp_label, (hp_label_x, hp_rect.top))
 
-        meter_rect = pygame.Rect(bar_left, hp_rect.bottom + _GAP, _BAR_WIDTH, _METER_HEIGHT)
+        meter_rect = pygame.Rect(layout.bar_left, hp_rect.bottom + _GAP, _BAR_WIDTH, _METER_HEIGHT)
         self._draw_bar(
             surface, meter_rect, max(0.0, displayed.meter) / combatant.base_stats.meter_capacity, _METER_COLOR
         )
-        icon_row_x = bar_right if mirrored else bar_left
-        self._draw_buff_icons(surface, displayed, (icon_row_x, meter_rect.bottom + _GAP), mirrored=mirrored)
+        icon_row_x = layout.bar_right if layout.mirrored else layout.bar_left
+        self._draw_buff_icons(surface, displayed, (icon_row_x, meter_rect.bottom + _GAP), mirrored=layout.mirrored)
 
     def _draw_bar(
         self, surface: pygame.Surface, rect: pygame.Rect, ratio: float, color: pygame.typing.ColorLike

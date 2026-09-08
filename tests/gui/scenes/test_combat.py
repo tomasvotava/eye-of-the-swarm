@@ -43,6 +43,7 @@ from eye.gui.scenes.combat import (
     _ANNOUNCEMENT_ICON_SIZE,
     _ANNOUNCEMENT_SUBTITLE_FONT_SIZE,
     _BAR_HEIGHT,
+    _BAR_WIDTH,
     _BUFF_ICON_DURATION_FONT_SIZE,
     _BUFF_ICON_SIZE,
     _COMBATANT_SCALE_FACTOR,
@@ -53,11 +54,13 @@ from eye.gui.scenes.combat import (
     ACTION_KEYS,
     Announcement,
     CombatAnimationState,
+    CombatantLayout,
     CombatScene,
     DisplayedCombatantState,
     EffectCard,
     Phase,
     _build_combat_animator,
+    _combatant_layout,
     _DeadVariant,
     _describe_event,
     _hp_tween_phase,
@@ -406,12 +409,8 @@ def test_draw_anchors_the_player_left_and_the_enemy_right() -> None:
 
     player_sprite = scene._player_static_sprite
     enemy_sprite = scene._enemy_static_sprite
-    # Both sprites are non-empty placeholder shapes (a circle or rect, either way touching every
-    # edge of its own bounding box) drawn on a black background, so scanning each column for any
-    # non-black pixel locates each panel's exact left/right edge without hardcoding every
-    # sub-widget's position. Restricted to the sprites' own vertically centered band (mirrors
-    # _draw_combatant's sprite_y) so the bottom-anchored menu/log (which always render near the
-    # left edge) can't mask a regression.
+    # Placeholder sprites fill their bounding box, so the outermost non-black column is a panel's
+    # edge. Banded to the sprites' own rows so the bottom-anchored menu/log can't mask a regression.
     black = pygame.Color("black")
     sprite_height = max(player_sprite.get_height(), enemy_sprite.get_height())
     sprite_top = surface.get_height() // 2 - sprite_height // 2
@@ -420,8 +419,6 @@ def test_draw_anchors_the_player_left_and_the_enemy_right() -> None:
         x for x in range(surface.get_width()) if any(surface.get_at((x, y)) != black for y in panel_band)
     ]
     assert non_black_columns, "expected the combat scene to draw something"
-    # Mirrors _draw_combatant's own sprite_x formula: quarter-width anchored, not flush against
-    # the surface's left/right margin.
     player_x = surface.get_width() // 4 - player_sprite.get_width() // 2
     enemy_x = surface.get_width() // 4 * 3 - enemy_sprite.get_width() // 2
     assert min(non_black_columns) == player_x
@@ -441,8 +438,7 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
 
     scene.draw(surface)
 
-    # Mirrors _draw_combatant's own bar_right formula -- the mirrored row's anchor (pos.x), not
-    # the enemy sprite's position (which sits at a different x, 3/4-width-anchored).
+    # The mirrored row anchors at bar_right, which is not where the enemy sprite sits.
     icon_row_x = (surface.get_width() - _MARGIN) - _GAP
     icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
     # A generous band around the icon row's y-position, well clear of the menu/log which anchor
@@ -456,6 +452,33 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
     # The mirrored row's own right edge lands exactly flush at icon_row_x -- deterministic since
     # SpriteBuffIcon blits a hard-edged sprite, not anti-aliased text.
     assert max(icon_columns) == icon_row_x - 1
+
+
+def test_combatant_layout_hangs_a_mirrored_panel_off_the_opposite_edge() -> None:
+    surface = pygame.Surface((800, 600))
+
+    player = _combatant_layout(surface, mirrored=False)
+    enemy = _combatant_layout(surface, mirrored=True)
+
+    assert player == CombatantLayout(
+        mirrored=False,
+        sprite_center=(surface.get_width() // 4, surface.get_height() // 2),
+        bar_left=_MARGIN + _GAP,
+        bar_right=_MARGIN + _GAP + _BAR_WIDTH,
+    )
+    assert enemy == CombatantLayout(
+        mirrored=True,
+        sprite_center=(surface.get_width() // 4 * 3, surface.get_height() // 2),
+        bar_left=surface.get_width() - _MARGIN - _GAP - _BAR_WIDTH,
+        bar_right=surface.get_width() - _MARGIN - _GAP,
+    )
+
+
+def test_combatant_layout_centers_each_frame_on_the_sprite_anchor() -> None:
+    layout = _combatant_layout(pygame.Surface((800, 600)), mirrored=False)
+
+    assert layout.sprite_topleft(pygame.Surface((40, 30))) == (200 - 20, 300 - 15)
+    assert layout.sprite_topleft(pygame.Surface((60, 30))) == (200 - 30, 300 - 15)
 
 
 _ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded, HitReflected, SelfDamageTaken)
