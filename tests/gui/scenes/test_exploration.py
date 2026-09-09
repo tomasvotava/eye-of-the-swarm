@@ -1,5 +1,5 @@
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pygame
@@ -9,15 +9,28 @@ from eye.combat.effects import EffectName
 from eye.exploration.encounters import _RESOURCE_MAGNITUDES, Biome, EncounterKind, ResourceKind, Strain
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
-from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.app import _WINDOW_SIZE
+from eye.gui.assets import (
+    PLACEHOLDER_SPRITE_SIZE,
+    SpriteAtlas,
+    SpriteKey,
+    build_art_atlas,
+    build_placeholder_atlas,
+)
 from eye.gui.card import Card, card_column_width
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
     _BUFF_ICON_SIZE,
     _BUFF_ICON_STEP,
     _CARD_FOOTER,
+    _FONT_SIZE,
+    _HUD_MARGIN,
     _ICON_MARGIN,
     _PLAYER_SCALE_FACTOR,
+    _SPORES_ICON_SIZE,
+    _SPORES_LABEL_GAP,
+    _TEXT_COLOR,
     KEY_ACTIONS,
     RESOURCE_DESCRIPTIONS,
     ExplorationAction,
@@ -31,7 +44,7 @@ from eye.gui.tuning import (
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, SpriteBuffIcon, SpriteIcon, effect_label
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, SpriteBuffIcon, SpriteIcon, borderless_icon, effect_label
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -857,3 +870,198 @@ def test_draw_with_a_resource_card_up_and_the_default_icons_does_not_raise() -> 
     assert scene._card is not None
 
     scene.draw(pygame.Surface((800, 600)))
+
+
+# A colour no icon or glyph paints, so anything still wearing it was left untouched.
+_UNDRAWN = pygame.Color("magenta")
+# The largest total the counter's slot holds at 640px with the top row at its most crowded.
+_SPORES_DIGIT_BUDGET = 6
+
+
+def _art_atlas() -> SpriteAtlas:
+    return build_art_atlas(Path("eye/gui/sprites"))
+
+
+def _ink_bounds(draw: Callable[[pygame.Surface], None]) -> pygame.Rect:
+    """The bounding box of everything `draw` paints onto an otherwise untouched surface. Each
+    top-row element gets its own surface; drawn together they would be one band."""
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+    draw(surface)
+    surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
+    return surface.get_bounding_rect()
+
+
+def _spores_counter_boxes(scene: ExplorationScene, total: int) -> tuple[pygame.Rect, pygame.Rect]:
+    icon = pygame.Rect(scene._spores_counter_left, _ICON_MARGIN, _SPORES_ICON_SIZE, _SPORES_ICON_SIZE)
+    text = get_font(GameFont.ITHACA, _FONT_SIZE).render(str(total), True, _TEXT_COLOR)
+    return icon, pygame.Rect(
+        icon.right + _SPORES_LABEL_GAP,
+        _ICON_MARGIN + (_SPORES_ICON_SIZE - text.get_height()) // 2,
+        *text.get_size(),
+    )
+
+
+def _assert_counter_reads(scene: ExplorationScene, total: int) -> None:
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+    scene._draw_spores_counter(surface)
+
+    _, text_box = _spores_counter_boxes(scene, total)
+    expected = pygame.Surface(_WINDOW_SIZE)
+    expected.fill(_UNDRAWN)
+    expected.blit(get_font(GameFont.ITHACA, _FONT_SIZE).render(str(total), True, _TEXT_COLOR), text_box.topleft)
+
+    assert pygame.image.tobytes(surface.subsurface(text_box), "RGBA") == pygame.image.tobytes(
+        expected.subsurface(text_box), "RGBA"
+    )
+
+
+def test_the_spores_counter_shows_the_running_total_and_follows_it_as_spores_arrive() -> None:
+    award = _RESOURCE_MAGNITUDES[ResourceKind.SPORES]
+    scene, generation = _scene([EncounterKind.RESOURCE_PICKUP] * 2, [ResourceKind.SPORES] * 2)
+    _assert_counter_reads(scene, 0)
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)  # screen 1's marker
+    _assert_counter_reads(scene, award)
+
+    _press(scene, pygame.K_SPACE)  # closes the pickup card the marker raised
+    scene.update(0.016)
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)  # screen 2's marker
+
+    assert generation.spores_gained == award * 2
+    _assert_counter_reads(scene, award * 2)
+
+
+def test_the_spores_counter_withholds_a_spore_pickup_until_the_walk_reaches_it() -> None:
+    # advance() credits the pickup when its screen loads, so the drawn total is a snapshot.
+    scene, generation = _scene([EncounterKind.RESOURCE_PICKUP], [ResourceKind.SPORES])
+    assert generation.spores_gained == _RESOURCE_MAGNITUDES[ResourceKind.SPORES]  # already credited
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
+    _assert_counter_reads(scene, 0)
+
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
+
+    _assert_counter_reads(scene, generation.spores_gained)
+
+
+def test_the_spores_counter_draws_the_borderless_icon_scaled_into_the_top_rows_box() -> None:
+    # The real art, not a fixture: build_placeholder_atlas() is 32x32 for every key and the
+    # tmp_path helpers write 4x4, so only a 210x210 source can catch an unscaled blit.
+    atlas = _art_atlas()
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, atlas)
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+
+    scene._draw_spores_counter(surface)
+
+    icon_box, _ = _spores_counter_boxes(scene, generation.spores_gained)
+    expected = pygame.Surface(_WINDOW_SIZE)
+    expected.fill(_UNDRAWN)
+    borderless_icon(atlas, SpriteKey.ICON_SPORES).render(expected, pygame.Vector2(icon_box.topleft), _SPORES_ICON_SIZE)
+
+    assert pygame.image.tobytes(surface.subsurface(icon_box), "RGBA") == pygame.image.tobytes(
+        expected.subsurface(icon_box), "RGBA"
+    )
+
+
+# Bigger than _ADVANCES_TO_READY_SEED, which counts advances at the uncapped rate: this scene
+# spawns beside matured turf, where seed growth is slower.
+_MAX_ADVANCES_TO_READY_SEED = _ADVANCES_TO_READY_SEED * 10
+
+
+def _worst_case_top_row_scene() -> ExplorationScene:
+    """The top row as crowded as it can get: both status icons up, every Lifespan effect in the
+    buff row, and a spore total at the counter's full digit budget."""
+    game = Game(
+        ScriptedEncounterRandom([EncounterKind.NOTHING] * (_MAX_ADVANCES_TO_READY_SEED + 1)),
+        matured_turf_positions=(1,),
+    )
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, _art_atlas())
+    for _ in range(_MAX_ADVANCES_TO_READY_SEED):
+        if scene._can_plant_seed():
+            break
+        _resolve_next_screen(scene)
+    assert scene._can_plant_seed() is True  # the seed status icon is showing
+    assert game.matured_turf_positions != ()  # and so is the turf one
+
+    scene._displayed_effects = tuple(EffectName)
+    scene._displayed_spores = 10**_SPORES_DIGIT_BUDGET - 1
+    return scene
+
+
+def test_the_spores_counter_clears_the_rest_of_the_top_row_at_its_most_crowded() -> None:
+    # The slot is bounded on both sides by rows that move, so only the worst case proves it fits.
+    scene = _worst_case_top_row_scene()
+
+    status_icons = _ink_bounds(scene._draw_status_icons)
+    counter = _ink_bounds(scene._draw_spores_counter)
+    buff_row = _ink_bounds(scene._draw_buff_icons)
+
+    # An empty rect collides with nothing and would pass every assertion below without drawing.
+    assert status_icons.size != (0, 0)
+    assert counter.size != (0, 0)
+    assert buff_row.size != (0, 0)
+    assert len(scene._displayed_effects) == len(EffectName)
+    assert not counter.colliderect(status_icons)
+    assert not counter.colliderect(buff_row)
+    assert pygame.Rect((0, 0), _WINDOW_SIZE).contains(counter)
+    # A legibility margin, not bare non-overlap: a full _ICON_MARGIN clear of the buff row.
+    _, text_box = _spores_counter_boxes(scene, scene._displayed_spores)
+    assert text_box.right + _ICON_MARGIN <= buff_row.left
+
+
+def test_the_spores_counter_falls_back_to_the_bordered_sprite_for_a_variant_less_atlas() -> None:
+    # build_placeholder_atlas() carries no variants, so insisting on the borderless one would raise.
+    atlas = build_placeholder_atlas()
+    assert atlas.has_variant_set(SpriteKey.ICON_SPORES) is False
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, atlas)
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+
+    scene._draw_spores_counter(surface)
+
+    icon_box, _ = _spores_counter_boxes(scene, generation.spores_gained)
+    expected = pygame.Surface(_WINDOW_SIZE)
+    expected.fill(_UNDRAWN)
+    SpriteIcon(atlas, SpriteKey.ICON_SPORES).render(expected, pygame.Vector2(icon_box.topleft), _SPORES_ICON_SIZE)
+
+    assert pygame.image.tobytes(surface.subsurface(icon_box), "RGBA") == pygame.image.tobytes(
+        expected.subsurface(icon_box), "RGBA"
+    )
+
+
+def test_the_bottom_hud_leaves_the_spore_total_to_the_top_row() -> None:
+    # Compared against a full render, so this pins where the remaining lines sit too.
+    scene, generation = _scene([EncounterKind.RESOURCE_PICKUP], [ResourceKind.SPORES])
+    _resolve_next_screen(scene)
+    assert generation.spores_gained != 0  # a leftover spores line would have something to say
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+
+    scene._draw_hud(surface)
+
+    lines = [
+        "Seed ready to plant: no",
+        scene._last_message,
+        "Space/Enter: advance   P: plant seed",
+    ]
+    font = get_font(GameFont.ITHACA, _FONT_SIZE)
+    expected = pygame.Surface(_WINDOW_SIZE)
+    expected.fill(_UNDRAWN)
+    top = expected.get_height() - len(lines) * _FONT_SIZE - _HUD_MARGIN
+    for index, line in enumerate(lines):
+        expected.blit(font.render(line, True, _TEXT_COLOR), (_HUD_MARGIN, top + index * _FONT_SIZE))
+
+    assert pygame.image.tobytes(surface, "RGBA") == pygame.image.tobytes(expected, "RGBA")
