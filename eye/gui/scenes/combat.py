@@ -138,7 +138,8 @@ def _resolve_enemy_sprite_key(strain_name: str) -> SpriteKey:
         return SpriteKey.UNKNOWN
 
 
-def _describe_event(event: BattleEvent) -> str:
+def _describe_event(event: BattleEvent, player: Combatant) -> str:
+    """Render `event` as a line of battle log, phrasing the outcome in the second person for `player`."""
     match event:
         case Death(combatant=combatant):
             return f"{combatant.name} falls."
@@ -170,7 +171,9 @@ def _describe_event(event: BattleEvent) -> str:
         case MeterConsumed(combatant=combatant):
             return f"{combatant.name}'s swarm meter empties."
         case BattleEnded(winner=winner):
-            return f"{winner.name} wins the battle!" if winner is not None else "The battle ends in a draw."
+            if winner is None:
+                return "The battle ends in a draw."
+            return "You win!" if winner is player else "You lose!"
         case _:
             assert_never(event)
 
@@ -603,7 +606,7 @@ class CombatScene:
 
     def _start_next_event(self) -> None:
         event = self._pending_events.popleft()
-        self._log.append(_describe_event(event))
+        self._log.append(_describe_event(event, self._battle.player))
         self._current_phases = deque(self._phases_for(event))
 
     def _advance_phases(self, dt: float) -> None:
@@ -820,7 +823,7 @@ class CombatScene:
             case EffectApplied() | EffectExpired():
                 return self._effect_announcement_phase(event)
             case TurnSkipped() | ExtraActionTriggered() | BattleEnded():
-                return [self._announcement_phase(Announcement(text=_describe_event(event)))]
+                return [self._announcement_phase(Announcement(text=_describe_event(event, self._battle.player)))]
             case MeterFilled(combatant=combatant, meter_after=meter_after):
                 return [_meter_tween_phase(self._displayed_for(combatant), meter_after)]
             case MeterConsumed(combatant=combatant, meter_after=meter_after):
