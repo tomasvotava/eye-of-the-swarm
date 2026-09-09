@@ -6,7 +6,14 @@ import pygame
 import pytest
 
 from eye.gui.animation import AnimationClip
-from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteAtlas, SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.assets import (
+    PLACEHOLDER_SPRITE_SIZE,
+    IconVariant,
+    SpriteAtlas,
+    SpriteKey,
+    build_art_atlas,
+    build_placeholder_atlas,
+)
 
 
 def _write_static_sprite(directory: Path, name: str = "sprite", size: tuple[int, int] = (4, 4)) -> None:
@@ -19,6 +26,18 @@ def _write_clip(directory: Path, name: str, frame_count: int = 2, frame_size: in
     pygame.image.save(pygame.Surface((frame_size * frame_count, frame_size)), directory / f"{name}.png")
     manifest = {"frame_width": frame_size, "frame_height": frame_size, "frame_count": frame_count, "fps": fps}
     (directory / f"{name}.json").write_text(json.dumps(manifest))
+
+
+_SHIPPED_SPRITES_DIR = Path("eye/gui/sprites")
+_SHIPPED_ICON_KEYS = (
+    SpriteKey.ICON_HEALTH,
+    SpriteKey.ICON_SPORES,
+    SpriteKey.ICON_SEED_GROWTH,
+    SpriteKey.ICON_DISTANCE_DISCOUNT,
+    SpriteKey.ICON_RECOIL,
+    SpriteKey.EFFECT_RESONANCE,
+)
+_SHIPPED_ICON_KEYS_WITH_VARIANTS = (SpriteKey.ICON_HEALTH, SpriteKey.ICON_SPORES, SpriteKey.EFFECT_RESONANCE)
 
 
 class _BrambleState(StrEnum):
@@ -87,12 +106,13 @@ def test_build_art_atlas_loads_an_effect_sprite_at_its_native_size(tmp_path: Pat
     assert atlas.get(SpriteKey.EFFECT_FIBROUS).get_size() == (210, 210)
 
 
-def test_build_art_atlas_falls_back_to_the_placeholder_for_an_effect_with_no_art_yet(tmp_path: Path) -> None:
-    # An effect key with no sprite folder on disk (RESONANCE, today) gets no special-casing --
-    # just the ordinary missing-directory fallback every other key already has (ADR 0011).
+def test_build_art_atlas_falls_back_to_the_placeholder_for_every_key_when_no_art_is_on_disk(tmp_path: Path) -> None:
+    # build_art_atlas walks SpriteKey, so a key with no _PLACEHOLDER_SHAPES entry is a KeyError at
+    # startup, not a fallback.
     atlas = build_art_atlas(tmp_path)
 
-    assert atlas.get(SpriteKey.EFFECT_RESONANCE).get_size() == (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+    for key in SpriteKey:
+        assert atlas.get(key).get_size() == (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
 
 
 def test_build_art_atlas_resolves_a_clip_pair_via_get_animation_set(tmp_path: Path) -> None:
@@ -151,3 +171,20 @@ def test_has_animation_set_is_true_once_the_key_has_a_clip(tmp_path: Path) -> No
     atlas = build_art_atlas(tmp_path)
 
     assert atlas.has_animation_set(SpriteKey.BRAMBLE) is True
+
+
+@pytest.mark.parametrize("key", _SHIPPED_ICON_KEYS)
+def test_build_art_atlas_resolves_a_shipped_icon_key_to_real_art(key: SpriteKey) -> None:
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+
+    assert atlas.get(key).get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+
+
+@pytest.mark.parametrize("key", _SHIPPED_ICON_KEYS_WITH_VARIANTS)
+def test_build_art_atlas_resolves_every_icon_variant_of_a_shipped_icon_key(key: SpriteKey) -> None:
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+
+    variants = atlas.get_variant_set(key, IconVariant)
+
+    assert variants[IconVariant.BORDERLESS] is not atlas.get(key)
+    assert variants[IconVariant.BORDERLESS].get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)

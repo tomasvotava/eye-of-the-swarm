@@ -104,10 +104,7 @@ def _sprite_key_for(effect: EffectName) -> SpriteKey:
 
 
 class SpriteBuffIcon:
-    """`BuffIcon` backed by real art (ADR 0011) -- `CombatScene`'s default `buff_icon_factory`.
-    An effect with no sprite delivered yet (currently RESONANCE) is not special-cased here: its
-    `SpriteKey` still resolves, and `SpriteAtlas` itself falls back to the placeholder shape for a
-    key with no sprite.png on disk."""
+    """`BuffIcon` backed by real art (ADR 0011) -- `CombatScene`'s default `buff_icon_factory`."""
 
     def __init__(self, atlas: SpriteAtlas, effect: EffectName) -> None:
         self._surface = atlas.get(_sprite_key_for(effect))
