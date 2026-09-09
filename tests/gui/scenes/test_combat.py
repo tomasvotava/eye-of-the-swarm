@@ -1,4 +1,5 @@
 import json
+import random
 from collections import deque
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -77,6 +78,7 @@ from eye.gui.scenes.combat import (
     _LoadedCombatAnimationState,
     _overlay_label_lines,
     _resolve_enemy_sprite_key,
+    _turn_title,
     _valence_color,
 )
 from eye.gui.tuning import (
@@ -160,14 +162,24 @@ _ACTIONS = (
 )
 
 
+class _AlwaysRolling(ScriptedEncounterRandom):
+    """Every `Battle._roll()` succeeds; the scripted encounter and Strain draws are untouched."""
+
+    def random(self) -> float:
+        return 0.0
+
+
 def _generation(
-    stats: Stats = _STATS, character: Character | None = None, strain_queue: Sequence[Strain] = ()
+    stats: Stats = _STATS,
+    character: Character | None = None,
+    strain_queue: Sequence[Strain] = (),
+    rng: random.Random | None = None,
 ) -> Generation:
     return Generation(
         character=character or Character(current_hp=stats.max_hp, max_hp=stats.max_hp),
         stats=stats,
         actions=_ACTIONS,
-        rng=ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=strain_queue),
+        rng=rng or ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=strain_queue),
         starting_screen=0,
         matured_turfs=(),
     )
@@ -193,6 +205,14 @@ def _drive_to_transition(scene: CombatScene, max_frames: int = 2000) -> PlayScen
         if result is not None:
             return result
     raise AssertionError("battle did not conclude within max_frames")
+
+
+def _drive_to_next_player_query(scene: CombatScene, max_frames: int = 400) -> None:
+    for _ in range(max_frames):
+        scene.update(0.016)
+        if scene._pending_query is not None:
+            return
+    raise AssertionError("did not reach the next player-action query")
 
 
 def test_construction_starts_the_battle_and_prefills_the_resonance_meter() -> None:
@@ -2230,3 +2250,138 @@ def test_draw_does_not_raise_while_a_hit_flash_is_active() -> None:
     scene._phases_for(_hit_landed(scene))[0].on_start()
 
     scene.draw(pygame.Surface((800, 600)))
+
+
+def test_the_turn_banner_is_absent_before_the_first_turn() -> None:
+    # start()'s Resonance prefill fills the whole first update(), so no turn is driven yet.
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+    assert scene._turn_banner is None
+
+    scene.update(0.016)
+    scene._draw_turn_banner(surface)
+
+    assert scene._current_phases or scene._pending_events  # start()'s own events are still playing
+    assert scene._turn_banner is None
+    surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
+    assert surface.get_bounding_rect().size == (0, 0)
+
+
+def test_the_turn_banner_names_the_player_while_the_action_menu_is_up() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    scene.update(0.016)
+    assert scene._pending_query is not None
+    assert scene._turn_banner == "Your turn"
+
+    _press(scene, ACTION_KEYS[0])
+    _drive_to_next_player_query(scene)
+
+    latest_action_line = next(line for line in reversed(scene._log) if " uses " in line)
+    assert latest_action_line.startswith(scene._battle.enemy.name)  # the newest ActionChosen is theirs
+    assert scene._turn_banner == "Your turn"
+
+
+def test_the_turn_banner_names_the_enemy_during_the_enemy_turn() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)
+    _press(scene, ACTION_KEYS[0])
+
+    for _ in range(400):
+        scene.update(0.016)
+        if scene._turn_banner != "Your turn":
+            break
+    else:
+        raise AssertionError("the enemy's turn never came around")
+
+    assert scene._turn_banner == f"{scene._battle.enemy.name}'s turn"
+
+
+def test_a_skipped_player_turn_still_reads_as_the_players_own() -> None:
+    # Vegetative concludes the turn inside query_player_turn() itself, with no action to choose.
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.VEGETATIVE, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character, rng=_AlwaysRolling([EncounterKind.ENEMY]))
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    scene.update(0.016)
+
+    assert scene._announcement == Announcement(text=f"{scene._battle.player.name}'s turn is skipped.")
+    assert scene._turn_banner == "Your turn"
+
+
+def test_an_extra_action_keeps_the_turn_banner_on_the_player() -> None:
+    # An extra action drops turn_phase back to AWAITING_QUERY mid-round, latching again.
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.UPROOTED, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character, rng=_AlwaysRolling([EncounterKind.ENEMY]))
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    banners: list[str | None] = []
+
+    for _ in range(400):
+        _press(scene, ACTION_KEYS[0])
+        scene.update(0.016)
+        banners.append(scene._turn_banner)
+        if any("acts again" in line for line in scene._log) and scene._pending_query is not None:
+            break
+    else:
+        raise AssertionError("no extra action was triggered within the frame budget")
+
+    assert scene._turn_banner == "Your turn"
+    assert set(banners) == {"Your turn"}  # never handed to the enemy part-way through the round
+
+
+def test_the_turn_banner_is_cleared_before_the_battle_result_is_announced() -> None:
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=overwhelming)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    banners_over_the_result: list[str | None] = []
+
+    for _ in range(2000):
+        _press(scene, ACTION_KEYS[0])
+        transition = scene.update(0.016)
+        # No effect is ever in play, so the result is the only card-less announcement here.
+        if scene._announcement is not None and scene._announcement.card is None:
+            banners_over_the_result.append(scene._turn_banner)
+        if transition is not None:
+            break
+    else:
+        raise AssertionError("battle did not conclude within the frame budget")
+
+    assert banners_over_the_result  # the result really was on screen to be measured
+    assert set(banners_over_the_result) == {None}
+    assert scene._turn_banner is None
+
+
+@pytest.mark.parametrize("strain", ENCOUNTERABLE_STRAINS)
+def test_the_turn_banner_clears_both_name_labels_at_the_real_window_size(strain: Strain) -> None:
+    # Rendered width isn't predicted by character count in a proportional font, so every strain is
+    # measured against the real font. Nothing sprite-derived, so the 32x32 placeholder atlas is fine.
+    generation = _generation(strain_queue=[strain])
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._turn_banner = _turn_title(scene._battle.enemy)
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+
+    scene._draw_turn_banner(surface)
+
+    surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
+    drawn = surface.get_bounding_rect()
+    font = get_font(GameFont.ITHACA, _FONT_SIZE)
+    player_name = pygame.Rect(
+        _combatant_layout(surface, mirrored=False).bar_left, _MARGIN, *font.size(scene._battle.player.name)
+    )
+    enemy_name = pygame.Rect(0, _MARGIN, *font.size(scene._battle.enemy.name))
+    enemy_name.right = _combatant_layout(surface, mirrored=True).bar_right
+
+    assert drawn.size != (0, 0), strain  # an empty rect collides with nothing, and would prove nothing
+    # Sharing the row is the premise of the two checks below; off it they'd pass for free.
+    assert pygame.Rect(0, player_name.top, surface.get_width(), player_name.height).contains(drawn), strain
+    assert not drawn.colliderect(player_name), strain
+    assert not drawn.colliderect(enemy_name), strain
