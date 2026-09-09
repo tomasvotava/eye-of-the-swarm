@@ -81,7 +81,11 @@ mechanism is exactly what this amendment replaces.
     drawn over that combatant's own half of the screen — typeset to that half's width, so which of
     the two it concerns is readable without parsing the subtitle — while a plain announcement
     (`TurnSkipped`/`ExtraActionTriggered`/`BattleEnded`) concerns the fight rather than one side of
-    it and stays centered.
+    it and stays centered. The card renderer itself is scene-neutral (`eye/gui/effect_card.py`):
+    it takes a centre-x and a column width and knows nothing of combatants, so `ExplorationScene`
+    raises the same card, at the same column width, when a screen's pickup grants an effect —
+    centered there, since exploration has one character and nothing to disambiguate. Anchoring to
+    a half is combat's own reason for a position, not the card's.
   - **`Overlay`** (lighter, target-local — reuses the `HIT` animation state plus a small icon at
     the target's position, naming the effect and the signed HP it moved, not a card of its own):
     `DotTicked`, `HealApplied`. These can repeat every turn; a full `Announcement` each time would
