@@ -10,7 +10,10 @@ Read these before touching anything in this repo:
    `docs/adr/` before working in a domain it covers. ADRs record *why* a module is shaped the way
    it is (module boundaries, event-sourcing choices, representation decisions) — the kind of
    context that isn't recoverable from the code alone.
-3. This project follows the `house-rules` skill (`house-rules@tomasvotava`, enabled via
+3. **`GOTCHAS.md`** — things in this codebase that behave differently from how they read. Short
+   entries, each one something that already cost someone time. Add to it when you find another;
+   it is the home for knowledge that matters but is too long or too situational for a comment.
+4. This project follows the `house-rules` skill (`house-rules@tomasvotava`, enabled via
    `.claude/settings.json` — see below) for git/PR discipline, code-quality gates, and
    architecture conventions (DDD-as-guideline, ports-and-adapters, ADRs for architectural
    decisions). Follow it in every session; it overrides default behavior.
