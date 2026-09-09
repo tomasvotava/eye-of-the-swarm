@@ -6,7 +6,7 @@ import pygame
 import pytest
 
 from eye.combat.effects import EffectName
-from eye.exploration.encounters import Biome, EncounterKind, ResourceKind, Strain
+from eye.exploration.encounters import _RESOURCE_MAGNITUDES, Biome, EncounterKind, ResourceKind, Strain
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
@@ -19,6 +19,7 @@ from eye.gui.scenes.exploration import (
     _ICON_MARGIN,
     _PLAYER_SCALE_FACTOR,
     KEY_ACTIONS,
+    RESOURCE_DESCRIPTIONS,
     ExplorationAction,
     ExplorationScene,
     PlayerAnimationState,
@@ -30,7 +31,7 @@ from eye.gui.tuning import (
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, SpriteBuffIcon, effect_label
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, SpriteBuffIcon, SpriteIcon, effect_label
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -39,8 +40,10 @@ from tests.session.doubles import ScriptedEncounterRandom
 _ADVANCES_TO_READY_SEED = int(SEED_GROWTH_THRESHOLD // SEED_GROWTH_RATE_CAP)
 
 
-def _scene(kind_queue: Sequence[EncounterKind] = ()) -> tuple[ExplorationScene, Generation]:
-    game = Game(ScriptedEncounterRandom(kind_queue))
+def _scene(
+    kind_queue: Sequence[EncounterKind] = (), resource_queue: Sequence[ResourceKind] = ()
+) -> tuple[ExplorationScene, Generation]:
+    game = Game(ScriptedEncounterRandom(kind_queue, resource_queue=resource_queue))
     generation = game.start_generation()
     return ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas()), generation
 
@@ -433,7 +436,8 @@ def _row_icon_calls(
     """The subset of `calls` the buff row made: a raised card renders its icon through the same
     factory, and the card's larger icon box is what separates the two."""
     row = [call for call in calls if call[2] == _BUFF_ICON_SIZE]
-    assert len(calls) == len(row) + (0 if scene._card is None else 1)
+    card_icons = 0 if scene._card is None else int(isinstance(scene._card.icon, _SpyBuffIcon))
+    assert len(calls) == len(row) + card_icons
     return row
 
 
@@ -612,9 +616,8 @@ def test_effect_pickup_on_a_later_screen_raises_the_card_at_its_own_marker() -> 
     assert card.title == effect_label(granted)
 
 
-@pytest.mark.parametrize("kind", [EncounterKind.RESOURCE_PICKUP, EncounterKind.NOTHING])
-def test_a_screen_that_grants_no_effect_raises_no_card(kind: EncounterKind) -> None:
-    scene, _ = _scene([kind])
+def test_an_empty_screen_raises_no_card() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
 
     _resolve_next_screen(scene)
 
@@ -760,3 +763,97 @@ def test_the_hud_line_still_reports_the_pickup_while_the_card_is_up() -> None:
 
     assert scene._card is not None
     assert scene._last_message == f"You feel {effect_label(granted)} take hold."
+
+
+# Spelled out rather than derived, so `.title()` is asserted against words and not against itself.
+_EXPECTED_RESOURCE_CARDS: dict[ResourceKind, tuple[str, SpriteKey]] = {
+    ResourceKind.HEAL: ("Heal", SpriteKey.ICON_HEALTH),
+    ResourceKind.SPORES: ("Spores", SpriteKey.ICON_SPORES),
+    ResourceKind.SEED_GROWTH: ("Seed Growth", SpriteKey.ICON_SEED_GROWTH),
+    ResourceKind.DISTANCE_DISCOUNT: ("Distance Discount", SpriteKey.ICON_DISTANCE_DISCOUNT),
+}
+
+
+@pytest.mark.parametrize("kind", list(ResourceKind))
+def test_a_resource_pickup_raises_a_card_for_what_it_granted(kind: ResourceKind) -> None:
+    expected_title, expected_icon_key = _EXPECTED_RESOURCE_CARDS[kind]
+    scene, _ = _scene([EncounterKind.RESOURCE_PICKUP], resource_queue=[kind])
+
+    _resolve_next_screen(scene)
+
+    card = scene._card
+    assert card is not None
+    assert card.title == expected_title
+    assert card.description == RESOURCE_DESCRIPTIONS[kind]
+    assert card.subtitle == f"+{_RESOURCE_MAGNITUDES[kind]}"
+    assert isinstance(card.icon, SpriteIcon)
+    assert card.icon.sprite_key is expected_icon_key
+
+
+def test_resource_descriptions_covers_every_resource_kind() -> None:
+    for kind in ResourceKind:
+        assert RESOURCE_DESCRIPTIONS[kind]  # non-empty
+
+
+def test_resource_pickup_raises_the_card_only_once_the_walk_reaches_the_marker() -> None:
+    # The reveal point: advance() applied the pickup back when the screen loaded (ADR 0012).
+    scene, _ = _scene([EncounterKind.RESOURCE_PICKUP], resource_queue=[ResourceKind.SPORES])
+
+    assert scene._card is None  # AT_ENTRY, the pickup not reached yet
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
+    assert scene._card is None  # mid-walk
+
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # arrives at the marker, RESOLVED
+
+    assert scene._card is not None
+
+
+def test_resource_pickup_on_a_later_screen_raises_the_card_at_its_own_marker() -> None:
+    # The steady-state path: later screens load at a WALKING_TO_EXIT arrival, not at construction.
+    scene, _ = _scene(
+        [EncounterKind.NOTHING, EncounterKind.RESOURCE_PICKUP], resource_queue=[ResourceKind.DISTANCE_DISCOUNT]
+    )
+    _resolve_next_screen(scene)  # screen 1, empty
+    assert scene._card is None
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads: advance() applies the resource
+    assert scene._card is None  # AT_ENTRY, the pickup not reached yet
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+
+    card = scene._card
+    assert card is not None
+    assert card.title == "Distance Discount"
+
+
+def test_advancing_with_a_resource_card_up_dismisses_it_without_starting_the_walk() -> None:
+    scene, _ = _scene([EncounterKind.RESOURCE_PICKUP, EncounterKind.NOTHING], resource_queue=[ResourceKind.HEAL])
+    _resolve_next_screen(scene)
+    assert scene._card is not None
+
+    _press(scene, pygame.K_SPACE)
+    assert scene.update(WALK_TO_EXIT_DURATION_SECONDS) is None
+
+    assert scene._card is None
+    assert scene._phase is _Phase.RESOLVED
+
+
+def test_the_hud_line_still_reports_a_resource_pickup_while_the_card_is_up() -> None:
+    scene, _ = _scene([EncounterKind.RESOURCE_PICKUP], resource_queue=[ResourceKind.SEED_GROWTH])
+
+    _resolve_next_screen(scene)
+
+    assert scene._card is not None
+    assert scene._last_message == f"You gain {_RESOURCE_MAGNITUDES[ResourceKind.SEED_GROWTH]} (Seed Growth)."
+
+
+def test_draw_with_a_resource_card_up_and_the_default_icons_does_not_raise() -> None:
+    scene, _ = _scene([EncounterKind.RESOURCE_PICKUP], resource_queue=[ResourceKind.SPORES])
+    _resolve_next_screen(scene)
+    assert scene._card is not None
+
+    scene.draw(pygame.Surface((800, 600)))
