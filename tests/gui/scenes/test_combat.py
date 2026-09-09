@@ -73,6 +73,7 @@ from eye.gui.scenes.combat import (
     _describe_event,
     _hp_tween_phase,
     _label,
+    _lit_by_hit_flash,
     _LoadedCombatAnimationState,
     _overlay_label_lines,
     _resolve_enemy_sprite_key,
@@ -2059,21 +2060,35 @@ def test_only_the_events_that_move_hp_flash_and_each_carries_its_own_valence() -
     assert flashed == _FLASH_VALENCE_BY_EVENT_TYPE
 
 
-_PALE_TINT_MAX_SATURATION_PERCENT = 40.0  # above this a tint reads as pigment, not as light
+_MIN_TINT_CHANNEL_LEAD = 128  # in 0-255 units, so the multiply half of the flash has something to suppress
+_MIN_HUE_SEPARATION_DEGREES = 20.0
 
 
-def test_both_flash_tints_stay_pale_enough_to_blow_a_sprite_out() -> None:
+def _channel_lead(color: pygame.Color, channel: int) -> int:
+    """How far `channel` (0 red, 1 green, 2 blue) leads the other two in `color`, in 0-255 units."""
+    return color[channel] - max(value for index, value in enumerate(color[:3]) if index != channel)
+
+
+def _hue_separation_degrees(one: pygame.typing.ColorLike, other: pygame.typing.ColorLike) -> float:
+    """The shorter way round the hue circle between two colours, in degrees."""
+    gap = abs(pygame.Color(one).hsva[0] - pygame.Color(other).hsva[0]) % 360.0
+    return min(gap, 360.0 - gap)
+
+
+def test_both_flash_tints_lead_hard_on_their_own_channel() -> None:
     damage = pygame.Color(BATTLE_HIT_FLASH_DAMAGE_COLOR)
     healing = pygame.Color(BATTLE_HIT_FLASH_HEALING_COLOR)
 
-    for tint in (damage, healing):
-        _, saturation, value, _ = tint.hsva
-        assert value == pytest.approx(100.0)  # the flash is light, not pigment
-        assert saturation < _PALE_TINT_MAX_SATURATION_PERCENT
+    assert _channel_lead(damage, 0) >= _MIN_TINT_CHANNEL_LEAD
+    assert _channel_lead(healing, 1) >= _MIN_TINT_CHANNEL_LEAD
 
-    # Still told apart: each leads on its own channel.
-    assert damage.r == max(damage.r, damage.g, damage.b)
-    assert healing.g == max(healing.r, healing.g, healing.b)
+
+def test_the_damage_tint_keeps_clear_of_the_receiving_roles_highlight_hue() -> None:
+    # The struck combatant's HP bar and name label pulse the receiving colour inches away at the
+    # same moment, and both are saturated, so hue is all that separates them.
+    separation = _hue_separation_degrees(BATTLE_HIT_FLASH_DAMAGE_COLOR, BATTLE_RECEIVING_HIGHLIGHT_COLOR)
+
+    assert separation >= _MIN_HUE_SEPARATION_DEGREES
 
 
 def test_an_overlay_and_the_flash_beneath_it_read_the_same_valence() -> None:
@@ -2129,6 +2144,46 @@ def test_hit_flash_peaks_on_impact_and_decays_over_its_own_duration() -> None:
 
     scene._elapsed_seconds += BATTLE_HIT_FLASH_DURATION_SECONDS / 2
     assert scene._hit_flash_strength(displayed) == 0.0
+
+
+_MIN_LIT_CHANNEL_LEAD = 40  # _MIN_TINT_CHANNEL_LEAD's counterpart, measured on the lit pixel
+
+
+@pytest.mark.parametrize(("valence", "channel"), [(HitValence.DAMAGE, 0), (HitValence.HEALING, 1)])
+@pytest.mark.parametrize("pixel", [(255, 255, 255, 255), (220, 220, 220, 255)])
+def test_a_flash_still_carries_its_valence_on_a_bright_sprite_pixel(
+    valence: HitValence, channel: int, pixel: tuple[int, int, int, int]
+) -> None:
+    sprite = pygame.Surface((1, 1), pygame.SRCALPHA)
+    sprite.fill(pixel)
+
+    lit = _lit_by_hit_flash(sprite, BATTLE_HIT_FLASH_STRENGTH, valence)
+
+    assert _channel_lead(lit.get_at((0, 0)), channel) >= _MIN_LIT_CHANNEL_LEAD
+
+
+@pytest.mark.parametrize("valence", list(HitValence))
+def test_a_flash_of_no_strength_leaves_every_channel_exactly_where_it_was(valence: HitValence) -> None:
+    # A multiply that quantised even one step low would darken the sprite on every fading frame.
+    sprite = pygame.Surface((256, 1), pygame.SRCALPHA)
+    for x in range(256):
+        sprite.set_at((x, 0), (x, 255 - x, (x * 7) % 256, 255))
+
+    lit = _lit_by_hit_flash(sprite, 0.0, valence)
+
+    assert [lit.get_at((x, 0)) for x in range(256)] == [sprite.get_at((x, 0)) for x in range(256)]
+
+
+@pytest.mark.parametrize("valence", list(HitValence))
+def test_a_flash_leaves_the_sprites_transparent_margin_transparent(valence: HitValence) -> None:
+    sprite = pygame.Surface((2, 1), pygame.SRCALPHA)
+    sprite.set_at((0, 0), (10, 20, 30, 0))
+    sprite.set_at((1, 0), (10, 20, 30, 255))
+
+    lit = _lit_by_hit_flash(sprite, 1.0, valence)
+
+    assert lit.get_at((0, 0)).a == 0
+    assert lit.get_at((1, 0)).a == 255
 
 
 def test_drawing_a_hit_flash_leaves_the_animators_cached_frame_untouched(tmp_path: Path) -> None:
