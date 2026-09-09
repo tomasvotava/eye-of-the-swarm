@@ -26,12 +26,12 @@ BATTLE_HIGHLIGHT_PULSE_STRENGTH = 0.55
 BATTLE_ACTING_HIGHLIGHT_COLOR: pygame.typing.ColorLike = "deepskyblue"
 BATTLE_RECEIVING_HIGHLIGHT_COLOR: pygame.typing.ColorLike = "orangered"
 
-# The colour is added to the sprite's pixels, so the silhouette blows out instead of taking a tint.
-# Strength is how much arrives at the instant of impact, 0-1, falling off linearly. The duration is
-# kept well under the briefest flinch clip: the flash marks the hit, the clip carries the rest.
-BATTLE_HIT_FLASH_DAMAGE_COLOR: pygame.typing.ColorLike = (255, 188, 180)  # near-white so it still blows out
-BATTLE_HIT_FLASH_HEALING_COLOR: pygame.typing.ColorLike = (188, 255, 198)
-BATTLE_HIT_FLASH_STRENGTH = 0.75
+# The tint is multiplied into the sprite's pixels and then added: addition alone can only brighten,
+# so on a light pixel every channel clips and the hue is lost. Strength is how much arrives at the
+# instant of impact, 0-1, falling off linearly.
+BATTLE_HIT_FLASH_DAMAGE_COLOR: pygame.typing.ColorLike = (255, 56, 96)  # rose, kept clear of orangered above
+BATTLE_HIT_FLASH_HEALING_COLOR: pygame.typing.ColorLike = (56, 255, 96)
+BATTLE_HIT_FLASH_STRENGTH = 0.85
 BATTLE_HIT_FLASH_DURATION_SECONDS = 0.12
 
 # The hop a HUD buff-row icon makes when its own effect ticks. The distance is the arc's peak in

@@ -399,11 +399,15 @@ def _combatant_layout(surface: pygame.Surface, *, mirrored: bool) -> CombatantLa
 
 
 def _lit_by_hit_flash(sprite: pygame.Surface, strength: float, valence: HitValence) -> pygame.Surface:
-    """A copy of `sprite` with `strength` (0-1) of `valence`'s tint added to its pixels.
+    """A copy of `sprite` with `strength` (0-1) of `valence`'s tint driven into its pixels.
     Copied because an animator's frames are shared by every draw of that clip."""
     color = pygame.Color(_valence_color(valence))
     lit = sprite.copy()
-    # RGB_ADD, not RGBA_ADD: adding alpha too would light up the sprite's transparent margin.
+    # Multiply before adding: addition alone can only brighten, so on a light pixel every channel
+    # clips and the hue is lost. White is the multiply's neutral, so strength 0 is an identity.
+    multiplier = pygame.Color("white").lerp(color, strength)
+    # RGB, not RGBA, on both fills: alpha too would light up the sprite's transparent margin.
+    lit.fill((multiplier.r, multiplier.g, multiplier.b), special_flags=pygame.BLEND_RGB_MULT)
     lit.fill(
         (round(color.r * strength), round(color.g * strength), round(color.b * strength)),
         special_flags=pygame.BLEND_RGB_ADD,
