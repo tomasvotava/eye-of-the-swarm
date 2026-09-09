@@ -1,6 +1,6 @@
-"""The effect card: a title, icon, description and subtitle stacked over a backdrop panel. It is
-drawn into a column given as a centre-x and a width, so anchoring is the caller's decision, and
-every scene sizes that column with `card_column_width`."""
+"""The card: a title, icon, description and subtitle stacked over a backdrop panel. It is drawn
+into a column given as a centre-x and a width, so anchoring is the caller's decision, and every
+scene sizes that column with `card_column_width`."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -64,9 +64,9 @@ def _wrapped_lines(text: str, font: pygame.font.Font, max_width: int) -> list[st
 
 
 @dataclass(frozen=True, slots=True)
-class EffectCard:
-    """An effect's flavor name, icon, short prose and qualifying subtitle: all four or none, never
-    a partial combination."""
+class Card:
+    """A card's flavor name, icon, short prose and qualifying subtitle: all four or none, never a
+    partial combination."""
 
     title: str
     icon: BuffIcon
@@ -74,8 +74,8 @@ class EffectCard:
     subtitle: str
 
 
-def draw_effect_card(
-    surface: pygame.Surface, card: EffectCard, *, center_x: int, column_width: int, footer: str | None = None
+def draw_card(
+    surface: pygame.Surface, card: Card, *, center_x: int, column_width: int, footer: str | None = None
 ) -> None:
     """Draw `card` as one block over a backdrop panel, centered on `center_x` and on the surface's
     own vertical middle. `column_width` is the width budget every piece is typeset into."""

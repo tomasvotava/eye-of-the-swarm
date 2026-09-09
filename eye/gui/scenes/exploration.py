@@ -18,7 +18,7 @@ from eye.combat.effects import EffectName
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.animation import Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
-from eye.gui.effect_card import EffectCard, card_column_width, draw_effect_card
+from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.tuning import (
@@ -157,7 +157,7 @@ class ExplorationScene:
         self._displayed_effects = tuple(
             effect for effect in generation.active_lifespan_effects if effect not in unrevealed
         )
-        self._effect_card: EffectCard | None = None
+        self._effect_card: Card | None = None
         self._dismiss_effect_card = False
 
         # None when the atlas has no player animation data (e.g. build_placeholder_atlas()) --
@@ -314,7 +314,7 @@ class ExplorationScene:
         return None
 
     def _raise_effect_card(self, effect: EffectName) -> None:
-        self._effect_card = EffectCard(
+        self._effect_card = Card(
             title=effect_label(effect),
             icon=self._buff_icon_factory(effect),
             description=EFFECT_DESCRIPTIONS[effect],
@@ -394,7 +394,7 @@ class ExplorationScene:
         # Centred, unlike CombatScene's: out here there is only one character to point at.
         if self._effect_card is None:
             return
-        draw_effect_card(
+        draw_card(
             surface,
             self._effect_card,
             center_x=surface.get_width() // 2,

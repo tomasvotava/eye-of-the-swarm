@@ -37,7 +37,7 @@ from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind, Str
 from eye.exploration.events import EnemyEncountered
 from eye.gui.app import _WINDOW_SIZE
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
-from eye.gui.effect_card import EffectCard
+from eye.gui.card import Card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
@@ -1768,7 +1768,7 @@ def test_effect_applied_phase_sets_an_effect_card_announcement_with_title_and_su
     phases[0].on_start()
     assert scene._announcement == Announcement(
         card=AnchoredCard(
-            card=EffectCard(
+            card=Card(
                 title="Fibrous",
                 icon=rendered_icons[0],
                 description=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
@@ -1835,7 +1835,7 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
 
     assert scene._announcement == Announcement(
         card=AnchoredCard(
-            card=EffectCard(
+            card=Card(
                 title="Fibrous",
                 icon=rendered_icons[0],
                 description=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
@@ -1940,7 +1940,7 @@ def test_draw_does_not_raise_with_an_effect_card_announcement_set() -> None:
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene._announcement = Announcement(
         card=AnchoredCard(
-            card=EffectCard(
+            card=Card(
                 title="Runt",
                 icon=TextBuffIcon(EffectName.RUNT),
                 description="Lowers attack",
@@ -1968,9 +1968,7 @@ def test_draw_anchors_the_effect_card_over_its_own_combatants_half() -> None:
         render_calls.clear()
         scene._announcement = Announcement(
             card=AnchoredCard(
-                card=EffectCard(
-                    title="Runt", icon=_SpyIcon(), description="Lowers attack", subtitle="Player — 3 turns"
-                ),
+                card=Card(title="Runt", icon=_SpyIcon(), description="Lowers attack", subtitle="Player — 3 turns"),
                 target=target,
             )
         )
@@ -1978,7 +1976,7 @@ def test_draw_anchors_the_effect_card_over_its_own_combatants_half() -> None:
         scene.draw(surface)
 
         # The scene's only share of the placement is which half the card centers over; the block's
-        # own geometry is asserted in tests/gui/test_effect_card.py.
+        # own geometry is asserted in tests/gui/test_card.py.
         assert len(render_calls) == 1
         pos, size = render_calls[0]
         assert pos.x + size // 2 == _combatant_layout(surface, mirrored=mirrored).sprite_center[0]
@@ -2002,7 +2000,7 @@ def test_every_effect_card_stays_inside_its_combatants_half_of_the_real_window()
             surface.fill(_UNDRAWN)
             scene._announcement = Announcement(
                 card=AnchoredCard(
-                    card=EffectCard(
+                    card=Card(
                         title=_label(effect),
                         icon=scene._buff_icon_factory(effect),
                         description=EFFECT_DESCRIPTIONS[effect],
