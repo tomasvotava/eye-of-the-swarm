@@ -15,7 +15,7 @@ from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
     _BUFF_ICON_SIZE,
     _BUFF_ICON_STEP,
-    _EFFECT_CARD_FOOTER,
+    _CARD_FOOTER,
     _ICON_MARGIN,
     _PLAYER_SCALE_FACTOR,
     KEY_ACTIONS,
@@ -433,7 +433,7 @@ def _row_icon_calls(
     """The subset of `calls` the buff row made: a raised card renders its icon through the same
     factory, and the card's larger icon box is what separates the two."""
     row = [call for call in calls if call[2] == _BUFF_ICON_SIZE]
-    assert len(calls) == len(row) + (0 if scene._effect_card is None else 1)
+    assert len(calls) == len(row) + (0 if scene._card is None else 1)
     return row
 
 
@@ -576,15 +576,15 @@ def test_effect_pickup_raises_the_card_only_once_the_walk_reaches_the_marker() -
     # The reveal point: advance() applied the pickup back when the screen loaded (ADR 0012).
     granted = _granted_effect(generation)
 
-    assert scene._effect_card is None  # AT_ENTRY, the pickup not reached yet
+    assert scene._card is None  # AT_ENTRY, the pickup not reached yet
 
     _press(scene, pygame.K_SPACE)
     scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
-    assert scene._effect_card is None  # mid-walk
+    assert scene._card is None  # mid-walk
 
     scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # arrives at the marker, RESOLVED
 
-    card = scene._effect_card
+    card = scene._card
     assert card is not None
     assert card.title == effect_label(granted)
     assert card.description == EFFECT_DESCRIPTIONS[granted]
@@ -597,17 +597,17 @@ def test_effect_pickup_on_a_later_screen_raises_the_card_at_its_own_marker() -> 
     # The steady-state path: later screens load at a WALKING_TO_EXIT arrival, not at construction.
     scene, generation, _ = _scene_with_spy_icons([EncounterKind.NOTHING, EncounterKind.EFFECT_PICKUP])
     _resolve_next_screen(scene)  # screen 1, empty
-    assert scene._effect_card is None
+    assert scene._card is None
 
     _press(scene, pygame.K_SPACE)
     scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads: advance() applies the pickup
     granted = _granted_effect(generation)
-    assert scene._effect_card is None  # AT_ENTRY, the pickup not reached yet
+    assert scene._card is None  # AT_ENTRY, the pickup not reached yet
 
     _press(scene, pygame.K_SPACE)
     scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
 
-    card = scene._effect_card
+    card = scene._card
     assert card is not None
     assert card.title == effect_label(granted)
 
@@ -618,36 +618,36 @@ def test_a_screen_that_grants_no_effect_raises_no_card(kind: EncounterKind) -> N
 
     _resolve_next_screen(scene)
 
-    assert scene._effect_card is None
+    assert scene._card is None
 
 
 def test_an_enemy_encounter_raises_no_card() -> None:
     scene, _ = _scene([EncounterKind.ENEMY])
 
     assert isinstance(_resolve_next_screen(scene), EnterCombat)
-    assert scene._effect_card is None
+    assert scene._card is None
 
 
 def test_the_effect_card_stands_however_long_the_player_leaves_it() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
     _resolve_next_screen(scene)
-    assert scene._effect_card is not None
+    assert scene._card is not None
 
     for _ in range(100):
         assert scene.update(1.0) is None
 
-    assert scene._effect_card is not None
+    assert scene._card is not None
 
 
 def test_advancing_with_the_card_up_dismisses_it_without_starting_the_walk() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
     _resolve_next_screen(scene)
-    assert scene._effect_card is not None
+    assert scene._card is not None
 
     _press(scene, pygame.K_SPACE)
     assert scene.update(WALK_TO_EXIT_DURATION_SECONDS) is None
 
-    assert scene._effect_card is None
+    assert scene._card is None
     assert scene._phase is _Phase.RESOLVED
 
 
@@ -656,14 +656,14 @@ def test_the_frame_that_dismisses_the_card_still_advances_the_player_animation(t
     # advances the clip.
     scene = _scene_with_real_player_art(tmp_path, [EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
     _resolve_next_screen(scene)
-    assert scene._effect_card is not None
+    assert scene._card is not None
     assert scene._player_animator is not None
     before = scene._player_animator.current_frame()
 
     _press(scene, pygame.K_SPACE)
     scene.update(1 / 8)  # exactly one frame at the default 8fps test clip
 
-    assert scene._effect_card is None
+    assert scene._card is None
     after = scene._player_animator.current_frame()
     assert pygame.image.tobytes(before, "RGBA") != pygame.image.tobytes(after, "RGBA")
 
@@ -672,12 +672,12 @@ def test_a_key_bound_to_no_action_dismisses_the_card_too() -> None:
     assert pygame.K_q not in KEY_ACTIONS
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
     _resolve_next_screen(scene)
-    assert scene._effect_card is not None
+    assert scene._card is not None
 
     _press(scene, pygame.K_q)
     assert scene.update(WALK_TO_EXIT_DURATION_SECONDS) is None
 
-    assert scene._effect_card is None
+    assert scene._card is None
     assert scene._phase is _Phase.RESOLVED
 
 
@@ -686,12 +686,12 @@ def test_the_plant_key_dismisses_the_card_without_planting() -> None:
     for _ in range(_ADVANCES_TO_READY_SEED):
         _resolve_next_screen(scene)
     assert generation.is_seed_ready is True
-    assert scene._effect_card is not None
+    assert scene._card is not None
 
     _press(scene, pygame.K_p)
     scene.update(0.016)
 
-    assert scene._effect_card is None
+    assert scene._card is None
     assert generation.pending_seeds == ()
     assert generation.is_seed_ready is True
 
@@ -702,7 +702,7 @@ def test_a_second_press_advances_once_the_card_has_been_dismissed() -> None:
 
     _press(scene, pygame.K_SPACE)
     scene.update(0.016)
-    assert scene._effect_card is None
+    assert scene._card is None
 
     _press(scene, pygame.K_SPACE)
     scene.update(WALK_TO_EXIT_DURATION_SECONDS / 2)
@@ -727,10 +727,10 @@ def test_draw_centers_the_effect_card_at_the_width_battle_typesets_its_own_into(
 
     scene.draw(surface)
 
-    assert calls == [(scene._effect_card, surface.get_width() // 2, card_column_width(surface), _EFFECT_CARD_FOOTER)]
+    assert calls == [(scene._card, surface.get_width() // 2, card_column_width(surface), _CARD_FOOTER)]
 
 
-def test_draw_renders_no_effect_card_when_none_is_up(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_draw_renders_no_card_when_none_is_up(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[None] = []
     monkeypatch.setattr(
         "eye.gui.scenes.exploration.draw_card",
@@ -747,7 +747,7 @@ def test_draw_renders_no_effect_card_when_none_is_up(monkeypatch: pytest.MonkeyP
 def test_draw_with_the_effect_card_up_and_the_default_icons_does_not_raise() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
     _resolve_next_screen(scene)
-    assert scene._effect_card is not None
+    assert scene._card is not None
 
     scene.draw(pygame.Surface((800, 600)))
 
@@ -758,5 +758,5 @@ def test_the_hud_line_still_reports_the_pickup_while_the_card_is_up() -> None:
 
     _resolve_next_screen(scene)
 
-    assert scene._effect_card is not None
+    assert scene._card is not None
     assert scene._last_message == f"You feel {effect_label(granted)} take hold."
