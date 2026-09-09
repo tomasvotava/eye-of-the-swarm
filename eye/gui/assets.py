@@ -39,9 +39,7 @@ class SpriteKey(StrEnum):
     GOLEM = "golem"
     PHIDIZVIK = "phidizvik"
     TUMBLEWEED = "tumbleweed"
-    # One member per EffectName (widgets.py's SpriteBuffIcon maps between them) -- RESONANCE has
-    # no art yet, and gets no special treatment: it falls back to the placeholder shape below like
-    # any other key with no sprite.png on disk (ADR 0011's per-key, not-all-or-nothing contract).
+    # One member per EffectName (widgets.py's SpriteBuffIcon maps between them)
     EFFECT_TOXICITY = "effect_toxicity"
     EFFECT_NOURISHED = "effect_nourished"
     EFFECT_CLOUDED_JUDGEMENT = "effect_clouded_judgement"
@@ -55,6 +53,19 @@ class SpriteKey(StrEnum):
     EFFECT_WILTY = "effect_wilty"
     EFFECT_VEGETATIVE = "effect_vegetative"
     EFFECT_RESONANCE = "effect_resonance"
+    # Icons with no entity or EffectName behind them: resource pickup grants, and recoil
+    ICON_HEALTH = "icon_health"
+    ICON_SPORES = "icon_spores"
+    ICON_SEED_GROWTH = "icon_seed_growth"
+    ICON_DISTANCE_DISCOUNT = "icon_distance_discount"
+    ICON_RECOIL = "icon_recoil"
+
+
+class IconVariant(StrEnum):
+    """Named static variants of an icon, for `get_variant_set`. Borderless only: `sprite.png` is
+    itself the bordered form, so a `BORDERED` member would make `get_variant_set` raise."""
+
+    BORDERLESS = "borderless"
 
 
 class SpriteAtlas:
@@ -149,6 +160,11 @@ _PLACEHOLDER_SHAPES: Mapping[SpriteKey, _PlaceholderShape] = {
     SpriteKey.EFFECT_WILTY: _PlaceholderShape(color="dimgray", is_circle=False),
     SpriteKey.EFFECT_VEGETATIVE: _PlaceholderShape(color="olivedrab", is_circle=False),
     SpriteKey.EFFECT_RESONANCE: _PlaceholderShape(color="gold", is_circle=False),
+    SpriteKey.ICON_HEALTH: _PlaceholderShape(color="salmon", is_circle=False),
+    SpriteKey.ICON_SPORES: _PlaceholderShape(color="plum", is_circle=False),
+    SpriteKey.ICON_SEED_GROWTH: _PlaceholderShape(color="yellowgreen", is_circle=False),
+    SpriteKey.ICON_DISTANCE_DISCOUNT: _PlaceholderShape(color="steelblue", is_circle=False),
+    SpriteKey.ICON_RECOIL: _PlaceholderShape(color="tomato", is_circle=False),
 }
 
 
