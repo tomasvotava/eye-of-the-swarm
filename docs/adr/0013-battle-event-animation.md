@@ -83,8 +83,15 @@ mechanism is exactly what this amendment replaces.
     (`TurnSkipped`/`ExtraActionTriggered`/`BattleEnded`) concerns the fight rather than one side of
     it and stays centered.
   - **`Overlay`** (lighter, target-local — reuses the `HIT` animation state plus a small icon at
-    the target's position, not a card of its own): `DotTicked`, `HealApplied`. These can
-    repeat every turn; a full `Announcement` each time would get old fast.
+    the target's position, naming the effect and the signed HP it moved, not a card of its own):
+    `DotTicked`, `HealApplied`. These can repeat every turn; a full `Announcement` each time would
+    get old fast. The label sits *beside* the icon rather than stacked above it, so the block stays
+    exactly one icon tall — the HUD panel leaves no room above the taller of the two sprites, and a
+    block that grows upward runs into it, while one that grows sideways from the sprite's own
+    centre has no such ceiling. The HP it names is the movement the bar will actually make, derived
+    from `target_hp_after` rather than the event's nominal `damage`/`amount`: the domain caps a heal
+    at `max_hp` and lets a lethal tick's `target_hp_after` go negative, so a label reading the
+    nominal field would contradict the bar it exists to explain.
   - **`Tween`** alone (no animation-state change): `MeterFilled`, `MeterConsumed`.
   - `ActionChosen` is the one variant that's legitimately phase-less (`[]`).
 - **`AnimationClip` gains `loop: bool = True`.** One-shot states (`HIT`, `ATTACK`, `DEAD`) set
