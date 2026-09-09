@@ -127,6 +127,20 @@ mechanism is exactly what this amendment replaces.
   `BattleConcluded` transition are all withheld while `self._current_phases or
   self._pending_events` is truthy. `Battle` itself may already be internally ahead of what the
   player has seen; `CombatScene` only acts on that once nothing is left to play.
+- **Latching a value at a domain-call site is not the same thing as deriving it at draw time.**
+  Reading `Battle.turn_phase` to decide what to draw is ruled out — the domain resolves a whole
+  turn up front, so the phase already names whoever acts *next* rather than whoever the player is
+  watching — and that is why the acting/receiving highlight is scoped to the in-flight
+  `BattleEvent` instead. A "whose turn is it" title sits on the other side of that line: `update()`
+  stores it in the branch bodies that actually drive a turn, and `draw()` only reads what was
+  stored. Both of those bodies sit past the gating invariant's check above, so nothing is
+  resolved-but-unshown at the instant the value is taken, and it then stands for the whole turn
+  however far ahead the domain runs. The player's is latched *before* `query_player_turn()`, which
+  mutates — a Wilty roll can kill the player inside its pre-turn — so a title taken afterwards
+  would describe the fight's end rather than the turn just begun; latching first also puts the
+  skipped-turn and killed-in-pre-turn reveals under the turn they happened during. Nothing but the
+  next turn ever replaces such a value, and a finished battle has no next turn, so `BattleEnded`'s
+  phase clears it as it raises the result.
 - **Sub-issue split**, superseding the original #164/#165/#167 split (filed against Epic #163):
   1. `Phase` primitive + driver + `AnimationClip`/`Animator` loop support — foundational, no
      domain change.
