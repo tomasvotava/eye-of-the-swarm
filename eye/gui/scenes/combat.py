@@ -40,7 +40,7 @@ from eye.combat.events import (
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
-from eye.gui.assets import IconVariant, SpriteAtlas, SpriteKey
+from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
@@ -65,7 +65,7 @@ from eye.gui.widgets import (
     IconSource,
     NonEffectIcon,
     SpriteBuffIcon,
-    SpriteIcon,
+    borderless_icon,
 )
 from eye.session.generation import Generation
 
@@ -424,12 +424,6 @@ def _combatant_layout(surface: pygame.Surface, *, mirrored: bool) -> CombatantLa
     )
 
 
-def _bar_icon(atlas: SpriteAtlas, key: SpriteKey) -> SpriteIcon:
-    """`key`'s icon as a bar label: the borderless variant where the atlas carries one, the
-    bordered `sprite.png` where it carries none."""
-    return SpriteIcon(atlas, key, IconVariant.BORDERLESS if atlas.has_variant_set(key) else None)
-
-
 def _bar_icon_top(bar: pygame.Rect) -> int:
     return bar.centery - _BAR_ICON_SIZE // 2
 
@@ -527,8 +521,8 @@ class CombatScene:
             }
             self._buff_icon_factory = sprite_icons.__getitem__
         # Not routed through buff_icon_factory: these name a bar, not an effect.
-        self._hp_bar_icon = _bar_icon(atlas, SpriteKey.ICON_HEALTH)
-        self._meter_bar_icon = _bar_icon(atlas, SpriteKey.EFFECT_RESONANCE)
+        self._hp_bar_icon = borderless_icon(atlas, SpriteKey.ICON_HEALTH)
+        self._meter_bar_icon = borderless_icon(atlas, SpriteKey.EFFECT_RESONANCE)
         self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
         self._battle: Battle = generation.start_battle(encounter)
         self._pending_query: PlayerTurnNeedsAction | None = None

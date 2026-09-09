@@ -2,8 +2,9 @@
 and `SkillTreeLeaf` are `Protocol`s so an art epic can swap in a richer implementation (icon +
 text + state styling) at each scene's factory call site without touching scene code.
 `SpriteIcon` (ADR 0011) draws an atlas key's art; `SpriteBuffIcon` is its subject-keyed form and
-`CombatScene`'s production default; `TextBuffIcon` remains as a plain-text fallback/test double.
-`TextSkillTreeLeaf` is still `SkillTreeLeaf`'s only
+`CombatScene`'s default, and `borderless_icon` the form a label on bare background takes.
+`TextBuffIcon` remains as a plain-text fallback/test double. `TextSkillTreeLeaf` is still
+`SkillTreeLeaf`'s only
 implementation -- its own art epic hasn't landed yet.
 """
 
@@ -138,6 +139,12 @@ class SpriteIcon:
             scaled = pygame.transform.smoothscale(self._surface, (size, size))
             self._scaled[size] = scaled
         surface.blit(scaled, pos)
+
+
+def borderless_icon(atlas: SpriteAtlas, sprite_key: SpriteKey) -> SpriteIcon:
+    """`sprite_key`'s icon as a label on bare background: the borderless variant where the atlas
+    carries one, the bordered `sprite.png` where it carries none (ADR 0011's per-key contract)."""
+    return SpriteIcon(atlas, sprite_key, IconVariant.BORDERLESS if atlas.has_variant_set(sprite_key) else None)
 
 
 class SpriteBuffIcon(SpriteIcon):
