@@ -453,17 +453,19 @@ class Announcement:
 class Overlay:
     """The target-local counterpart to `Announcement` (ADR 0013): an icon and label drawn at `target`.
     `source` names what moved the bar (an `EffectName`, or a `NonEffectIcon` where no effect did)
-    and is not a claim that `target` wears it. `valence` is the same value the target's sprite flash
-    uses, since a clamped hp_delta of 0 has no sign to colour by."""
+    and is not a claim that `target` wears it -- hence `label`, which a reflect sets to what struck
+    the target rather than to the effect whose icon it borrows. `valence` is the same value the
+    target's sprite flash uses, since a clamped hp_delta of 0 has no sign to colour by."""
 
     target: Combatant
     source: IconSource
+    label: str
     hp_delta: int
     valence: HitValence
 
 
 def _overlay_label_lines(overlay: Overlay) -> tuple[str, str]:
-    return (_label(overlay.source), f"{overlay.hp_delta:+d} HP")
+    return (overlay.label, f"{overlay.hp_delta:+d} HP")
 
 
 @dataclass(frozen=True, slots=True)
@@ -704,22 +706,33 @@ class CombatScene:
 
         return Phase(duration_seconds=duration, on_start=on_start, on_complete=on_complete)
 
-    def _overlay_phase(self, target: Combatant, source: IconSource, hp_after: int, valence: HitValence) -> Phase:
+    def _overlay_phase(
+        self,
+        target: Combatant,
+        source: IconSource,
+        hp_after: int,
+        valence: HitValence,
+        *,
+        label: str | None = None,
+        hopping_effect: EffectName | None = None,
+    ) -> Phase:
+        """The `Overlay` treatment for one event: a flinch on `target`, an icon naming `source`, and
+        the HP it moved. `hopping_effect` is stated by the caller, never inferred from `source`: a
+        reflect's damage is credited to the *defender's* Spiky Skin, and both sides can wear it."""
         # Wraps _reaction_phase so the overlay holds for exactly the target's own flinch clip, and
         # so the label and the tint behind it name the same direction.
         reaction = self._reaction_phase(target, valence)
         displayed = self._displayed_for(target)
-        # Hops the HUD icon with the bar, but only where this combatant wears the effect: the row
-        # holds its own combatant's icons, and `source` can name an effect the other side wears.
-        hopping_effect = (
-            source
-            if isinstance(source, EffectName) and any(name is source for _, name in displayed.active_effects)
-            else None
-        )
         # The bar's actual movement, not the event's nominal damage/amount: the domain caps a heal
         # at max_hp and applies no floor to a tick.
         hp_delta = round(max(0, hp_after) - max(0.0, displayed.hp))
-        overlay = Overlay(target=target, source=source, hp_delta=hp_delta, valence=valence)
+        overlay = Overlay(
+            target=target,
+            source=source,
+            label=_label(source) if label is None else label,
+            hp_delta=hp_delta,
+            valence=valence,
+        )
 
         def on_start() -> None:
             reaction.on_start()
@@ -869,24 +882,29 @@ class CombatScene:
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case HitReflected(target=target, target_hp_after=target_hp_after):
-                # DAMAGE even though Spiky Skin is a buff -- the flash lands on whoever it hits.
+                # `target` is the attacker the damage bounces back onto, not the Spiky Skin holder
+                # who reflected it -- so the label says "Reflected" rather than naming an effect
+                # that combatant does not wear. DAMAGE for the same reason, buff though it is.
                 return [
-                    self._reaction_phase(target, HitValence.DAMAGE),
+                    self._overlay_phase(
+                        target, EffectName.SPIKY_SKIN, target_hp_after, HitValence.DAMAGE, label="Reflected"
+                    ),
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case SelfDamageTaken(combatant=combatant, combatant_hp_after=combatant_hp_after):
+                # No effect behind a recoil, so a NonEffectIcon and nothing in the HUD row hops.
                 return [
-                    self._reaction_phase(combatant, HitValence.DAMAGE),
+                    self._overlay_phase(combatant, NonEffectIcon.RECOIL, combatant_hp_after, HitValence.DAMAGE),
                     _hp_tween_phase(self._displayed_for(combatant), combatant_hp_after),
                 ]
             case DotTicked(target=target, effect=effect, target_hp_after=target_hp_after):
                 return [
-                    self._overlay_phase(target, effect, target_hp_after, HitValence.DAMAGE),
+                    self._overlay_phase(target, effect, target_hp_after, HitValence.DAMAGE, hopping_effect=effect),
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case HealApplied(target=target, effect=effect, target_hp_after=target_hp_after):
                 return [
-                    self._overlay_phase(target, effect, target_hp_after, HitValence.HEALING),
+                    self._overlay_phase(target, effect, target_hp_after, HitValence.HEALING, hopping_effect=effect),
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case _:
