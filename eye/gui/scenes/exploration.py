@@ -18,16 +18,18 @@ from eye.combat.effects import EffectName
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.animation import Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.effect_card import EffectCard, card_column_width, draw_effect_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.tuning import (
     ENCOUNTER_X_FRACTION,
     ENTRY_X_FRACTION,
     EXIT_X_FRACTION,
+    EXPLORATION_EFFECT_CARD_HOLD_SECONDS,
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
-from eye.gui.widgets import BuffIcon, SpriteBuffIcon
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon, effect_label
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -39,6 +41,8 @@ _ICON_MARGIN = 8
 _PLAYER_SCALE_FACTOR = 3.0
 _BUFF_ICON_SIZE = 28
 _BUFF_ICON_STEP = 36
+# Fixed: EffectGranted carries no category, and every effect a pickup grants is Lifespan-scoped.
+_EFFECT_CARD_SUBTITLE = "This generation"
 
 type _ScreenEvent = EffectGranted | ResourceGranted | NothingHappened
 
@@ -91,7 +95,7 @@ def _animation_state_for_phase(phase: _Phase) -> PlayerAnimationState:
 
 def _describe_screen_event(event: _ScreenEvent) -> str:
     if isinstance(event, EffectGranted):
-        return f"You feel {event.effect.name.replace('_', ' ').title()} take hold."
+        return f"You feel {effect_label(event.effect)} take hold."
     if isinstance(event, ResourceGranted):
         return f"You gain {event.amount} ({event.kind.name.replace('_', ' ').title()})."
     return "Nothing happens here."
@@ -153,6 +157,8 @@ class ExplorationScene:
         self._displayed_effects = tuple(
             effect for effect in generation.active_lifespan_effects if effect not in unrevealed
         )
+        self._effect_card: EffectCard | None = None
+        self._effect_card_remaining_seconds = 0.0
 
         # None when the atlas has no player animation data (e.g. build_placeholder_atlas()) --
         # mirrors DevAssetViewerScene's identical guard for this identical key/enum (ADR 0011).
@@ -203,6 +209,8 @@ class ExplorationScene:
             self._pending_action = action
 
     def update(self, dt: float) -> PlaySceneTransition | None:
+        # Ahead of the early returns below, so a card expires while the player stands still.
+        self._tick_effect_card(dt)
         if self._player_animator is not None:
             self._player_animator.update(dt)
         if self._phase in (_Phase.WALKING_TO_EXIT, _Phase.WALKING_TO_ENCOUNTER):
@@ -231,7 +239,16 @@ class ExplorationScene:
         # drive deterministically in tests).
         return self._advance_walk(dt)
 
+    def _tick_effect_card(self, dt: float) -> None:
+        if self._effect_card is None:
+            return
+        self._effect_card_remaining_seconds -= dt
+        if self._effect_card_remaining_seconds <= 0.0:
+            self._effect_card = None
+
     def _begin_walk(self, phase: _Phase) -> None:
+        # The card belongs to the marker being left, so advancing early clears it in this frame.
+        self._effect_card = None
         self._set_phase(phase)
         self._walk_elapsed_seconds = 0.0
 
@@ -289,7 +306,19 @@ class ExplorationScene:
         )
         if screen_event is not None:
             self._last_message = _describe_screen_event(screen_event)
+            if isinstance(screen_event, EffectGranted):
+                # Twice by design: the card is the moment, the HUD line the record it leaves.
+                self._raise_effect_card(screen_event.effect)
         return None
+
+    def _raise_effect_card(self, effect: EffectName) -> None:
+        self._effect_card = EffectCard(
+            title=effect_label(effect),
+            icon=self._buff_icon_factory(effect),
+            description=EFFECT_DESCRIPTIONS[effect],
+            subtitle=_EFFECT_CARD_SUBTITLE,
+        )
+        self._effect_card_remaining_seconds = EXPLORATION_EFFECT_CARD_HOLD_SECONDS
 
     def draw(self, surface: pygame.Surface) -> None:
         self._draw_background(surface)
@@ -298,6 +327,7 @@ class ExplorationScene:
         self._draw_status_icons(surface)
         self._draw_buff_icons(surface)
         self._draw_hud(surface)
+        self._draw_effect_card(surface)
 
     def _draw_background(self, surface: pygame.Surface) -> None:
         background = pygame.transform.scale(self._atlas.get(SpriteKey.BACKGROUND), surface.get_size())
@@ -358,6 +388,14 @@ class ExplorationScene:
         for effect in active:
             self._buff_icon_factory(effect).render(surface, pygame.Vector2(x, _ICON_MARGIN), _BUFF_ICON_SIZE)
             x += _BUFF_ICON_STEP
+
+    def _draw_effect_card(self, surface: pygame.Surface) -> None:
+        # Centred, unlike CombatScene's: out here there is only one character to point at.
+        if self._effect_card is None:
+            return
+        draw_effect_card(
+            surface, self._effect_card, center_x=surface.get_width() // 2, column_width=card_column_width(surface)
+        )
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
         font = get_font(GameFont.ITHACA, _FONT_SIZE)

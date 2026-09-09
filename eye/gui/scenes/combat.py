@@ -41,7 +41,7 @@ from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
-from eye.gui.effect_card import EffectCard, draw_effect_card
+from eye.gui.effect_card import EffectCard, card_column_width, draw_effect_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.tuning import (
@@ -67,8 +67,6 @@ _FONT_SIZE = 20
 # description, so the two read at the same weight -- this one running the screen's width, the
 # card's wrapped inside its column.
 _ANNOUNCEMENT_FONT_SIZE = 28
-# Inset from both edges of the half the card sits in, keeping it clear of the other half.
-_ANNOUNCEMENT_COLUMN_MARGIN = 16
 _MARGIN = 8
 _GAP = 4
 _BAR_WIDTH = 230
@@ -1040,7 +1038,7 @@ class CombatScene:
             surface,
             anchored.card,
             center_x=layout.sprite_center[0],
-            column_width=surface.get_width() // 2 - _ANNOUNCEMENT_COLUMN_MARGIN * 2,
+            column_width=card_column_width(surface),
         )
 
     def _draw_plain_announcement(self, surface: pygame.Surface, announcement: Announcement) -> None:

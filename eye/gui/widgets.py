@@ -39,12 +39,12 @@ class SkillTreeLeaf(Protocol):
     def render(self, surface: pygame.Surface, rect: pygame.Rect, node: SkillNode, state: SkillNodeState) -> None: ...
 
 
-def _effect_label(effect: EffectName) -> str:
+def effect_label(effect: EffectName) -> str:
     return effect.name.replace("_", " ").title()
 
 
 # PROJECT_BRIEF.md §9.7: a short, functional description of what each effect does, distinct from
-# its flavor name (`_effect_label`).
+# its flavor name (`effect_label`).
 EFFECT_DESCRIPTIONS: Mapping[EffectName, str] = {
     EffectName.TOXICITY: "Lowers HP after every turn",
     EffectName.NOURISHED: "Heals a little each turn",
@@ -68,7 +68,7 @@ class TextBuffIcon:
 
     def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
         color = _BUFF_COLOR if EFFECT_POLARITY[self.effect] is EffectPolarity.BUFF else _DEBUFF_COLOR
-        surface.blit(get_font(GameFont.ITHACA, _FONT_SIZE).render(_effect_label(self.effect), True, color), pos)
+        surface.blit(get_font(GameFont.ITHACA, _FONT_SIZE).render(effect_label(self.effect), True, color), pos)
 
 
 def _sprite_key_for(effect: EffectName) -> SpriteKey:

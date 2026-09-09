@@ -7,6 +7,11 @@ import pygame.typing
 WALK_TO_EXIT_DURATION_SECONDS = 0.6
 WALK_TO_ENCOUNTER_DURATION_SECONDS = 0.6
 
+# How long a pickup's card holds at the marker for a player who does nothing; advancing clears it
+# early. Its own knob, not an alias of BATTLE_ANNOUNCEMENT_HOLD_SECONDS, so the two can be retuned
+# apart.
+EXPLORATION_EFFECT_CARD_HOLD_SECONDS = 1.5
+
 # Fractions of the draw surface's width -- resolved only at draw time, not by update(dt), so the
 # walk timer never needs to know the surface size (ADR 0012's entry/encounter/exit x-positions).
 ENTRY_X_FRACTION = 0.1
