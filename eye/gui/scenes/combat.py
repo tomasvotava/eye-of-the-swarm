@@ -41,6 +41,7 @@ from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.effect_card import EffectCard, draw_effect_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.tuning import (
@@ -62,19 +63,12 @@ from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon
 from eye.session.generation import Generation
 
 _FONT_SIZE = 20
+# The single centered line of a plain announcement. Deliberately the same size as an effect card's
+# description, so the two read at the same weight -- this one running the screen's width, the
+# card's wrapped inside its column.
 _ANNOUNCEMENT_FONT_SIZE = 28
-_ANNOUNCEMENT_SUBTITLE_FONT_SIZE = 14
-# Ceilings, not fixed sizes: _fitted_font drops below them when a label won't fit the card's column.
-_ANNOUNCEMENT_TITLE_FONT_SIZE = 44
-_ANNOUNCEMENT_PROSE_FONT_SIZE = 28
 # Inset from both edges of the half the card sits in, keeping it clear of the other half.
 _ANNOUNCEMENT_COLUMN_MARGIN = 16
-# Floor for the shrink-to-fit search: below this the text fits its column but can't be read.
-_ANNOUNCEMENT_MIN_FONT_SIZE = 10
-# SIZE is the shipped effect-icon art's native pixel size (210x210); SCALE is a separate knob from
-# _COMBATANT_SCALE_FACTOR. Neither feeds the card's typography, which is sized off its own column.
-_ANNOUNCEMENT_ICON_SIZE = 210
-_ANNOUNCEMENT_ICON_SCALE = 0.72
 _MARGIN = 8
 _GAP = 4
 _BAR_WIDTH = 230
@@ -95,8 +89,6 @@ _BAR_BG_COLOR: pygame.typing.ColorLike = "dimgray"
 _HP_COLOR: pygame.typing.ColorLike = "firebrick"
 _METER_COLOR: pygame.typing.ColorLike = "gold"
 _CURSOR_COLOR: pygame.typing.ColorLike = "slategray"  # matches SkillTreeScene's cursor highlight
-# Dims the sprite a card lands on. Black, so it leaves no edge against the black background.
-_ANNOUNCEMENT_BACKDROP_COLOR: pygame.typing.ColorLike = (0, 0, 0, 200)
 
 # Direct numbered-key select, mirroring the TUI's numbered-menu convention (ADR 0009) -- unlike
 # ExplorationScene/SkillTreeScene, the action set here is a variable-length list from the domain,
@@ -421,42 +413,13 @@ def _lit_by_hit_flash(sprite: pygame.Surface, strength: float, valence: HitValen
     return lit
 
 
-def _fitted_font(texts: Sequence[str], max_font_size: int, max_width: int) -> pygame.font.Font:
-    """The largest Ithaca font up to `max_font_size` rendering every one of `texts` within
-    `max_width`, bottoming out at `_ANNOUNCEMENT_MIN_FONT_SIZE` even if that no longer fits."""
-    for size in range(max_font_size, _ANNOUNCEMENT_MIN_FONT_SIZE, -1):
-        font = get_font(GameFont.ITHACA, size)
-        if all(font.size(text)[0] <= max_width for text in texts):
-            return font
-    return get_font(GameFont.ITHACA, min(max_font_size, _ANNOUNCEMENT_MIN_FONT_SIZE))
-
-
-def _wrapped_lines(text: str, font: pygame.font.Font, max_width: int) -> list[str]:
-    """`text` greedily broken into lines that each render within `max_width`. A word wider than the
-    budget overruns its own line; callers size the font against the words first."""
-    lines: list[str] = []
-    current = ""
-    for word in text.split():
-        candidate = f"{current} {word}" if current else word
-        if current and font.size(candidate)[0] > max_width:
-            lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-    return lines
-
-
 @dataclass(frozen=True, slots=True)
-class EffectCard:
-    """The title/icon/subtitle/target bundle for an effect-tied `Announcement` (`EffectApplied`/
-    `EffectExpired`): all four or none, never a partial combination. `target` is the `Combatant`
-    itself so the card can be drawn over that combatant's own side."""
+class AnchoredCard:
+    """An `EffectCard` and the combatant it landed on, carried as one value: draw() picks the half
+    to centre the card over by that combatant's identity, so a card without one would anchor over
+    the wrong side instead of failing."""
 
-    title: str
-    icon: BuffIcon
-    subtitle: str
+    card: EffectCard
     target: Combatant
 
 
@@ -467,12 +430,12 @@ class Announcement:
     as "what a phase mutates" and "what draw() reads", just replaced wholesale on each transition
     rather than tweened field-by-field, since an announcement has no partial-progress value.
 
-    `text` is the sole line for a plain announcement (`card` is `None`), or the effect's short
-    prose description when `card` is set for the effect-card layout.
+    `text` is the sole line for a plain announcement (`card` is `None`); `card` is the anchored
+    effect-card block, drawn over its own combatant's half instead.
     """
 
-    text: str
-    card: EffectCard | None = None
+    text: str = ""
+    card: AnchoredCard | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -797,10 +760,10 @@ class CombatScene:
         card = EffectCard(
             title=_label(event.effect),
             icon=self._buff_icon_factory(event.effect),
+            description=EFFECT_DESCRIPTIONS[event.effect],
             subtitle=subtitle,
-            target=event.target,
         )
-        announcement = Announcement(text=EFFECT_DESCRIPTIONS[event.effect], card=card)
+        announcement = Announcement(card=AnchoredCard(card=card, target=event.target))
         applied = isinstance(event, EffectApplied)
 
         def on_start() -> None:
@@ -1066,64 +1029,22 @@ class CombatScene:
     ) -> None:
         if self._announcement is None:
             return
-        card = self._announcement.card
-        if card is None:
+        anchored = self._announcement.card
+        if anchored is None:
             # A plain announcement concerns the fight, not one side of it, so it keeps the centre.
             self._draw_plain_announcement(surface, self._announcement)
             return
         # draw() is the single place a side's left/right anchoring is decided, as for _draw_overlay.
-        layout = player_layout if card.target is self._battle.player else enemy_layout
-        self._draw_effect_announcement(surface, self._announcement.text, card, layout)
+        layout = player_layout if anchored.target is self._battle.player else enemy_layout
+        draw_effect_card(
+            surface,
+            anchored.card,
+            center_x=layout.sprite_center[0],
+            column_width=surface.get_width() // 2 - _ANNOUNCEMENT_COLUMN_MARGIN * 2,
+        )
 
     def _draw_plain_announcement(self, surface: pygame.Surface, announcement: Announcement) -> None:
         font = get_font(GameFont.ITHACA, _ANNOUNCEMENT_FONT_SIZE)
         text_surface = font.render(announcement.text, True, _TEXT_COLOR)
         text_pos = (surface.get_width() // 2 - text_surface.get_width() // 2, surface.get_height() // 2)
         surface.blit(text_surface, text_pos)
-
-    def _draw_effect_announcement(
-        self, surface: pygame.Surface, prose: str, card: EffectCard, layout: CombatantLayout
-    ) -> None:
-        # Card layout: title / icon box / prose / subtitle, stacked over the affected combatant's
-        # own half. Every piece is typeset to that half's width less its margins, not off the rest.
-        column_width = surface.get_width() // 2 - _ANNOUNCEMENT_COLUMN_MARGIN * 2
-        title_surface = _fitted_font((card.title,), _ANNOUNCEMENT_TITLE_FONT_SIZE, column_width).render(
-            card.title, True, _TEXT_COLOR
-        )
-        # Fitted against the individual words: wrapping handles the length.
-        prose_font = _fitted_font(prose.split(), _ANNOUNCEMENT_PROSE_FONT_SIZE, column_width)
-        prose_surfaces = [
-            prose_font.render(line, True, _TEXT_COLOR) for line in _wrapped_lines(prose, prose_font, column_width)
-        ]
-        subtitle_surface = _fitted_font((card.subtitle,), _ANNOUNCEMENT_SUBTITLE_FONT_SIZE, column_width).render(
-            card.subtitle, True, _TEXT_COLOR
-        )
-        icon_box_size = min(int(_ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE), column_width)
-
-        prose_height = sum(line.height for line in prose_surfaces)
-        block_height = title_surface.height + icon_box_size + prose_height + subtitle_surface.height + _GAP * 3
-        block_width = max(
-            title_surface.width, icon_box_size, subtitle_surface.width, *(line.width for line in prose_surfaces)
-        )
-        center_x = layout.sprite_center[0]
-        top = surface.get_height() // 2 - block_height // 2
-
-        backdrop = pygame.Rect(0, 0, block_width + _GAP * 2, block_height + _GAP * 2)
-        backdrop.center = (center_x, top + block_height // 2)
-        # Blitted from an SRCALPHA surface: pygame.draw would write the alpha instead of blending.
-        panel = pygame.Surface(backdrop.size, pygame.SRCALPHA)
-        panel.fill(_ANNOUNCEMENT_BACKDROP_COLOR)
-        surface.blit(panel, backdrop.topleft)
-
-        surface.blit(title_surface, (center_x - title_surface.width // 2, top))
-        icon_rect = pygame.Rect(
-            center_x - icon_box_size // 2, top + title_surface.height + _GAP, icon_box_size, icon_box_size
-        )
-        pygame.draw.rect(surface, _TEXT_COLOR, icon_rect, width=2)
-        card.icon.render(surface, pygame.Vector2(icon_rect.topleft), icon_box_size)
-
-        prose_top = icon_rect.bottom + _GAP
-        for line in prose_surfaces:
-            surface.blit(line, (center_x - line.width // 2, prose_top))
-            prose_top += line.height
-        surface.blit(subtitle_surface, (center_x - subtitle_surface.width // 2, prose_top + _GAP))
