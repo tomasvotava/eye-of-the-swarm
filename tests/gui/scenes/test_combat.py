@@ -36,12 +36,19 @@ from eye.combat.tuning import RESONANCE_METER_PREFILL_RATIO
 from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered
 from eye.gui.app import _WINDOW_SIZE
-from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.assets import (
+    PLACEHOLDER_SPRITE_SIZE,
+    IconVariant,
+    SpriteKey,
+    build_art_atlas,
+    build_placeholder_atlas,
+)
 from eye.gui.card import Card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
     _BAR_HEIGHT,
+    _BAR_ICON_SIZE,
     _BAR_WIDTH,
     _BUFF_ICON_DURATION_FONT_SIZE,
     _BUFF_ICON_HOP_CEILING,
@@ -95,7 +102,15 @@ from eye.gui.tuning import (
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, IconSource, NonEffectIcon, SpriteBuffIcon, TextBuffIcon
+from eye.gui.widgets import (
+    EFFECT_DESCRIPTIONS,
+    BuffIcon,
+    IconSource,
+    NonEffectIcon,
+    SpriteBuffIcon,
+    SpriteIcon,
+    TextBuffIcon,
+)
 from eye.session.generation import Generation
 from tests.session.doubles import ScriptedEncounterRandom
 
@@ -476,7 +491,7 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
     scene.draw(surface)
 
     # The mirrored row anchors at bar_right, which is not where the enemy sprite sits.
-    icon_row_x = (surface.get_width() - _MARGIN) - _GAP
+    icon_row_x = _combatant_layout(surface, mirrored=True).bar_right
     icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
     # A generous band around the icon row's y-position, well clear of the menu/log which anchor
     # to the bottom of the surface -- isolates the icon row from the sprite/bars drawn above it.
@@ -497,17 +512,20 @@ def test_combatant_layout_hangs_a_mirrored_panel_off_the_opposite_edge() -> None
     player = _combatant_layout(surface, mirrored=False)
     enemy = _combatant_layout(surface, mirrored=True)
 
+    gutter = _BAR_ICON_SIZE + _GAP
     assert player == CombatantLayout(
         mirrored=False,
         sprite_center=(surface.get_width() // 4, surface.get_height() // 2),
-        bar_left=_MARGIN + _GAP,
-        bar_right=_MARGIN + _GAP + _BAR_WIDTH,
+        bar_left=_MARGIN + _GAP + gutter,
+        bar_right=_MARGIN + _GAP + gutter + _BAR_WIDTH,
+        bar_icon_left=_MARGIN + _GAP,
     )
     assert enemy == CombatantLayout(
         mirrored=True,
         sprite_center=(surface.get_width() // 4 * 3, surface.get_height() // 2),
-        bar_left=surface.get_width() - _MARGIN - _GAP - _BAR_WIDTH,
-        bar_right=surface.get_width() - _MARGIN - _GAP,
+        bar_left=surface.get_width() - _MARGIN - _GAP - gutter - _BAR_WIDTH,
+        bar_right=surface.get_width() - _MARGIN - _GAP - gutter,
+        bar_icon_left=surface.get_width() - _MARGIN - _GAP - _BAR_ICON_SIZE,
     )
 
 
@@ -516,6 +534,100 @@ def test_combatant_layout_centers_each_frame_on_the_sprite_anchor() -> None:
 
     assert layout.sprite_topleft(pygame.Surface((40, 30))) == (200 - 20, 300 - 15)
     assert layout.sprite_topleft(pygame.Surface((60, 30))) == (200 - 30, 300 - 15)
+
+
+def _hud_bar_rects(layout: CombatantLayout) -> tuple[pygame.Rect, pygame.Rect]:
+    hp_rect = pygame.Rect(layout.bar_left, _MARGIN + _FONT_SIZE, _BAR_WIDTH, _BAR_HEIGHT)
+    return hp_rect, pygame.Rect(layout.bar_left, hp_rect.bottom + _GAP, _BAR_WIDTH, _METER_HEIGHT)
+
+
+def _bar_icon_boxes(layout: CombatantLayout) -> tuple[pygame.Rect, pygame.Rect]:
+    def centred_on(bar: pygame.Rect) -> pygame.Rect:
+        top = bar.top + (bar.height - _BAR_ICON_SIZE) // 2
+        return pygame.Rect(layout.bar_icon_left, top, _BAR_ICON_SIZE, _BAR_ICON_SIZE)
+
+    hp_rect, meter_rect = _hud_bar_rects(layout)
+    return centred_on(hp_rect), centred_on(meter_rect)
+
+
+@pytest.mark.parametrize("mirrored", [False, True])
+def test_each_bar_is_labelled_by_its_own_borderless_icon_scaled_into_the_gutter_box(mirrored: bool) -> None:
+    # The real art, not a fixture: build_placeholder_atlas() is 32x32 for every key and the
+    # tmp_path helpers write 4x4, so only a 210x210 source can catch an unscaled blit.
+    atlas = build_art_atlas(Path("eye/gui/sprites"))
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), atlas)
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+    layout = _combatant_layout(surface, mirrored=mirrored)
+
+    scene._draw_combatant(
+        surface,
+        scene._battle.enemy if mirrored else scene._battle.player,
+        scene._enemy_displayed if mirrored else scene._player_displayed,
+        layout,
+    )
+
+    for key, box in zip((SpriteKey.ICON_HEALTH, SpriteKey.EFFECT_RESONANCE), _bar_icon_boxes(layout), strict=True):
+        expected = pygame.Surface(_WINDOW_SIZE)
+        expected.fill(_UNDRAWN)
+        SpriteIcon(atlas, key, IconVariant.BORDERLESS).render(expected, pygame.Vector2(box.topleft), _BAR_ICON_SIZE)
+
+        assert pygame.image.tobytes(surface.subsurface(box), "RGBA") == pygame.image.tobytes(
+            expected.subsurface(box), "RGBA"
+        ), key
+
+
+@pytest.mark.parametrize("mirrored", [False, True])
+def test_the_bar_icons_stay_in_the_gutter_outboard_of_the_rest_of_the_panel(mirrored: bool) -> None:
+    # An icon painted over a bar hides the fill exactly when the fill is short.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
+    combatant = scene._battle.enemy if mirrored else scene._battle.player
+    displayed = scene._enemy_displayed if mirrored else scene._player_displayed
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+    layout = _combatant_layout(surface, mirrored=mirrored)
+    hp_rect, meter_rect = _hud_bar_rects(layout)
+    hp_box, meter_box = _bar_icon_boxes(layout)
+
+    scene._draw_combatant(surface, combatant, displayed, layout)
+
+    # The band outboard of the bars, down to the buff row: nothing but the bar icons is drawn here.
+    icon_row_top = meter_rect.bottom + _GAP
+    gutter = (
+        pygame.Rect(layout.bar_right, 0, surface.get_width() - layout.bar_right, icon_row_top)
+        if mirrored
+        else pygame.Rect(0, 0, layout.bar_left, icon_row_top)
+    )
+    band = surface.subsurface(gutter)
+    band.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
+    drawn = band.get_bounding_rect().move(gutter.topleft)
+    font = get_font(GameFont.ITHACA, _FONT_SIZE)
+    hp_label = pygame.Rect(0, hp_rect.top, *font.size(f"{round(displayed.hp)}/{combatant.base_stats.max_hp}"))
+    if mirrored:
+        hp_label.right = hp_rect.left - _GAP
+    else:
+        hp_label.left = hp_rect.right + _GAP
+    # The row's whole allowance, hop headroom included.
+    buff_row = pygame.Rect(
+        layout.bar_left,
+        icon_row_top - _BUFF_ICON_HOP_CEILING,
+        _BAR_WIDTH,
+        _BUFF_ICON_SIZE + _BUFF_ICON_HOP_CEILING,
+    )
+
+    assert drawn.size != (0, 0)  # an empty rect is inside everything, and would prove nothing
+    assert hp_box.union(meter_box).contains(drawn)
+    assert surface.get_rect().contains(drawn)
+    for box in (hp_box, meter_box):
+        assert surface.get_rect().contains(box)
+        assert not box.colliderect(hp_rect)
+        assert not box.colliderect(meter_rect)
+        assert not box.colliderect(hp_label)
+        assert not box.colliderect(buff_row)
+        outboard_of_the_bars = box.left >= layout.bar_right if mirrored else box.right <= layout.bar_left
+        assert outboard_of_the_bars
 
 
 _ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded)
@@ -1435,12 +1547,15 @@ def test_draw_keeps_a_hopping_icon_flush_inside_the_mirrored_rows_right_edge() -
 
     hop = scene._buff_icon_hop_offset(scene._enemy_displayed, EffectName.TOXICITY)
     assert hop > 0, "expected the icon to be off the ground"
-    icon_row_x = (surface.get_width() - _MARGIN) - _GAP
+    layout = _combatant_layout(surface, mirrored=True)
+    icon_row_x = layout.bar_right
     icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
     # Sampled from the icon's lifted top, so the rows the hop moves it into are inside the band.
     icon_band = range(icon_row_top - hop, icon_row_top + _FONT_SIZE * 2)
     black = pygame.Color("black")
-    icon_columns = [x for x in range(surface.get_width()) if any(surface.get_at((x, y)) != black for y in icon_band)]
+    # Scanned inboard of the icon gutter: the meter bar's icon reaches into this band and would
+    # otherwise be the rightmost column found.
+    icon_columns = [x for x in range(icon_row_x) if any(surface.get_at((x, y)) != black for y in icon_band)]
 
     assert icon_columns, "expected the enemy's buff icons to render"
     assert max(icon_columns) == icon_row_x - 1
@@ -1561,7 +1676,7 @@ def test_draw_buff_icons_shows_the_remaining_turns_number_in_the_icons_top_right
 
     # Mirrors _draw_combatant's own icon-row geometry for the (non-mirrored) player side --
     # the first icon starts exactly at (bar_left, icon_row_top), per _draw_buff_icons.
-    bar_left = _MARGIN + _GAP
+    bar_left = _combatant_layout(surface, mirrored=False).bar_left
     icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
     white = pygame.Color("white")
     assert any(
@@ -1581,7 +1696,7 @@ def test_draw_buff_icons_shows_no_number_for_an_indefinite_effect() -> None:
 
     scene.draw(surface)
 
-    bar_left = _MARGIN + _GAP
+    bar_left = _combatant_layout(surface, mirrored=False).bar_left
     icon_row_top = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _METER_HEIGHT + _GAP * 2
     white = pygame.Color("white")
     assert not any(
