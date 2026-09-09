@@ -1,6 +1,6 @@
 import json
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pygame
@@ -59,6 +59,7 @@ from eye.gui.scenes.combat import (
     _METER_HEIGHT,
     _OVERLAY_ICON_SIZE,
     _OVERLAY_LABEL_FONT_SIZE,
+    _TEXT_COLOR,
     ACTION_KEYS,
     Announcement,
     CombatAnimationState,
@@ -66,6 +67,8 @@ from eye.gui.scenes.combat import (
     CombatScene,
     DisplayedCombatantState,
     EffectCard,
+    HitFlash,
+    HitValence,
     Overlay,
     Phase,
     PhaseFocus,
@@ -79,6 +82,7 @@ from eye.gui.scenes.combat import (
     _LoadedCombatAnimationState,
     _overlay_label_lines,
     _resolve_enemy_sprite_key,
+    _valence_color,
 )
 from eye.gui.tuning import (
     BATTLE_ACTING_HIGHLIGHT_COLOR,
@@ -87,7 +91,9 @@ from eye.gui.tuning import (
     BATTLE_BUFF_ICON_HOP_PIXELS,
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS,
+    BATTLE_HIT_FLASH_DAMAGE_COLOR,
     BATTLE_HIT_FLASH_DURATION_SECONDS,
+    BATTLE_HIT_FLASH_HEALING_COLOR,
     BATTLE_HIT_FLASH_STRENGTH,
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
@@ -873,7 +879,7 @@ def test_reaction_phase_drives_hit_then_resets_to_idle(tmp_path: Path) -> None:
     scene = CombatScene(generation, _encounter(generation), atlas)
     assert scene._player_animator is not None
 
-    reaction = scene._reaction_phase(scene._battle.player)
+    reaction = scene._reaction_phase(scene._battle.player, HitValence.DAMAGE)
     reaction.on_start()
     player_state: CombatAnimationState = scene._player_animator.state
     assert player_state == CombatAnimationState.HIT
@@ -926,7 +932,9 @@ def test_overlay_phase_shows_the_effect_at_the_target_on_start_and_clears_it_on_
     assert scene._overlay is None
 
     phases[0].on_start()
-    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-3)
+    assert scene._overlay == Overlay(
+        target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-3, valence=HitValence.DAMAGE
+    )
 
     phases[0].on_complete()
     assert scene._overlay is None
@@ -958,7 +966,9 @@ def test_heal_applied_tweens_the_targets_displayed_hp_up_after_its_overlay() -> 
 
     assert len(phases) == 2
     phases[0].on_start()
-    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.NOURISHED, hp_delta=4)
+    assert scene._overlay == Overlay(
+        target=scene._battle.player, effect=EffectName.NOURISHED, hp_delta=4, valence=HitValence.HEALING
+    )
     phases[1].on_progress(0.5)
     assert scene._player_displayed.hp == pytest.approx(7.0)
     phases[1].on_complete()
@@ -979,7 +989,7 @@ def test_draw_renders_the_overlay_icon_above_the_targets_own_sprite(mirrored: bo
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
     target = scene._battle.enemy if mirrored else scene._battle.player
-    scene._overlay = Overlay(target=target, effect=EffectName.TOXICITY, hp_delta=-2)
+    scene._overlay = Overlay(target=target, effect=EffectName.TOXICITY, hp_delta=-2, valence=HitValence.DAMAGE)
     surface = pygame.Surface((800, 600))
 
     scene.draw(surface)
@@ -1012,10 +1022,14 @@ def test_overlay_carries_the_hp_its_event_moved_signed_by_direction() -> None:
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
     scene._phases_for(_dot_ticked(scene, damage=3))[0].on_start()
-    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-3)
+    assert scene._overlay == Overlay(
+        target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-3, valence=HitValence.DAMAGE
+    )
 
     scene._phases_for(_heal_applied(scene, amount=2))[0].on_start()
-    assert scene._overlay == Overlay(target=scene._battle.enemy, effect=EffectName.NOURISHED, hp_delta=2)
+    assert scene._overlay == Overlay(
+        target=scene._battle.enemy, effect=EffectName.NOURISHED, hp_delta=2, valence=HitValence.HEALING
+    )
 
 
 def test_the_overlay_label_reports_the_movement_a_capped_heal_actually_makes() -> None:
@@ -1055,7 +1069,10 @@ def test_the_overlay_label_reports_the_movement_an_overkill_tick_actually_makes(
 def test_overlay_label_names_the_effect_and_the_signed_hp_it_moved(
     effect: EffectName, hp_delta: int, expected: tuple[str, str]
 ) -> None:
-    assert _overlay_label_lines(Overlay(target=_combatant(), effect=effect, hp_delta=hp_delta)) == expected
+    assert (
+        _overlay_label_lines(Overlay(target=_combatant(), effect=effect, hp_delta=hp_delta, valence=HitValence.DAMAGE))
+        == expected
+    )
 
 
 def test_draw_lays_the_overlay_label_beside_its_icon_vertically_centered_against_it() -> None:
@@ -1067,7 +1084,9 @@ def test_draw_lays_the_overlay_label_beside_its_icon_vertically_centered_against
     scene = CombatScene(
         generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=lambda effect: _SilentIcon()
     )
-    scene._overlay = Overlay(target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-2)
+    scene._overlay = Overlay(
+        target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-2, valence=HitValence.DAMAGE
+    )
     surface = pygame.Surface((800, 600))
     surface.fill(_UNDRAWN)
 
@@ -1095,7 +1114,7 @@ def test_every_overlay_block_clears_the_hud_panel_of_the_real_window(effect: Eff
     generation = _generation(strain_queue=[Strain.BEATLE])
     scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
     target = scene._battle.enemy if mirrored else scene._battle.player
-    scene._overlay = Overlay(target=target, effect=effect, hp_delta=-99)
+    scene._overlay = Overlay(target=target, effect=effect, hp_delta=-99, valence=HitValence.DAMAGE)
     surface = pygame.Surface(_WINDOW_SIZE)
     # _UNDRAWN is not a colour the icon art paints, or the colourkey would key it back out.
     surface.fill(_UNDRAWN)
@@ -1116,7 +1135,9 @@ def test_every_encounterable_strain_leaves_the_overlay_block_clear_of_the_hud(st
     # A future strain shipped with a taller frame should fail here, not quietly eat the clearance.
     generation = _generation(strain_queue=[strain])
     scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
-    scene._overlay = Overlay(target=scene._battle.enemy, effect=EffectName.TOXICITY, hp_delta=-2)
+    scene._overlay = Overlay(
+        target=scene._battle.enemy, effect=EffectName.TOXICITY, hp_delta=-2, valence=HitValence.DAMAGE
+    )
     surface = pygame.Surface(_WINDOW_SIZE)
     surface.fill(_UNDRAWN)
 
@@ -1830,7 +1851,7 @@ def test_reaction_phase_focuses_only_the_receiving_combatant() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
-    scene._reaction_phase(scene._battle.player).on_start()
+    scene._reaction_phase(scene._battle.player, HitValence.DAMAGE).on_start()
 
     assert scene._phase_focus == PhaseFocus(receiving=scene._battle.player)
     assert scene._highlight_color_for(scene._battle.enemy) is None
@@ -1983,27 +2004,27 @@ def test_swing_phase_flashes_the_target_only_and_clears_it_when_the_swing_comple
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
     swing = scene._phases_for(_hit_landed(scene))[0]
-    assert scene._enemy_displayed.hit_flash_started_at is None  # not set until on_start actually fires
+    assert scene._enemy_displayed.hit_flash is None  # not set until on_start actually fires
 
     swing.on_start()
-    assert scene._enemy_displayed.hit_flash_started_at == scene._elapsed_seconds
-    assert scene._player_displayed.hit_flash_started_at is None  # the attacker is not being hit
+    assert scene._enemy_displayed.hit_flash == HitFlash(scene._elapsed_seconds, HitValence.DAMAGE)
+    assert scene._player_displayed.hit_flash is None  # the attacker is not being hit
 
     swing.on_complete()
-    assert scene._enemy_displayed.hit_flash_started_at is None
+    assert scene._enemy_displayed.hit_flash is None
 
 
 def test_reaction_phase_flashes_the_flinching_combatant() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
-    reaction = scene._reaction_phase(scene._battle.player)
+    reaction = scene._reaction_phase(scene._battle.player, HitValence.DAMAGE)
     reaction.on_start()
-    assert scene._player_displayed.hit_flash_started_at == scene._elapsed_seconds
-    assert scene._enemy_displayed.hit_flash_started_at is None
+    assert scene._player_displayed.hit_flash == HitFlash(scene._elapsed_seconds, HitValence.DAMAGE)
+    assert scene._enemy_displayed.hit_flash is None
 
     reaction.on_complete()
-    assert scene._player_displayed.hit_flash_started_at is None
+    assert scene._player_displayed.hit_flash is None
 
 
 def test_overlay_phase_inherits_the_reactions_flash() -> None:
@@ -2012,10 +2033,93 @@ def test_overlay_phase_inherits_the_reactions_flash() -> None:
 
     overlay_phase = scene._phases_for(_dot_ticked(scene))[0]
     overlay_phase.on_start()
-    assert scene._player_displayed.hit_flash_started_at == scene._elapsed_seconds
+    assert scene._player_displayed.hit_flash == HitFlash(scene._elapsed_seconds, HitValence.DAMAGE)
 
     overlay_phase.on_complete()
-    assert scene._player_displayed.hit_flash_started_at is None
+    assert scene._player_displayed.hit_flash is None
+
+
+_FLASH_VALENCE_BY_EVENT_TYPE: Mapping[type[object], HitValence] = {
+    HitLanded: HitValence.DAMAGE,
+    HitReflected: HitValence.DAMAGE,
+    SelfDamageTaken: HitValence.DAMAGE,
+    DotTicked: HitValence.DAMAGE,
+    HealApplied: HitValence.HEALING,
+    Revive: HitValence.HEALING,
+}
+
+
+def test_only_the_events_that_move_hp_flash_and_each_carries_its_own_valence() -> None:
+    # Driven off the one-of-each list, so a new event variant has to declare whether it flashes.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    flashed: dict[type[object], HitValence] = {}
+    for event in _ONE_OF_EACH_BATTLE_EVENT:
+        scene._enemy_displayed.hit_flash = None
+        for phase in scene._phases_for(event):
+            phase.on_start()
+        flash = scene._enemy_displayed.hit_flash
+        if flash is not None:
+            flashed[type(event)] = flash.valence
+
+    assert flashed == _FLASH_VALENCE_BY_EVENT_TYPE
+
+
+_PALE_TINT_MAX_SATURATION_PERCENT = 40.0  # above this a tint reads as pigment, not as light
+
+
+def test_both_flash_tints_stay_pale_enough_to_blow_a_sprite_out() -> None:
+    damage = pygame.Color(BATTLE_HIT_FLASH_DAMAGE_COLOR)
+    healing = pygame.Color(BATTLE_HIT_FLASH_HEALING_COLOR)
+
+    for tint in (damage, healing):
+        _, saturation, value, _ = tint.hsva
+        assert value == pytest.approx(100.0)  # the flash is light, not pigment
+        assert saturation < _PALE_TINT_MAX_SATURATION_PERCENT
+
+    # Still told apart: each leads on its own channel.
+    assert damage.r == max(damage.r, damage.g, damage.b)
+    assert healing.g == max(healing.r, healing.g, healing.b)
+
+
+def test_an_overlay_and_the_flash_beneath_it_read_the_same_valence() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    for event, expected in ((_dot_ticked(scene), HitValence.DAMAGE), (_heal_applied(scene), HitValence.HEALING)):
+        scene._phases_for(event)[0].on_start()
+
+        flash = scene._displayed_for(event.target).hit_flash
+        assert flash is not None
+        assert scene._overlay is not None
+        assert flash.valence is expected
+        assert scene._overlay.valence is expected
+
+
+@pytest.mark.parametrize("valence", list(HitValence))
+def test_the_overlays_hp_amount_is_printed_in_its_valences_colour(valence: HitValence) -> None:
+    class _SilentIcon:
+        def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
+            return None
+
+    generation = _generation()
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=lambda effect: _SilentIcon()
+    )
+    scene._overlay = Overlay(target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-2, valence=valence)
+    surface = pygame.Surface((400, 300))
+    surface.fill("black")
+
+    scene._draw_overlay(surface, _combatant_layout(surface, mirrored=False), _combatant_layout(surface, mirrored=True))
+
+    painted = {
+        tuple(surface.get_at((x, y)))[:3] for x in range(surface.get_width()) for y in range(surface.get_height())
+    }
+    opposite = next(other for other in HitValence if other is not valence)
+    assert tuple(pygame.Color(_valence_color(valence)))[:3] in painted
+    assert tuple(pygame.Color(_valence_color(opposite)))[:3] not in painted
+    assert tuple(pygame.Color(_TEXT_COLOR))[:3] in painted  # the name stays neutral
 
 
 def test_hit_flash_peaks_on_impact_and_decays_over_its_own_duration() -> None:
@@ -2024,7 +2128,7 @@ def test_hit_flash_peaks_on_impact_and_decays_over_its_own_duration() -> None:
     displayed = scene._player_displayed
     assert scene._hit_flash_strength(displayed) == 0.0  # nothing lit before a hit lands
 
-    scene._reaction_phase(scene._battle.player).on_start()
+    scene._reaction_phase(scene._battle.player, HitValence.DAMAGE).on_start()
     assert scene._hit_flash_strength(displayed) == pytest.approx(BATTLE_HIT_FLASH_STRENGTH)
 
     scene._elapsed_seconds += BATTLE_HIT_FLASH_DURATION_SECONDS / 2
@@ -2039,7 +2143,7 @@ def test_drawing_a_hit_flash_leaves_the_animators_cached_frame_untouched(tmp_pat
     atlas = build_art_atlas(tmp_path)
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), atlas)
-    scene._reaction_phase(scene._battle.player).on_start()
+    scene._reaction_phase(scene._battle.player, HitValence.DAMAGE).on_start()
     frame = scene._current_sprite(scene._battle.player)
     pixels_before = pygame.image.tobytes(frame, "RGBA")
 

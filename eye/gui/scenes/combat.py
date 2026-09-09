@@ -11,7 +11,7 @@ import math
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from enum import Enum, StrEnum
+from enum import Enum, StrEnum, auto
 from typing import assert_never
 
 import pygame
@@ -51,8 +51,9 @@ from eye.gui.tuning import (
     BATTLE_DEATH_POSE_HOLD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS,
     BATTLE_HIGHLIGHT_PULSE_STRENGTH,
-    BATTLE_HIT_FLASH_COLOR,
+    BATTLE_HIT_FLASH_DAMAGE_COLOR,
     BATTLE_HIT_FLASH_DURATION_SECONDS,
+    BATTLE_HIT_FLASH_HEALING_COLOR,
     BATTLE_HIT_FLASH_STRENGTH,
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
@@ -257,6 +258,33 @@ def _build_combat_animator(
     return Animator(clips, initial_state=CombatAnimationState.IDLE)
 
 
+class HitValence(Enum):
+    """Whether the moment landing on a combatant helped or hurt them. Taken from the event, never
+    from `EFFECT_POLARITY`: Spiky Skin is a buff whose `HitReflected` damages the combatant flashed."""
+
+    DAMAGE = auto()
+    HEALING = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class HitFlash:
+    """A sprite flash in flight: when the blow landed, and which way it went."""
+
+    started_at: float
+    valence: HitValence
+
+
+def _valence_color(valence: HitValence) -> pygame.typing.ColorLike:
+    """The colour a `HitValence` speaks in, read by both the sprite flash and the overlay label."""
+    match valence:
+        case HitValence.DAMAGE:
+            return BATTLE_HIT_FLASH_DAMAGE_COLOR
+        case HitValence.HEALING:
+            return BATTLE_HIT_FLASH_HEALING_COLOR
+        case _:
+            assert_never(valence)
+
+
 @dataclass(slots=True)
 class DisplayedCombatantState:
     """What `_draw_combatant` actually renders (ADR 0013) -- mutated only by `Phase` callbacks,
@@ -276,9 +304,9 @@ class DisplayedCombatantState:
     # the one call site (Battle.resolve_enemy_turn) where the domain actually ticks Battle-scoped
     # durations, rather than reading Combatant.effects live (ADR 0013's invariant).
     remaining_turns: dict[tuple[EffectCategory, EffectName], int | None] = field(default_factory=dict)
-    # Scene-clock reading of the last impact, or None while nothing flashes. Per-combatant because
+    # The last impact and what it did, or None while nothing flashes. Per-combatant because
     # PhaseFocus.receiving also covers heals, revives and deaths, which are not impacts.
-    hit_flash_started_at: float | None = None
+    hit_flash: HitFlash | None = None
     # Scene-clock reading of each effect's tick hop; an absent key means that icon is at rest.
     # Keyed by EffectName alone to match the row, which draws one icon per name whatever category.
     effect_tick_started_at: dict[EffectName, float] = field(default_factory=dict)
@@ -380,10 +408,10 @@ def _combatant_layout(surface: pygame.Surface, *, mirrored: bool) -> CombatantLa
     )
 
 
-def _lit_by_hit_flash(sprite: pygame.Surface, strength: float) -> pygame.Surface:
-    """A copy of `sprite` with `strength` (0-1) of `BATTLE_HIT_FLASH_COLOR` added to its pixels.
+def _lit_by_hit_flash(sprite: pygame.Surface, strength: float, valence: HitValence) -> pygame.Surface:
+    """A copy of `sprite` with `strength` (0-1) of `valence`'s tint added to its pixels.
     Copied because an animator's frames are shared by every draw of that clip."""
-    color = pygame.Color(BATTLE_HIT_FLASH_COLOR)
+    color = pygame.Color(_valence_color(valence))
     lit = sprite.copy()
     # RGB_ADD, not RGBA_ADD: adding alpha too would light up the sprite's transparent margin.
     lit.fill(
@@ -449,11 +477,14 @@ class Announcement:
 
 @dataclass(frozen=True, slots=True)
 class Overlay:
-    """The target-local counterpart to `Announcement` (ADR 0013): an icon and label drawn at `target`."""
+    """The target-local counterpart to `Announcement` (ADR 0013): an icon and label drawn at `target`.
+    `valence` is the same value the target's sprite flash uses, since a clamped hp_delta of 0 has no
+    sign to colour by."""
 
     target: Combatant
     effect: EffectName
     hp_delta: int
+    valence: HitValence
 
 
 def _overlay_label_lines(overlay: Overlay) -> tuple[str, str]:
@@ -655,14 +686,14 @@ class CombatScene:
 
         def on_start() -> None:
             self._phase_focus = PhaseFocus(acting=source, receiving=target)
-            target_displayed.hit_flash_started_at = self._elapsed_seconds
+            target_displayed.hit_flash = HitFlash(started_at=self._elapsed_seconds, valence=HitValence.DAMAGE)
             if source_animator is not None:
                 source_animator.set_state(CombatAnimationState.ATTACK)
             if target_animator is not None:
                 target_animator.set_state(CombatAnimationState.HIT)
 
         def on_complete() -> None:
-            target_displayed.hit_flash_started_at = None
+            target_displayed.hit_flash = None
             if source_animator is not None:
                 source_animator.set_state(CombatAnimationState.IDLE)
             if target_animator is not None:
@@ -670,7 +701,7 @@ class CombatScene:
 
         return Phase(duration_seconds=max(source_duration, target_duration), on_start=on_start, on_complete=on_complete)
 
-    def _reaction_phase(self, combatant: Combatant) -> Phase:
+    def _reaction_phase(self, combatant: Combatant, valence: HitValence) -> Phase:
         # Target-only treatment for a reflect/recoil hit (ADR 0013) -- no attacker swing to drive.
         animator = self._animator_for(combatant)
         duration = animator.duration_of(CombatAnimationState.HIT) if animator else 0.0
@@ -678,25 +709,26 @@ class CombatScene:
 
         def on_start() -> None:
             self._phase_focus = PhaseFocus(receiving=combatant)
-            displayed.hit_flash_started_at = self._elapsed_seconds
+            displayed.hit_flash = HitFlash(started_at=self._elapsed_seconds, valence=valence)
             if animator is not None:
                 animator.set_state(CombatAnimationState.HIT)
 
         def on_complete() -> None:
-            displayed.hit_flash_started_at = None
+            displayed.hit_flash = None
             if animator is not None:
                 animator.set_state(CombatAnimationState.IDLE)
 
         return Phase(duration_seconds=duration, on_start=on_start, on_complete=on_complete)
 
-    def _overlay_phase(self, target: Combatant, effect: EffectName, hp_after: int) -> Phase:
-        # Wraps _reaction_phase so the overlay holds for exactly the target's own flinch clip.
-        reaction = self._reaction_phase(target)
+    def _overlay_phase(self, target: Combatant, effect: EffectName, hp_after: int, valence: HitValence) -> Phase:
+        # Wraps _reaction_phase so the overlay holds for exactly the target's own flinch clip, and
+        # so the label and the tint behind it name the same direction.
+        reaction = self._reaction_phase(target, valence)
         displayed = self._displayed_for(target)
         # The bar's actual movement, not the event's nominal damage/amount: the domain caps a heal
         # at max_hp and applies no floor to a tick.
         hp_delta = round(max(0, hp_after) - max(0.0, displayed.hp))
-        overlay = Overlay(target=target, effect=effect, hp_delta=hp_delta)
+        overlay = Overlay(target=target, effect=effect, hp_delta=hp_delta, valence=valence)
 
         def on_start() -> None:
             reaction.on_start()
@@ -804,11 +836,15 @@ class CombatScene:
                 return [Phase(duration_seconds=BATTLE_DEATH_POSE_HOLD_SECONDS, on_start=on_start)]
             case Revive(combatant=combatant, revived_hp=revived_hp):
                 animator = self._animator_for(combatant)
+                displayed = self._displayed_for(combatant)
 
                 def on_start() -> None:
                     # Set on the instant state switch rather than the tween that follows, so the
-                    # focus is already standing when the bar starts climbing.
+                    # focus and the flash are already standing when the bar starts climbing.
                     self._phase_focus = PhaseFocus(receiving=combatant)
+                    # Left to decay: this phase is zero-duration, so an on_complete clearing the
+                    # flash would fire in the same tick.
+                    displayed.hit_flash = HitFlash(started_at=self._elapsed_seconds, valence=HitValence.HEALING)
                     if animator is not None:
                         animator.set_state(CombatAnimationState.IDLE)
 
@@ -830,20 +866,24 @@ class CombatScene:
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case HitReflected(target=target, target_hp_after=target_hp_after):
-                return [self._reaction_phase(target), _hp_tween_phase(self._displayed_for(target), target_hp_after)]
+                # DAMAGE even though Spiky Skin is a buff -- the flash lands on whoever it hits.
+                return [
+                    self._reaction_phase(target, HitValence.DAMAGE),
+                    _hp_tween_phase(self._displayed_for(target), target_hp_after),
+                ]
             case SelfDamageTaken(combatant=combatant, combatant_hp_after=combatant_hp_after):
                 return [
-                    self._reaction_phase(combatant),
+                    self._reaction_phase(combatant, HitValence.DAMAGE),
                     _hp_tween_phase(self._displayed_for(combatant), combatant_hp_after),
                 ]
             case DotTicked(target=target, effect=effect, target_hp_after=target_hp_after):
                 return [
-                    self._overlay_phase(target, effect, target_hp_after),
+                    self._overlay_phase(target, effect, target_hp_after, HitValence.DAMAGE),
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case HealApplied(target=target, effect=effect, target_hp_after=target_hp_after):
                 return [
-                    self._overlay_phase(target, effect, target_hp_after),
+                    self._overlay_phase(target, effect, target_hp_after, HitValence.HEALING),
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case _:
@@ -878,9 +918,9 @@ class CombatScene:
 
     def _hit_flash_strength(self, displayed: DisplayedCombatantState) -> float:
         """How hard `displayed`'s sprite is lit this frame: peaks on impact, falls linearly to 0."""
-        if displayed.hit_flash_started_at is None:
+        if displayed.hit_flash is None:
             return 0.0
-        elapsed = self._elapsed_seconds - displayed.hit_flash_started_at
+        elapsed = self._elapsed_seconds - displayed.hit_flash.started_at
         if elapsed >= BATTLE_HIT_FLASH_DURATION_SECONDS:
             return 0.0
         return BATTLE_HIT_FLASH_STRENGTH * (1.0 - elapsed / BATTLE_HIT_FLASH_DURATION_SECONDS)
@@ -912,8 +952,11 @@ class CombatScene:
         font = get_font(GameFont.ITHACA, _FONT_SIZE)
         sprite = self._current_sprite(combatant)
         top = _MARGIN
+        flash = displayed.hit_flash
         flash_strength = self._hit_flash_strength(displayed)
-        drawn_sprite = _lit_by_hit_flash(sprite, flash_strength) if flash_strength > 0.0 else sprite
+        drawn_sprite = sprite
+        if flash is not None and flash_strength > 0.0:
+            drawn_sprite = _lit_by_hit_flash(sprite, flash_strength, flash.valence)
         surface.blit(drawn_sprite, layout.sprite_topleft(sprite))
 
         # Steady on the name (who), pulsing on the HP bar (the value about to move).
@@ -1000,7 +1043,12 @@ class CombatScene:
         target = self._overlay.target
         layout = player_layout if target is self._battle.player else enemy_layout
         font = get_font(GameFont.ITHACA, _OVERLAY_LABEL_FONT_SIZE)
-        lines = [font.render(text, True, _TEXT_COLOR) for text in _overlay_label_lines(self._overlay)]
+        # Only the amount is tinted, so the block keeps a neutral half to read it against.
+        effect_text, amount_text = _overlay_label_lines(self._overlay)
+        lines = [
+            font.render(effect_text, True, _TEXT_COLOR),
+            font.render(amount_text, True, _valence_color(self._overlay.valence)),
+        ]
         label_height = sum(line.height for line in lines) + _GAP
         # Beside the icon, not stacked: the HUD panel ends about a dozen pixels above the 64px-framed
         # enemy sprite, so a stack runs into it at any legible font size.

@@ -29,7 +29,8 @@ BATTLE_RECEIVING_HIGHLIGHT_COLOR: pygame.typing.ColorLike = "orangered"
 # The colour is added to the sprite's pixels, so the silhouette blows out instead of taking a tint.
 # Strength is how much arrives at the instant of impact, 0-1, falling off linearly. The duration is
 # kept well under the briefest flinch clip: the flash marks the hit, the clip carries the rest.
-BATTLE_HIT_FLASH_COLOR: pygame.typing.ColorLike = "white"
+BATTLE_HIT_FLASH_DAMAGE_COLOR: pygame.typing.ColorLike = (255, 188, 180)  # near-white so it still blows out
+BATTLE_HIT_FLASH_HEALING_COLOR: pygame.typing.ColorLike = (188, 255, 198)
 BATTLE_HIT_FLASH_STRENGTH = 0.75
 BATTLE_HIT_FLASH_DURATION_SECONDS = 0.12
 
