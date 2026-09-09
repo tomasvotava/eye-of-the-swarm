@@ -59,7 +59,7 @@ raised in `RESOLVED`, so no other transition has one standing over it.
   - **`RESOLVED`** — player sits at the encounter marker; this screen's outcome is already known
     and applied. **Plant is legal only in this phase** — pressing the plant key elsewhere is a
     silent no-op, mirroring the existing `is_seed_ready` guard style. ADVANCE starts the walk to
-    the exit — unless a pickup's effect card is still standing at the marker, in which case that
+    the exit — unless a pickup's card is still standing at the marker, in which case that
     keypress is spent closing the card and nothing else, and the walk starts on the press after
     it.
   - **`WALKING_TO_EXIT`** — arrival at the exit immediately calls `generation.advance()` for the
