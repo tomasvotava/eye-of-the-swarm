@@ -518,10 +518,10 @@ def test_combatant_layout_centers_each_frame_on_the_sprite_anchor() -> None:
     assert layout.sprite_topleft(pygame.Surface((60, 30))) == (200 - 30, 300 - 15)
 
 
-_ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded, HitReflected, SelfDamageTaken)
+_ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded)
 _TWEEN_ONLY_EVENT_TYPES = (MeterFilled, MeterConsumed)
 _ANNOUNCEMENT_EVENT_TYPES = (EffectApplied, EffectExpired, TurnSkipped, ExtraActionTriggered, BattleEnded)
-_OVERLAY_EVENT_TYPES = (DotTicked, HealApplied)
+_OVERLAY_EVENT_TYPES = (DotTicked, HealApplied, HitReflected, SelfDamageTaken)
 _EVENT_TYPES_WITH_REAL_PHASES = (
     _ANIMATION_DRIVEN_EVENT_TYPES + _TWEEN_ONLY_EVENT_TYPES + _ANNOUNCEMENT_EVENT_TYPES + _OVERLAY_EVENT_TYPES
 )
@@ -552,6 +552,22 @@ def test_phases_for_returns_real_phases_for_every_animated_or_tweened_event() ->
     for event in _ONE_OF_EACH_BATTLE_EVENT:
         if isinstance(event, _EVENT_TYPES_WITH_REAL_PHASES):
             assert scene._phases_for(event) != []
+
+
+def test_exactly_the_overlay_events_raise_an_overlay() -> None:
+    # Keeps _OVERLAY_EVENT_TYPES honest: an event that gains or loses the treatment moves there too.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    raised: set[type[object]] = set()
+    for event in _ONE_OF_EACH_BATTLE_EVENT:
+        scene._overlay = None
+        for phase in scene._phases_for(event):
+            phase.on_start()
+        if scene._overlay is not None:
+            raised.add(type(event))
+
+    assert raised == set(_OVERLAY_EVENT_TYPES)
 
 
 def test_advance_phases_blocks_a_real_duration_phase_across_calls() -> None:
@@ -948,7 +964,11 @@ def test_overlay_phase_shows_the_effect_at_the_target_on_start_and_clears_it_on_
 
     phases[0].on_start()
     assert scene._overlay == Overlay(
-        target=scene._battle.player, source=EffectName.TOXICITY, hp_delta=-3, valence=HitValence.DAMAGE
+        target=scene._battle.player,
+        source=EffectName.TOXICITY,
+        label="Toxicity",
+        hp_delta=-3,
+        valence=HitValence.DAMAGE,
     )
 
     phases[0].on_complete()
@@ -982,7 +1002,11 @@ def test_heal_applied_tweens_the_targets_displayed_hp_up_after_its_overlay() -> 
     assert len(phases) == 2
     phases[0].on_start()
     assert scene._overlay == Overlay(
-        target=scene._battle.player, source=EffectName.NOURISHED, hp_delta=4, valence=HitValence.HEALING
+        target=scene._battle.player,
+        source=EffectName.NOURISHED,
+        label="Nourished",
+        hp_delta=4,
+        valence=HitValence.HEALING,
     )
     phases[1].on_progress(0.5)
     assert scene._player_displayed.hp == pytest.approx(7.0)
@@ -1004,7 +1028,9 @@ def test_draw_renders_the_overlay_icon_above_the_targets_own_sprite(mirrored: bo
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
     target = scene._battle.enemy if mirrored else scene._battle.player
-    scene._overlay = Overlay(target=target, source=EffectName.TOXICITY, hp_delta=-2, valence=HitValence.DAMAGE)
+    scene._overlay = Overlay(
+        target=target, source=EffectName.TOXICITY, label="Toxicity", hp_delta=-2, valence=HitValence.DAMAGE
+    )
     surface = pygame.Surface((800, 600))
 
     scene.draw(surface)
@@ -1038,12 +1064,20 @@ def test_overlay_carries_the_hp_its_event_moved_signed_by_direction() -> None:
 
     scene._phases_for(_dot_ticked(scene, damage=3))[0].on_start()
     assert scene._overlay == Overlay(
-        target=scene._battle.player, source=EffectName.TOXICITY, hp_delta=-3, valence=HitValence.DAMAGE
+        target=scene._battle.player,
+        source=EffectName.TOXICITY,
+        label="Toxicity",
+        hp_delta=-3,
+        valence=HitValence.DAMAGE,
     )
 
     scene._phases_for(_heal_applied(scene, amount=2))[0].on_start()
     assert scene._overlay == Overlay(
-        target=scene._battle.enemy, source=EffectName.NOURISHED, hp_delta=2, valence=HitValence.HEALING
+        target=scene._battle.enemy,
+        source=EffectName.NOURISHED,
+        label="Nourished",
+        hp_delta=2,
+        valence=HitValence.HEALING,
     )
 
 
@@ -1074,26 +1108,82 @@ def test_the_overlay_label_reports_the_movement_an_overkill_tick_actually_makes(
     assert _overlay_label_lines(scene._overlay)[1] == "-2 HP"
 
 
+def test_recoil_raises_a_recoil_overlay_on_the_combatant_that_dealt_it() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    player = scene._battle.player
+    event = SelfDamageTaken(combatant=player, damage=4, combatant_hp_after=player.current_hp - 4)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._overlay == Overlay(
+        target=player, source=NonEffectIcon.RECOIL, label="Recoil", hp_delta=-4, valence=HitValence.DAMAGE
+    )
+    assert scene._player_displayed.hit_flash is not None
+    assert scene._player_displayed.hit_flash.valence is HitValence.DAMAGE
+
+
+def test_a_lethal_recoil_reports_the_movement_its_bar_actually_makes() -> None:
+    # Recoil is subtracted with no floor, as a DoT tick is, so a lethal one goes negative.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.hp = 3.0
+    event = SelfDamageTaken(combatant=scene._battle.player, damage=6, combatant_hp_after=-3)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._overlay is not None
+    assert scene._overlay.hp_delta == -3
+    assert _overlay_label_lines(scene._overlay)[1] == "-3 HP"
+
+
+def test_a_reflect_raises_its_overlay_on_the_attacker_and_not_on_the_spiky_skin_holder() -> None:
+    # HitReflected.source is the Spiky Skin holder; .target is the attacker taking the damage back.
+    # The overlay lands on .target, who does not wear the effect -- hence "Reflected" as the label.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    reflector, attacker = scene._battle.enemy, scene._battle.player
+    event = HitReflected(source=reflector, target=attacker, damage=2, target_hp_after=attacker.current_hp - 2)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._overlay == Overlay(
+        target=attacker, source=EffectName.SPIKY_SKIN, label="Reflected", hp_delta=-2, valence=HitValence.DAMAGE
+    )
+    # The flash follows the same side: the reflector gives the damage, it does not take it.
+    assert scene._player_displayed.hit_flash is not None
+    assert scene._player_displayed.hit_flash.valence is HitValence.DAMAGE
+    assert scene._enemy_displayed.hit_flash is None
+
+
+def test_a_lethal_reflect_reports_the_movement_its_bar_actually_makes() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.hp = 1.0
+    event = HitReflected(source=scene._battle.enemy, target=scene._battle.player, damage=5, target_hp_after=-4)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._overlay is not None
+    assert scene._overlay.hp_delta == -1
+    assert _overlay_label_lines(scene._overlay)[1] == "-1 HP"
+
+
 @pytest.mark.parametrize(
-    ("effect", "hp_delta", "expected"),
+    ("source", "label", "hp_delta", "expected"),
     [
-        (EffectName.TOXICITY, -2, ("Toxicity", "-2 HP")),
-        (EffectName.NOURISHED, 3, ("Nourished", "+3 HP")),
+        (EffectName.TOXICITY, "Toxicity", -2, ("Toxicity", "-2 HP")),
+        (EffectName.NOURISHED, "Nourished", 3, ("Nourished", "+3 HP")),
+        # A label that is not its icon's own name: a reflect borrows Spiky Skin's art.
+        (EffectName.SPIKY_SKIN, "Reflected", -5, ("Reflected", "-5 HP")),
     ],
 )
-def test_overlay_label_names_the_effect_and_the_signed_hp_it_moved(
-    effect: EffectName, hp_delta: int, expected: tuple[str, str]
+def test_overlay_label_names_what_moved_the_bar_and_the_signed_hp(
+    source: IconSource, label: str, hp_delta: int, expected: tuple[str, str]
 ) -> None:
-    assert (
-        _overlay_label_lines(Overlay(target=_combatant(), source=effect, hp_delta=hp_delta, valence=HitValence.DAMAGE))
-        == expected
-    )
+    overlay = Overlay(target=_combatant(), source=source, label=label, hp_delta=hp_delta, valence=HitValence.DAMAGE)
 
-
-def test_an_overlay_can_name_a_source_with_no_effect_behind_it() -> None:
-    overlay = Overlay(target=_combatant(), source=NonEffectIcon.RECOIL, hp_delta=-3, valence=HitValence.DAMAGE)
-
-    assert _overlay_label_lines(overlay) == ("Recoil", "-3 HP")
+    assert _overlay_label_lines(overlay) == expected
 
 
 def test_the_default_icon_factory_resolves_a_source_with_no_effect_behind_it() -> None:
@@ -1117,7 +1207,7 @@ def test_a_non_effect_overlay_icon_comes_from_the_scenes_own_factory_too() -> No
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
     scene._overlay = Overlay(
-        target=scene._battle.player, source=NonEffectIcon.RECOIL, hp_delta=-3, valence=HitValence.DAMAGE
+        target=scene._battle.player, source=NonEffectIcon.RECOIL, label="Recoil", hp_delta=-3, valence=HitValence.DAMAGE
     )
     surface = pygame.Surface((800, 600))
 
@@ -1136,7 +1226,11 @@ def test_draw_lays_the_overlay_label_beside_its_icon_vertically_centered_against
         generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=lambda effect: _SilentIcon()
     )
     scene._overlay = Overlay(
-        target=scene._battle.player, source=EffectName.TOXICITY, hp_delta=-2, valence=HitValence.DAMAGE
+        target=scene._battle.player,
+        source=EffectName.TOXICITY,
+        label="Toxicity",
+        hp_delta=-2,
+        valence=HitValence.DAMAGE,
     )
     surface = pygame.Surface((800, 600))
     surface.fill(_UNDRAWN)
@@ -1165,7 +1259,9 @@ def test_every_overlay_block_clears_the_hud_panel_of_the_real_window(effect: Eff
     generation = _generation(strain_queue=[Strain.BEATLE])
     scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
     target = scene._battle.enemy if mirrored else scene._battle.player
-    scene._overlay = Overlay(target=target, source=effect, hp_delta=-99, valence=HitValence.DAMAGE)
+    scene._overlay = Overlay(
+        target=target, source=effect, label=_label(effect), hp_delta=-99, valence=HitValence.DAMAGE
+    )
     surface = pygame.Surface(_WINDOW_SIZE)
     # _UNDRAWN is not a colour the icon art paints, or the colourkey would key it back out.
     surface.fill(_UNDRAWN)
@@ -1187,7 +1283,7 @@ def test_every_encounterable_strain_leaves_the_overlay_block_clear_of_the_hud(st
     generation = _generation(strain_queue=[strain])
     scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
     scene._overlay = Overlay(
-        target=scene._battle.enemy, source=EffectName.TOXICITY, hp_delta=-2, valence=HitValence.DAMAGE
+        target=scene._battle.enemy, source=EffectName.TOXICITY, label="Toxicity", hp_delta=-2, valence=HitValence.DAMAGE
     )
     surface = pygame.Surface(_WINDOW_SIZE)
     surface.fill(_UNDRAWN)
@@ -1241,15 +1337,20 @@ def test_a_heal_hops_the_healing_effects_icon_on_the_combatant_it_heals() -> Non
     assert scene._buff_icon_hop_offset(scene._player_displayed, EffectName.NOURISHED) == 0
 
 
-def test_an_overlay_leaves_the_row_alone_when_its_target_is_not_wearing_what_it_names() -> None:
+def test_a_reflect_leaves_the_victims_own_spiky_skin_icon_at_rest() -> None:
+    # A reflect's damage is credited to the *other* side's Spiky Skin, and both can wear it at once
+    # (PROJECT_BRIEF.md 5.6), so the victim's own copy did nothing here and must not hop.
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    target = scene._battle.player
-    assert (EffectCategory.BATTLE, EffectName.SPIKY_SKIN) not in scene._player_displayed.active_effects
+    attacker = scene._battle.player
+    scene._player_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.SPIKY_SKIN))
+    event = HitReflected(source=scene._battle.enemy, target=attacker, damage=2, target_hp_after=attacker.current_hp - 2)
 
-    scene._overlay_phase(target, EffectName.SPIKY_SKIN, target.current_hp - 2, HitValence.DAMAGE).on_start()
+    scene._phases_for(event)[0].on_start()
     scene._elapsed_seconds += BATTLE_BUFF_ICON_HOP_DURATION_SECONDS / 2
 
+    assert scene._overlay is not None
+    assert scene._overlay.source is EffectName.SPIKY_SKIN  # the overlay really does name that icon
     assert scene._buff_icon_hop_offset(scene._player_displayed, EffectName.SPIKY_SKIN) == 0
 
 
@@ -2212,7 +2313,9 @@ def test_the_overlays_hp_amount_is_printed_in_its_valences_colour(valence: HitVa
     scene = CombatScene(
         generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=lambda effect: _SilentIcon()
     )
-    scene._overlay = Overlay(target=scene._battle.player, source=EffectName.TOXICITY, hp_delta=-2, valence=valence)
+    scene._overlay = Overlay(
+        target=scene._battle.player, source=EffectName.TOXICITY, label="Toxicity", hp_delta=-2, valence=valence
+    )
     surface = pygame.Surface((400, 300))
     surface.fill("black")
 
