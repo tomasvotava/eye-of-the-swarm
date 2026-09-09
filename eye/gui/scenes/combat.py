@@ -40,7 +40,7 @@ from eye.combat.events import (
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
-from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.assets import IconVariant, SpriteAtlas, SpriteKey
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
@@ -59,7 +59,14 @@ from eye.gui.tuning import (
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, IconSource, NonEffectIcon, SpriteBuffIcon
+from eye.gui.widgets import (
+    EFFECT_DESCRIPTIONS,
+    BuffIcon,
+    IconSource,
+    NonEffectIcon,
+    SpriteBuffIcon,
+    SpriteIcon,
+)
 from eye.session.generation import Generation
 
 _FONT_SIZE = 20
@@ -69,9 +76,14 @@ _FONT_SIZE = 20
 _ANNOUNCEMENT_FONT_SIZE = 28
 _MARGIN = 8
 _GAP = 4
-_BAR_WIDTH = 230
 _BAR_HEIGHT = 16
 _METER_HEIGHT = 8
+# One box for both bar icons, sized to the taller of the two bars.
+_BAR_ICON_SIZE = _BAR_HEIGHT
+# Narrowed to pay for the icon gutter beside it; the panel's outer edge stays pinned at _MARGIN.
+_BAR_WIDTH = 210
+# Its own constant so narrowing _BAR_WIDTH cannot silently narrow the action menu.
+_MENU_ROW_WIDTH = 230
 _BUFF_ICON_SIZE = 28
 _BUFF_ICON_STEP = 36
 _BUFF_ICON_DURATION_FONT_SIZE = 12
@@ -374,13 +386,15 @@ class CombatantLayout:
     """Where one combatant's sprite and HUD panel sit on a surface.
 
     `mirrored` says which of `bar_left`/`bar_right` is the panel's outer edge, and so which way
-    content anchored to the panel grows.
+    content anchored to the panel grows. `bar_icon_left` is the left edge of the icon gutter that
+    labels the bars.
     """
 
     mirrored: bool
     sprite_center: tuple[int, int]
     bar_left: int
     bar_right: int
+    bar_icon_left: int
 
     def sprite_topleft(self, sprite: pygame.Surface) -> tuple[int, int]:
         """Blit position that centers `sprite` on `sprite_center`."""
@@ -391,20 +405,33 @@ def _combatant_layout(surface: pygame.Surface, *, mirrored: bool) -> CombatantLa
     # mirrored=True hangs the panel off the right edge, so the two sides face each other.
     if mirrored:
         sprite_center_x = surface.get_width() // 4 * 3
-        bars_x = surface.get_width() - _MARGIN
-        bar_right = bars_x - _GAP
+        panel_outer_edge = surface.get_width() - _MARGIN - _GAP
+        bar_icon_left = panel_outer_edge - _BAR_ICON_SIZE
+        bar_right = bar_icon_left - _GAP
         bar_left = bar_right - _BAR_WIDTH
     else:
         sprite_center_x = surface.get_width() // 4
-        bars_x = _MARGIN
-        bar_left = bars_x + _GAP
+        panel_outer_edge = _MARGIN + _GAP
+        bar_icon_left = panel_outer_edge
+        bar_left = bar_icon_left + _BAR_ICON_SIZE + _GAP
         bar_right = bar_left + _BAR_WIDTH
     return CombatantLayout(
         mirrored=mirrored,
         sprite_center=(sprite_center_x, surface.get_height() // 2),
         bar_left=bar_left,
         bar_right=bar_right,
+        bar_icon_left=bar_icon_left,
     )
+
+
+def _bar_icon(atlas: SpriteAtlas, key: SpriteKey) -> SpriteIcon:
+    """`key`'s icon as a bar label: the borderless variant where the atlas carries one, the
+    bordered `sprite.png` where it carries none."""
+    return SpriteIcon(atlas, key, IconVariant.BORDERLESS if atlas.has_variant_set(key) else None)
+
+
+def _bar_icon_top(bar: pygame.Rect) -> int:
+    return bar.centery - _BAR_ICON_SIZE // 2
 
 
 def _lit_by_hit_flash(sprite: pygame.Surface, strength: float, valence: HitValence) -> pygame.Surface:
@@ -499,6 +526,9 @@ class CombatScene:
                 source: SpriteBuffIcon(atlas, source) for source in (*EffectName, *NonEffectIcon)
             }
             self._buff_icon_factory = sprite_icons.__getitem__
+        # Not routed through buff_icon_factory: these name a bar, not an effect.
+        self._hp_bar_icon = _bar_icon(atlas, SpriteKey.ICON_HEALTH)
+        self._meter_bar_icon = _bar_icon(atlas, SpriteKey.EFFECT_RESONANCE)
         self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
         self._battle: Battle = generation.start_battle(encounter)
         self._pending_query: PlayerTurnNeedsAction | None = None
@@ -991,6 +1021,7 @@ class CombatScene:
         hp_rect = pygame.Rect(layout.bar_left, top + _FONT_SIZE, _BAR_WIDTH, _BAR_HEIGHT)
         hp_color = _HP_COLOR if highlight is None else pygame.Color(_HP_COLOR).lerp(highlight, self._pulse_mix())
         self._draw_bar(surface, hp_rect, current_hp / combatant.base_stats.max_hp, hp_color)
+        self._hp_bar_icon.render(surface, pygame.Vector2(layout.bar_icon_left, _bar_icon_top(hp_rect)), _BAR_ICON_SIZE)
         hp_label = font.render(f"{round(current_hp)}/{combatant.base_stats.max_hp}", True, _TEXT_COLOR)
         hp_label_x = hp_rect.left - _GAP - hp_label.get_width() if layout.mirrored else hp_rect.right + _GAP
         surface.blit(hp_label, (hp_label_x, hp_rect.top))
@@ -998,6 +1029,9 @@ class CombatScene:
         meter_rect = pygame.Rect(layout.bar_left, hp_rect.bottom + _GAP, _BAR_WIDTH, _METER_HEIGHT)
         self._draw_bar(
             surface, meter_rect, max(0.0, displayed.meter) / combatant.base_stats.meter_capacity, _METER_COLOR
+        )
+        self._meter_bar_icon.render(
+            surface, pygame.Vector2(layout.bar_icon_left, _bar_icon_top(meter_rect)), _BAR_ICON_SIZE
         )
         icon_row_x = layout.bar_right if layout.mirrored else layout.bar_left
         self._draw_buff_icons(surface, displayed, (icon_row_x, meter_rect.bottom + _GAP), mirrored=layout.mirrored)
@@ -1057,7 +1091,7 @@ class CombatScene:
         menu_height = (len(available) + 1) * _FONT_SIZE  # +1 for the control hint below the rows
         top = surface.get_height() - menu_height - _MARGIN
         for index, action in enumerate(available):
-            row = pygame.Rect(_MARGIN, top + index * _FONT_SIZE, _BAR_WIDTH, _FONT_SIZE)
+            row = pygame.Rect(_MARGIN, top + index * _FONT_SIZE, _MENU_ROW_WIDTH, _FONT_SIZE)
             if index == self._cursor_index:
                 pygame.draw.rect(surface, _CURSOR_COLOR, row)
             label = f"{index + 1}) {action.name or action.kind.name.replace('_', ' ').title()}"
