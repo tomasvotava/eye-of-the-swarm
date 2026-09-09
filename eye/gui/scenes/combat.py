@@ -59,7 +59,7 @@ from eye.gui.tuning import (
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, IconSource, NonEffectIcon, SpriteBuffIcon
 from eye.session.generation import Generation
 
 _FONT_SIZE = 20
@@ -452,17 +452,18 @@ class Announcement:
 @dataclass(frozen=True, slots=True)
 class Overlay:
     """The target-local counterpart to `Announcement` (ADR 0013): an icon and label drawn at `target`.
-    `valence` is the same value the target's sprite flash uses, since a clamped hp_delta of 0 has no
-    sign to colour by."""
+    `source` names what moved the bar (an `EffectName`, or a `NonEffectIcon` where no effect did)
+    and is not a claim that `target` wears it. `valence` is the same value the target's sprite flash
+    uses, since a clamped hp_delta of 0 has no sign to colour by."""
 
     target: Combatant
-    effect: EffectName
+    source: IconSource
     hp_delta: int
     valence: HitValence
 
 
 def _overlay_label_lines(overlay: Overlay) -> tuple[str, str]:
-    return (_label(overlay.effect), f"{overlay.hp_delta:+d} HP")
+    return (_label(overlay.source), f"{overlay.hp_delta:+d} HP")
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,17 +483,19 @@ class CombatScene:
         generation: Generation,
         encounter: EnemyEncountered,
         atlas: SpriteAtlas,
-        buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
+        buff_icon_factory: Callable[[IconSource], BuffIcon] | None = None,
     ) -> None:
         self._generation = generation
         if buff_icon_factory is not None:
             self._buff_icon_factory = buff_icon_factory
         else:
-            # Built once per effect, not per render() call: SpriteBuffIcon caches its scaled
+            # Built once per subject, not per render() call: SpriteBuffIcon caches its scaled
             # surfaces on itself, which only pays off if the same instance is reused across
             # frames rather than reconstructed from the atlas every time (ADR 0011's
             # scale_sprite precedent -- a fixed scale is computed once, not every draw() call).
-            sprite_icons = {effect: SpriteBuffIcon(atlas, effect) for effect in EffectName}
+            sprite_icons: dict[IconSource, BuffIcon] = {
+                source: SpriteBuffIcon(atlas, source) for source in (*EffectName, *NonEffectIcon)
+            }
             self._buff_icon_factory = sprite_icons.__getitem__
         self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
         self._battle: Battle = generation.start_battle(encounter)
@@ -701,25 +704,34 @@ class CombatScene:
 
         return Phase(duration_seconds=duration, on_start=on_start, on_complete=on_complete)
 
-    def _overlay_phase(self, target: Combatant, effect: EffectName, hp_after: int, valence: HitValence) -> Phase:
+    def _overlay_phase(self, target: Combatant, source: IconSource, hp_after: int, valence: HitValence) -> Phase:
         # Wraps _reaction_phase so the overlay holds for exactly the target's own flinch clip, and
         # so the label and the tint behind it name the same direction.
         reaction = self._reaction_phase(target, valence)
         displayed = self._displayed_for(target)
+        # Hops the HUD icon with the bar, but only where this combatant wears the effect: the row
+        # holds its own combatant's icons, and `source` can name an effect the other side wears.
+        hopping_effect = (
+            source
+            if isinstance(source, EffectName) and any(name is source for _, name in displayed.active_effects)
+            else None
+        )
         # The bar's actual movement, not the event's nominal damage/amount: the domain caps a heal
         # at max_hp and applies no floor to a tick.
         hp_delta = round(max(0, hp_after) - max(0.0, displayed.hp))
-        overlay = Overlay(target=target, effect=effect, hp_delta=hp_delta, valence=valence)
+        overlay = Overlay(target=target, source=source, hp_delta=hp_delta, valence=valence)
 
         def on_start() -> None:
             reaction.on_start()
             self._overlay = overlay
-            displayed.effect_tick_started_at[effect] = self._elapsed_seconds
+            if hopping_effect is not None:
+                displayed.effect_tick_started_at[hopping_effect] = self._elapsed_seconds
 
         def on_complete() -> None:
             reaction.on_complete()
             self._overlay = None
-            displayed.effect_tick_started_at.pop(effect, None)
+            if hopping_effect is not None:
+                displayed.effect_tick_started_at.pop(hopping_effect, None)
 
         return replace(reaction, on_start=on_start, on_complete=on_complete)
 
@@ -1055,7 +1067,7 @@ class CombatScene:
         block_width = _OVERLAY_ICON_SIZE + _GAP + max(line.width for line in lines)
         left = layout.sprite_center[0] - block_width // 2
         top = layout.sprite_topleft(self._current_sprite(target))[1] - _GAP - _OVERLAY_ICON_SIZE
-        self._buff_icon_factory(self._overlay.effect).render(surface, pygame.Vector2(left, top), _OVERLAY_ICON_SIZE)
+        self._buff_icon_factory(self._overlay.source).render(surface, pygame.Vector2(left, top), _OVERLAY_ICON_SIZE)
         line_y = top + (_OVERLAY_ICON_SIZE - label_height) // 2
         for line in lines:
             surface.blit(line, (left + _OVERLAY_ICON_SIZE + _GAP, line_y))
