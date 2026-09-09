@@ -1693,6 +1693,29 @@ def test_effect_expiry_from_end_of_battle_cleanup_clears_the_display_without_ann
     assert scene._announcement is None
 
 
+def test_describe_event_addresses_the_player_directly_on_a_win() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    event = BattleEnded(winner=scene._battle.player)
+
+    assert _describe_event(event, scene._battle.player) == "You win!"
+
+
+def test_describe_event_addresses_the_player_directly_on_a_loss() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    event = BattleEnded(winner=scene._battle.enemy)
+
+    assert _describe_event(event, scene._battle.player) == "You lose!"
+
+
+def test_describe_event_keeps_the_impersonal_wording_for_a_draw() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    assert _describe_event(BattleEnded(winner=None), scene._battle.player) == "The battle ends in a draw."
+
+
 def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_card() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
@@ -1706,7 +1729,7 @@ def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_card()
         phases = scene._phases_for(event)
         assert len(phases) == 1
         phases[0].on_start()
-        assert scene._announcement == Announcement(text=_describe_event(event))
+        assert scene._announcement == Announcement(text=_describe_event(event, scene._battle.player))
         phases[0].on_complete()
         assert scene._announcement is None
 
@@ -1720,7 +1743,7 @@ def test_announcement_phase_holds_for_the_tuned_duration_via_the_driver() -> Non
     scene._queue_events([event])
 
     scene._advance_phases(0.0)  # the first event of a batch reveals immediately (ADR 0013)
-    assert scene._announcement == Announcement(text=_describe_event(event))
+    assert scene._announcement == Announcement(text=_describe_event(event, scene._battle.player))
 
     scene._advance_phases(BATTLE_ANNOUNCEMENT_HOLD_SECONDS / 2)
     assert scene._announcement is not None  # still holding, short of the full duration
