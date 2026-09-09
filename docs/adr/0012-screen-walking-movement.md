@@ -1,7 +1,7 @@
 # 0012 — Screen-walking movement
 
 **Status:** Accepted
-**Date:** 2026-09-02
+**Date:** 2026-09-02 (amended 2026-09-09 — see Amendment note below)
 
 ## Context
 
@@ -35,6 +35,16 @@ Nothing in `eye/exploration/`, `eye/session/`, or any other domain module change
 `ExplorationRun.advance()`'s signature, return type, and side-effecting behavior are untouched;
 only when the GUI calls it changes.
 
+## Amendment note (2026-09-09)
+
+The original decision below let ADVANCE start the walk out of `RESOLVED` on any advance keypress,
+with the effect card a pickup raises at the marker holding for a fixed time and then fading on its
+own. That card could be gone before it had been read, and one press both cleared it and started the
+walk away from it. The card now stands until the player closes it — any key does, and does only
+that — which puts a precondition on the `RESOLVED --[ADVANCE]--> WALKING_TO_EXIT` transition,
+recorded in the `RESOLVED` bullet below. Nothing else about the cycle moves: a card is only ever
+raised in `RESOLVED`, so no other transition has one standing over it.
+
 ## Decision
 
 - **A screen has three x-positions**: entry (left edge), an encounter marker (fixed, roughly
@@ -49,7 +59,9 @@ only when the GUI calls it changes.
   - **`RESOLVED`** — player sits at the encounter marker; this screen's outcome is already known
     and applied. **Plant is legal only in this phase** — pressing the plant key elsewhere is a
     silent no-op, mirroring the existing `is_seed_ready` guard style. ADVANCE starts the walk to
-    the exit.
+    the exit — unless a pickup's effect card is still standing at the marker, in which case that
+    keypress is spent closing the card and nothing else, and the walk starts on the press after
+    it.
   - **`WALKING_TO_EXIT`** — arrival at the exit immediately calls `generation.advance()` for the
     next screen (this is the "as early as when the screen loads" call — it applies that screen's
     resource/effect side-effects domain-side right away, exactly as `advance()` already does
