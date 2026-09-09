@@ -65,10 +65,10 @@ mechanism is exactly what this amendment replaces.
   Consequences.
 - **Every `BattleEvent` variant gets an explicit phase list**, built from three reusable
   treatments:
-  - **Animation-driven** (`Death`, `HitLanded`, `HitReflected`, `SelfDamageTaken`, `Revive`): sets
-    one or more combatants' animation state and, where relevant, tweens `DisplayedCombatantState`
-    toward the event's own `_after` field. Duration for "wait for this clip" is precomputed from
-    the clip's own data (`len(frames) * frame_duration_seconds`, exposed as
+  - **Animation-driven** (`Death`, `HitLanded`, `Revive`): sets one or more combatants' animation
+    state and, where relevant, tweens `DisplayedCombatantState` toward the event's own `_after`
+    field. Duration for "wait for this clip" is precomputed from the clip's own data
+    (`len(frames) * frame_duration_seconds`, exposed as
     `AnimationClip.total_duration_seconds`) — exact given `AnimationClip`'s single uniform
     `frame_duration_seconds`, not queried from a live "is this animator done" signal, which would
     reintroduce per-kind polymorphism into `Phase` for no additional correctness. `HitLanded` can
@@ -87,15 +87,28 @@ mechanism is exactly what this amendment replaces.
     centered there, since exploration has one character and nothing to disambiguate. Anchoring to
     a half is combat's own reason for a position, not the card's.
   - **`Overlay`** (lighter, target-local — reuses the `HIT` animation state plus a small icon at
-    the target's position, naming the effect and the signed HP it moved, not a card of its own):
-    `DotTicked`, `HealApplied`. These can repeat every turn; a full `Announcement` each time would
-    get old fast. The label sits *beside* the icon rather than stacked above it, so the block stays
+    the target's position, naming what moved the HP bar and the signed HP it moved, not a card of
+    its own): `DotTicked`, `HealApplied`, `HitReflected`, `SelfDamageTaken`. These can repeat every
+    turn; a full `Announcement` each time would get old fast. The treatment is not effect-scoped,
+    though its first two members were: a recoil has no effect behind it at all — only a Struggle
+    recoils, scaled by the attacker's own RECOIL stat — and names itself with a `NonEffectIcon`
+    instead, while a reflect lands on the attacker the damage bounces back onto rather than on the
+    Spiky Skin holder who caused it, and so stands over a combatant who does not wear the effect
+    whose icon it borrows. It borrows it anyway, because the icon's job is to say what struck them,
+    but it is labelled "Reflected": a "Spiky Skin" label there would assert of that combatant
+    something that is true only of the other one. Icon and label are therefore separate values on
+    the overlay rather than one derived from the other. The same distinction decides the HUD row's
+    icon hop — the row holds one combatant's own effects, so the hop is stated by the mapping
+    rather than inferred from the icon: both sides can wear Spiky Skin at once, and a reflect
+    victim who happens to wear it must not see their own copy hop for damage the other side's
+    caused. The label sits *beside* the icon rather than stacked above it, so the block stays
     exactly one icon tall — the HUD panel leaves no room above the taller of the two sprites, and a
     block that grows upward runs into it, while one that grows sideways from the sprite's own
     centre has no such ceiling. The HP it names is the movement the bar will actually make, derived
-    from `target_hp_after` rather than the event's nominal `damage`/`amount`: the domain caps a heal
-    at `max_hp` and lets a lethal tick's `target_hp_after` go negative, so a label reading the
-    nominal field would contradict the bar it exists to explain.
+    from the event's own `_after` field (`combatant_hp_after` where a recoil is the event) rather
+    than its nominal `damage`/`amount`: the domain caps a heal at `max_hp` and subtracts a tick or a
+    recoil with no floor, leaving a lethal one's `_after` negative, so a label reading the nominal
+    field would contradict the bar it exists to explain.
   - **`Tween`** alone (no animation-state change): `MeterFilled`, `MeterConsumed`.
   - `ActionChosen` is the one variant that's legitimately phase-less (`[]`).
 - **`AnimationClip` gains `loop: bool = True`.** One-shot states (`HIT`, `ATTACK`, `DEAD`) set
