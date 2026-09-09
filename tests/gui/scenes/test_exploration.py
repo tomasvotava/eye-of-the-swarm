@@ -10,7 +10,7 @@ from eye.exploration.encounters import Biome, EncounterKind, ResourceKind, Strai
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
-from eye.gui.effect_card import EffectCard, card_column_width
+from eye.gui.card import Card, card_column_width
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
     _BUFF_ICON_SIZE,
@@ -713,14 +713,14 @@ def test_a_second_press_advances_once_the_card_has_been_dismissed() -> None:
 def test_draw_centers_the_effect_card_at_the_width_battle_typesets_its_own_into(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[EffectCard, int, int, str | None]] = []
+    calls: list[tuple[Card, int, int, str | None]] = []
 
-    def spy_draw_effect_card(
-        surface: pygame.Surface, card: EffectCard, *, center_x: int, column_width: int, footer: str | None = None
+    def spy_draw_card(
+        surface: pygame.Surface, card: Card, *, center_x: int, column_width: int, footer: str | None = None
     ) -> None:
         calls.append((card, center_x, column_width, footer))
 
-    monkeypatch.setattr("eye.gui.scenes.exploration.draw_effect_card", spy_draw_effect_card)
+    monkeypatch.setattr("eye.gui.scenes.exploration.draw_card", spy_draw_card)
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
     _resolve_next_screen(scene)
     surface = pygame.Surface((800, 600))
@@ -733,7 +733,7 @@ def test_draw_centers_the_effect_card_at_the_width_battle_typesets_its_own_into(
 def test_draw_renders_no_effect_card_when_none_is_up(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[None] = []
     monkeypatch.setattr(
-        "eye.gui.scenes.exploration.draw_effect_card",
+        "eye.gui.scenes.exploration.draw_card",
         lambda *args, **kwargs: calls.append(None),
     )
     scene, _ = _scene([EncounterKind.NOTHING])

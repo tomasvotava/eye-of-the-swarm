@@ -2,17 +2,17 @@ import pygame
 import pygame.typing
 
 from eye.combat.effects import EffectName
-from eye.gui.effect_card import (
+from eye.gui.card import (
     _DESCRIPTION_FONT_SIZE,
     _GAP,
     _ICON_SCALE,
     _ICON_SIZE,
     _SUBTITLE_FONT_SIZE,
     _TITLE_FONT_SIZE,
-    EffectCard,
+    Card,
     _fitted_font,
     _wrapped_lines,
-    draw_effect_card,
+    draw_card,
 )
 from eye.gui.widgets import BuffIcon, TextBuffIcon
 
@@ -26,14 +26,14 @@ _SUBTITLE = "Player — 3 turns"
 _FOOTER = "(press any key to close)"
 
 
-def _card(icon: BuffIcon) -> EffectCard:
-    return EffectCard(title=_TITLE, icon=icon, description=_DESCRIPTION, subtitle=_SUBTITLE)
+def _card(icon: BuffIcon) -> Card:
+    return Card(title=_TITLE, icon=icon, description=_DESCRIPTION, subtitle=_SUBTITLE)
 
 
 def _drawn_rect(*, center_x: int, column_width: int, footer: str | None = None) -> pygame.Rect:
     surface = pygame.Surface(_SURFACE_SIZE)
     surface.fill(_UNDRAWN)
-    draw_effect_card(
+    draw_card(
         surface, _card(TextBuffIcon(EffectName.RUNT)), center_x=center_x, column_width=column_width, footer=footer
     )
     surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
@@ -53,7 +53,7 @@ def test_the_icon_fills_the_icon_box_stacked_under_the_title_at_the_given_center
     for center_x, column_width in ((200, 360), (610, 90)):
         render_calls.clear()
 
-        draw_effect_card(surface, _card(_SpyIcon()), center_x=center_x, column_width=column_width)
+        draw_card(surface, _card(_SpyIcon()), center_x=center_x, column_width=column_width)
 
         icon_box_size = min(int(_ICON_SIZE * _ICON_SCALE), column_width)
         title_height = _fitted_font((_TITLE,), _TITLE_FONT_SIZE, column_width).render(_TITLE, True, "white").height

@@ -41,7 +41,7 @@ from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
 from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
-from eye.gui.effect_card import EffectCard, card_column_width, draw_effect_card
+from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.tuning import (
@@ -426,11 +426,11 @@ def _lit_by_hit_flash(sprite: pygame.Surface, strength: float, valence: HitValen
 
 @dataclass(frozen=True, slots=True)
 class AnchoredCard:
-    """An `EffectCard` and the combatant it landed on, carried as one value: draw() picks the half
-    to centre the card over by that combatant's identity, so a card without one would anchor over
-    the wrong side instead of failing."""
+    """A `Card` and the combatant it landed on, carried as one value: draw() picks the half to
+    centre the card over by that combatant's identity, so a card without one would anchor over the
+    wrong side instead of failing."""
 
-    card: EffectCard
+    card: Card
     target: Combatant
 
 
@@ -800,7 +800,7 @@ class CombatScene:
         # names who it's on, not just how long -- otherwise a Runt on the enemy and a Runt on the
         # player are visually indistinguishable while the card is up.
         subtitle = f"{event.target.name} — {duration}"
-        card = EffectCard(
+        card = Card(
             title=_label(event.effect),
             icon=self._buff_icon_factory(event.effect),
             description=EFFECT_DESCRIPTIONS[event.effect],
@@ -1103,7 +1103,7 @@ class CombatScene:
             return
         # draw() is the single place a side's left/right anchoring is decided, as for _draw_overlay.
         layout = player_layout if anchored.target is self._battle.player else enemy_layout
-        draw_effect_card(
+        draw_card(
             surface,
             anchored.card,
             center_x=layout.sprite_center[0],

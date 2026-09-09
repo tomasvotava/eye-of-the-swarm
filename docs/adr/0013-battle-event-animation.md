@@ -81,7 +81,7 @@ mechanism is exactly what this amendment replaces.
     drawn over that combatant's own half of the screen — typeset to that half's width, so which of
     the two it concerns is readable without parsing the subtitle — while a plain announcement
     (`TurnSkipped`/`ExtraActionTriggered`/`BattleEnded`) concerns the fight rather than one side of
-    it and stays centered. The card renderer itself is scene-neutral (`eye/gui/effect_card.py`):
+    it and stays centered. The card renderer itself is scene-neutral (`eye/gui/card.py`):
     it takes a centre-x and a column width and knows nothing of combatants, so `ExplorationScene`
     raises the same card, at the same column width, when a screen's pickup grants an effect —
     centered there, since exploration has one character and nothing to disambiguate. Anchoring to
