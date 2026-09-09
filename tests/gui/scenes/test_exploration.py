@@ -10,6 +10,7 @@ from eye.exploration.encounters import Biome, EncounterKind, ResourceKind, Strai
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.effect_card import EffectCard, card_column_width
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
     _BUFF_ICON_SIZE,
@@ -23,8 +24,13 @@ from eye.gui.scenes.exploration import (
     _Phase,
     _resolve_encounter_sprite_key,
 )
-from eye.gui.tuning import ENTRY_X_FRACTION, WALK_TO_ENCOUNTER_DURATION_SECONDS, WALK_TO_EXIT_DURATION_SECONDS
-from eye.gui.widgets import SpriteBuffIcon
+from eye.gui.tuning import (
+    ENTRY_X_FRACTION,
+    EXPLORATION_EFFECT_CARD_HOLD_SECONDS,
+    WALK_TO_ENCOUNTER_DURATION_SECONDS,
+    WALK_TO_EXIT_DURATION_SECONDS,
+)
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, SpriteBuffIcon, effect_label
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -414,11 +420,21 @@ def test_draw_with_animation_data_blits_the_animator_frame(tmp_path: Path) -> No
 
 class _SpyBuffIcon:
     def __init__(self, effect: EffectName, calls: list[tuple[EffectName, pygame.Vector2, int]]) -> None:
-        self._effect = effect
+        self.effect = effect
         self._calls = calls
 
     def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
-        self._calls.append((self._effect, pos, size))
+        self._calls.append((self.effect, pos, size))
+
+
+def _row_icon_calls(
+    scene: ExplorationScene, calls: list[tuple[EffectName, pygame.Vector2, int]]
+) -> list[tuple[EffectName, pygame.Vector2, int]]:
+    """The subset of `calls` the buff row made: a raised card renders its icon through the same
+    factory, and the card's larger icon box is what separates the two."""
+    row = [call for call in calls if call[2] == _BUFF_ICON_SIZE]
+    assert len(calls) == len(row) + (0 if scene._effect_card is None else 1)
+    return row
 
 
 def _scene_with_spy_icons(
@@ -441,7 +457,7 @@ def test_draw_renders_one_buff_icon_per_active_lifespan_effect() -> None:
 
     scene.draw(pygame.Surface((800, 600)))
 
-    assert [effect for effect, _, _ in calls] == list(active)
+    assert [effect for effect, _, _ in _row_icon_calls(scene, calls)] == list(active)
 
 
 def test_draw_renders_no_buff_icons_when_nothing_is_active() -> None:
@@ -466,7 +482,7 @@ def test_buff_icon_row_runs_along_the_top_edge_anchored_to_the_right() -> None:
     expected = [
         (pygame.Vector2(first_x + index * _BUFF_ICON_STEP, _ICON_MARGIN), _BUFF_ICON_SIZE) for index in range(count)
     ]
-    assert [(pos, size) for _, pos, size in calls] == expected
+    assert [(pos, size) for _, pos, size in _row_icon_calls(scene, calls)] == expected
 
 
 def test_exploration_scene_defaults_to_sprite_buff_icons_reused_across_frames() -> None:
@@ -520,7 +536,7 @@ def test_buff_icon_row_withholds_a_newly_granted_effect_until_the_walk_resolves(
     scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # arrives at the marker, RESOLVED
     scene.draw(surface)
 
-    assert [effect for effect, _, _ in calls] == list(granted)
+    assert [effect for effect, _, _ in _row_icon_calls(scene, calls)] == list(granted)
 
 
 def test_buff_icon_row_withholds_an_effect_granted_by_a_later_screens_advance() -> None:
@@ -545,4 +561,143 @@ def test_buff_icon_row_withholds_an_effect_granted_by_a_later_screens_advance() 
     scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # arrives at the marker, RESOLVED
     scene.draw(surface)
 
-    assert [effect for effect, _, _ in calls] == list(granted)
+    assert [effect for effect, _, _ in _row_icon_calls(scene, calls)] == list(granted)
+
+
+def _granted_effect(generation: Generation) -> EffectName:
+    # Which effect the pickup rolls is the domain's business, so read it back.
+    active = generation.active_lifespan_effects
+    assert len(active) == 1
+    return active[0]
+
+
+def test_effect_pickup_raises_the_card_only_once_the_walk_reaches_the_marker() -> None:
+    scene, generation, _ = _scene_with_spy_icons([EncounterKind.EFFECT_PICKUP])
+    # The reveal point: advance() applied the pickup back when the screen loaded (ADR 0012).
+    granted = _granted_effect(generation)
+
+    assert scene._effect_card is None  # AT_ENTRY, the pickup not reached yet
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
+    assert scene._effect_card is None  # mid-walk
+
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)  # arrives at the marker, RESOLVED
+
+    card = scene._effect_card
+    assert card is not None
+    assert card.title == effect_label(granted)
+    assert card.description == EFFECT_DESCRIPTIONS[granted]
+    assert card.subtitle == "This generation"
+    assert isinstance(card.icon, _SpyBuffIcon)
+    assert card.icon.effect is granted
+
+
+def test_effect_pickup_on_a_later_screen_raises_the_card_at_its_own_marker() -> None:
+    # The steady-state path: later screens load at a WALKING_TO_EXIT arrival, not at construction.
+    scene, generation, _ = _scene_with_spy_icons([EncounterKind.NOTHING, EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)  # screen 1, empty
+    assert scene._effect_card is None
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads: advance() applies the pickup
+    granted = _granted_effect(generation)
+    assert scene._effect_card is None  # AT_ENTRY, the pickup not reached yet
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+
+    card = scene._effect_card
+    assert card is not None
+    assert card.title == effect_label(granted)
+
+
+@pytest.mark.parametrize("kind", [EncounterKind.RESOURCE_PICKUP, EncounterKind.NOTHING])
+def test_a_screen_that_grants_no_effect_raises_no_card(kind: EncounterKind) -> None:
+    scene, _ = _scene([kind])
+
+    _resolve_next_screen(scene)
+
+    assert scene._effect_card is None
+
+
+def test_an_enemy_encounter_raises_no_card() -> None:
+    scene, _ = _scene([EncounterKind.ENEMY])
+
+    assert isinstance(_resolve_next_screen(scene), EnterCombat)
+    assert scene._effect_card is None
+
+
+def test_the_effect_card_clears_once_its_hold_expires() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)
+    assert scene._effect_card is not None
+
+    # Idle frames: the hold runs down without the player touching a key.
+    scene.update(EXPLORATION_EFFECT_CARD_HOLD_SECONDS / 2)
+    assert scene._effect_card is not None
+
+    scene.update(EXPLORATION_EFFECT_CARD_HOLD_SECONDS / 2)
+    assert scene._effect_card is None
+
+
+def test_advancing_early_clears_the_card_and_starts_the_walk_in_the_same_frame() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
+    _resolve_next_screen(scene)
+    assert scene._effect_card is not None
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS / 2)
+
+    assert scene._effect_card is None
+    assert scene._phase is _Phase.WALKING_TO_EXIT
+
+
+def test_draw_centers_the_effect_card_at_the_width_battle_typesets_its_own_into(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[EffectCard, int, int]] = []
+
+    def spy_draw_effect_card(surface: pygame.Surface, card: EffectCard, *, center_x: int, column_width: int) -> None:
+        calls.append((card, center_x, column_width))
+
+    monkeypatch.setattr("eye.gui.scenes.exploration.draw_effect_card", spy_draw_effect_card)
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)
+    surface = pygame.Surface((800, 600))
+
+    scene.draw(surface)
+
+    assert calls == [(scene._effect_card, surface.get_width() // 2, card_column_width(surface))]
+
+
+def test_draw_renders_no_effect_card_when_none_is_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[None] = []
+    monkeypatch.setattr(
+        "eye.gui.scenes.exploration.draw_effect_card",
+        lambda *args, **kwargs: calls.append(None),
+    )
+    scene, _ = _scene([EncounterKind.NOTHING])
+    _resolve_next_screen(scene)
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert calls == []
+
+
+def test_draw_with_the_effect_card_up_and_the_default_icons_does_not_raise() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)
+    assert scene._effect_card is not None
+
+    scene.draw(pygame.Surface((800, 600)))
+
+
+def test_the_hud_line_still_reports_the_pickup_while_the_card_is_up() -> None:
+    scene, generation = _scene([EncounterKind.EFFECT_PICKUP])
+    granted = _granted_effect(generation)
+
+    _resolve_next_screen(scene)
+
+    assert scene._effect_card is not None
+    assert scene._last_message == f"You feel {effect_label(granted)} take hold."

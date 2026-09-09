@@ -1,5 +1,6 @@
 """The effect card: a title, icon, description and subtitle stacked over a backdrop panel. It is
-drawn into a column given as a centre-x and a width, so anchoring is the caller's decision."""
+drawn into a column given as a centre-x and a width, so anchoring is the caller's decision, and
+every scene sizes that column with `card_column_width`."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -22,8 +23,16 @@ _ICON_SIZE = 210
 _ICON_SCALE = 0.72
 _GAP = 4
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
+# Inset from both edges of the column a card is typeset into, keeping it clear of its neighbour.
+_COLUMN_MARGIN = 16
 # Dims whatever a card lands on. Black, so it leaves no edge against the black background.
 _BACKDROP_COLOR: pygame.typing.ColorLike = (0, 0, 0, 200)
+
+
+def card_column_width(surface: pygame.Surface) -> int:
+    """The width budget for a card on `surface`: half its width, less a margin at each edge. Half so
+    a card comes out the same size in every scene, whether or not it shares the screen."""
+    return surface.get_width() // 2 - _COLUMN_MARGIN * 2
 
 
 def _fitted_font(texts: Sequence[str], max_font_size: int, max_width: int) -> pygame.font.Font:
