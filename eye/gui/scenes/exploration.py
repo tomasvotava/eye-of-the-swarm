@@ -7,7 +7,7 @@ deferred until the player's sprite reaches the marker. Owned and routed by `Game
 never constructs a sibling scene itself.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from enum import Enum, StrEnum, auto
 from typing import assert_never
 
@@ -15,6 +15,7 @@ import pygame
 import pygame.typing
 
 from eye.combat.effects import EffectName
+from eye.exploration.encounters import ResourceKind
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.animation import Animator, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
@@ -28,7 +29,7 @@ from eye.gui.tuning import (
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon, effect_label
+from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon, SpriteIcon, effect_label
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -43,6 +44,23 @@ _BUFF_ICON_STEP = 36
 # Fixed: EffectGranted carries no category, and every effect a pickup grants is Lifespan-scoped.
 _EFFECT_CARD_SUBTITLE = "This generation"
 _CARD_FOOTER = "(press any key to close)"
+
+# PROJECT_BRIEF.md §6: what each resource pickup does.
+RESOURCE_DESCRIPTIONS: Mapping[ResourceKind, str] = {
+    ResourceKind.HEAL: "Restores some HP",
+    ResourceKind.SPORES: "Currency for the skill tree",
+    ResourceKind.SEED_GROWTH: "Jumps the seed's growth meter",
+    # PROJECT_BRIEF.md §6 rules this find out of Seed growth, so "in battle" has to stay.
+    ResourceKind.DISTANCE_DISCOUNT: "Makes the hive feel closer in battle",
+}
+
+# The bordered sprite.png, so a resource card's icon looks like an effect card's.
+_RESOURCE_SPRITE_KEYS: Mapping[ResourceKind, SpriteKey] = {
+    ResourceKind.HEAL: SpriteKey.ICON_HEALTH,
+    ResourceKind.SPORES: SpriteKey.ICON_SPORES,
+    ResourceKind.SEED_GROWTH: SpriteKey.ICON_SEED_GROWTH,
+    ResourceKind.DISTANCE_DISCOUNT: SpriteKey.ICON_DISTANCE_DISCOUNT,
+}
 
 type _ScreenEvent = EffectGranted | ResourceGranted | NothingHappened
 
@@ -93,11 +111,15 @@ def _animation_state_for_phase(phase: _Phase) -> PlayerAnimationState:
             assert_never(phase)
 
 
+def _resource_label(kind: ResourceKind) -> str:
+    return kind.name.replace("_", " ").title()
+
+
 def _describe_screen_event(event: _ScreenEvent) -> str:
     if isinstance(event, EffectGranted):
         return f"You feel {effect_label(event.effect)} take hold."
     if isinstance(event, ResourceGranted):
-        return f"You gain {event.amount} ({event.kind.name.replace('_', ' ').title()})."
+        return f"You gain {event.amount} ({_resource_label(event.kind)})."
     return "Nothing happens here."
 
 
@@ -145,6 +167,8 @@ class ExplorationScene:
             # One instance per effect: SpriteBuffIcon caches its scaled surfaces on itself.
             sprite_icons = {effect: SpriteBuffIcon(atlas, effect) for effect in EffectName}
             self._buff_icon_factory = sprite_icons.__getitem__
+        # Not routed through buff_icon_factory: that seam is keyed by EffectName.
+        self._resource_icons = {kind: SpriteIcon(atlas, key) for kind, key in _RESOURCE_SPRITE_KEYS.items()}
         self._phase = starting_phase
         self._pending_events = pending_events
         self._walk_elapsed_seconds = 0.0
@@ -307,19 +331,27 @@ class ExplorationScene:
             (event for event in events if isinstance(event, EffectGranted | ResourceGranted | NothingHappened)), None
         )
         if screen_event is not None:
+            # Twice by design: the card is the moment, the HUD line the record it leaves.
             self._last_message = _describe_screen_event(screen_event)
-            if isinstance(screen_event, EffectGranted):
-                # Twice by design: the card is the moment, the HUD line the record it leaves.
-                self._raise_effect_card(screen_event.effect)
+            self._card = self._card_for_screen_event(screen_event)
         return None
 
-    def _raise_effect_card(self, effect: EffectName) -> None:
-        self._card = Card(
-            title=effect_label(effect),
-            icon=self._buff_icon_factory(effect),
-            description=EFFECT_DESCRIPTIONS[effect],
-            subtitle=_EFFECT_CARD_SUBTITLE,
-        )
+    def _card_for_screen_event(self, event: _ScreenEvent) -> Card | None:
+        if isinstance(event, EffectGranted):
+            return Card(
+                title=effect_label(event.effect),
+                icon=self._buff_icon_factory(event.effect),
+                description=EFFECT_DESCRIPTIONS[event.effect],
+                subtitle=_EFFECT_CARD_SUBTITLE,
+            )
+        if isinstance(event, ResourceGranted):
+            return Card(
+                title=_resource_label(event.kind),
+                icon=self._resource_icons[event.kind],
+                description=RESOURCE_DESCRIPTIONS[event.kind],
+                subtitle=f"+{event.amount}",
+            )
+        return None
 
     def draw(self, surface: pygame.Surface) -> None:
         self._draw_background(surface)

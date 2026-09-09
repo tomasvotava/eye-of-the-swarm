@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from typing import TypeVar
 
 from eye.combat.actions import ActionDefinition
-from eye.exploration.encounters import EncounterKind, Strain
+from eye.exploration.encounters import EncounterKind, ResourceKind, Strain
 from eye.exploration.events import EnemyEncountered
 from eye.session.events import SessionEvent
 from eye.session.generation import Generation
@@ -31,31 +31,39 @@ def advance_flat(generation: Generation) -> list[SessionEvent]:
 
 
 class ScriptedEncounterRandom(random.Random):
-    """Deterministic random.Random stand-in for the encounter-kind and (optionally) Strain draws.
-    GreedyAI's own choices() calls during battle (picking among an actor's available actions) are
-    left to a real, fixed-seed random.Random -- scripting those isn't needed by any scenario in
-    this package today.
+    """Deterministic random.Random stand-in for the encounter-kind and (optionally) Strain and
+    ResourceKind draws. GreedyAI's own choices() calls during battle (picking among an actor's
+    available actions) are left to a real, fixed-seed random.Random -- scripting those isn't needed
+    by any scenario in this package today.
 
-    Dispatch is by population content (an EncounterKind/Strain population vs. GreedyAI's
-    ActionDefinition population), not by whether a queue happens to be empty -- load-bearing, not
-    just defensive: a queue with items still pending for a later draw must not have those items
-    stolen by an in-between battle's own choices() calls. Both queues raise once exhausted,
-    matching ScriptedChooser's (eye/combat/ai.py) raise-on-exhaustion precedent, rather than
-    silently falling through to unscripted randomness for a draw the caller meant to control.
+    Dispatch is by population content (an EncounterKind/Strain/ResourceKind population vs.
+    GreedyAI's ActionDefinition population), not by whether a queue happens to be empty --
+    load-bearing, not just defensive: a queue with items still pending for a later draw must not
+    have those items stolen by an in-between battle's own choices() calls. Every queue raises once
+    exhausted, matching ScriptedChooser's (eye/combat/ai.py) raise-on-exhaustion precedent, rather
+    than silently falling through to unscripted randomness for a draw the caller meant to control.
 
-    strain_queue is optional: most scenarios don't care which of ENCOUNTERABLE_STRAINS they face
-    and can leave it unscripted (falls through to the seeded real random.Random). A scenario that
-    needs a specific matchup -- e.g. one winnable by an unmodified base-stat player -- passes the
-    Strains it wants by name instead of hand-picking a seed that happens to produce them."""
+    strain_queue and resource_queue are optional: most scenarios don't care which of
+    ENCOUNTERABLE_STRAINS they face or which ResourceKind a pickup rolls, and can leave either
+    unscripted (falls through to the seeded real random.Random). A scenario that needs a specific
+    one passes it by name instead of hand-picking a seed that happens to produce it."""
 
-    def __init__(self, kind_queue: Sequence[EncounterKind], strain_queue: Sequence[Strain] = (), seed: int = 0) -> None:
+    def __init__(
+        self,
+        kind_queue: Sequence[EncounterKind],
+        strain_queue: Sequence[Strain] = (),
+        resource_queue: Sequence[ResourceKind] = (),
+        seed: int = 0,
+    ) -> None:
         super().__init__(seed)
         self._kind_queue = list(kind_queue)
         self._strain_queue = list(strain_queue)
-        # Unlike kind_queue (every EncounterKind draw is always scripted), a Strain draw is only
-        # scripted when the caller actually opted in -- an empty strain_queue means "don't care,
-        # use the seeded real random.Random", not "raise on the first draw".
+        self._resource_queue = list(resource_queue)
+        # Unlike kind_queue (every EncounterKind draw is always scripted), a Strain or ResourceKind
+        # draw is only scripted when the caller actually opted in -- an empty queue means "don't
+        # care, use the seeded real random.Random", not "raise on the first draw".
         self._strain_scripting_enabled = bool(strain_queue)
+        self._resource_scripting_enabled = bool(resource_queue)
 
     def choices(  # type: ignore[override]
         self,
@@ -77,4 +85,8 @@ class ScriptedEncounterRandom(random.Random):
             if not self._strain_queue:
                 raise IndexError("ScriptedEncounterRandom has no more queued Strains")
             return self._strain_queue.pop(0)  # type: ignore[return-value]
+        if self._resource_scripting_enabled and seq and isinstance(seq[0], ResourceKind):
+            if not self._resource_queue:
+                raise IndexError("ScriptedEncounterRandom has no more queued ResourceKinds")
+            return self._resource_queue.pop(0)  # type: ignore[return-value]
         return super().choice(seq)
