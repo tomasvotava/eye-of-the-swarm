@@ -173,6 +173,20 @@ def test_has_animation_set_is_true_once_the_key_has_a_clip(tmp_path: Path) -> No
     assert atlas.has_animation_set(SpriteKey.BRAMBLE) is True
 
 
+def test_has_variant_set_is_false_for_a_key_with_no_variants() -> None:
+    atlas = build_placeholder_atlas()
+
+    assert atlas.has_variant_set(SpriteKey.ICON_HEALTH) is False
+
+
+def test_has_variant_set_is_true_once_the_key_has_a_variant(tmp_path: Path) -> None:
+    _write_static_sprite(tmp_path / SpriteKey.SEED.value, "active")
+
+    atlas = build_art_atlas(tmp_path)
+
+    assert atlas.has_variant_set(SpriteKey.SEED) is True
+
+
 @pytest.mark.parametrize("key", _SHIPPED_ICON_KEYS)
 def test_build_art_atlas_resolves_a_shipped_icon_key_to_real_art(key: SpriteKey) -> None:
     atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)

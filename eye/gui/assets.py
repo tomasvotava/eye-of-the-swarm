@@ -101,6 +101,11 @@ class SpriteAtlas:
         raw = self._clips.get(key, {})
         return _resolve_named_set(key, raw, state_type, label="states")
 
+    def has_variant_set(self, key: SpriteKey) -> bool:
+        """Whether `key` has any loaded static named variants. `get_variant_set` is all-or-nothing
+        and raises for a variant-less key, so a caller with a fallback asks here first."""
+        return key in self._variants
+
     def get_variant_set[TVariant: StrEnum](
         self, key: SpriteKey, variant_type: type[TVariant]
     ) -> Mapping[TVariant, pygame.Surface]:
