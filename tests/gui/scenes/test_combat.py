@@ -36,15 +36,10 @@ from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind, Str
 from eye.exploration.events import EnemyEncountered
 from eye.gui.app import _WINDOW_SIZE
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.effect_card import EffectCard
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
-    _ANNOUNCEMENT_COLUMN_MARGIN,
-    _ANNOUNCEMENT_ICON_SCALE,
-    _ANNOUNCEMENT_ICON_SIZE,
-    _ANNOUNCEMENT_PROSE_FONT_SIZE,
-    _ANNOUNCEMENT_SUBTITLE_FONT_SIZE,
-    _ANNOUNCEMENT_TITLE_FONT_SIZE,
     _BAR_HEIGHT,
     _BAR_WIDTH,
     _BUFF_ICON_DURATION_FONT_SIZE,
@@ -61,12 +56,12 @@ from eye.gui.scenes.combat import (
     _OVERLAY_LABEL_FONT_SIZE,
     _TEXT_COLOR,
     ACTION_KEYS,
+    AnchoredCard,
     Announcement,
     CombatAnimationState,
     CombatantLayout,
     CombatScene,
     DisplayedCombatantState,
-    EffectCard,
     HitFlash,
     HitValence,
     Overlay,
@@ -76,7 +71,6 @@ from eye.gui.scenes.combat import (
     _combatant_layout,
     _DeadVariant,
     _describe_event,
-    _fitted_font,
     _hp_tween_phase,
     _label,
     _LoadedCombatAnimationState,
@@ -1598,10 +1592,15 @@ def test_effect_applied_phase_sets_an_effect_card_announcement_with_title_and_su
     assert scene._announcement is None  # not set until on_start actually fires
     phases[0].on_start()
     assert scene._announcement == Announcement(
-        text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
-        card=EffectCard(
-            title="Fibrous", icon=rendered_icons[0], subtitle="Player — 3 turns", target=scene._battle.player
-        ),
+        card=AnchoredCard(
+            card=EffectCard(
+                title="Fibrous",
+                icon=rendered_icons[0],
+                description=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
+                subtitle="Player — 3 turns",
+            ),
+            target=scene._battle.player,
+        )
     )
     phases[0].on_complete()
     assert scene._announcement is None
@@ -1617,7 +1616,7 @@ def test_effect_applied_phase_subtitles_a_lifespan_effect_and_an_indefinite_batt
     scene._phases_for(lifespan_event)[0].on_start()
     assert scene._announcement is not None
     assert scene._announcement.card is not None
-    assert scene._announcement.card.subtitle == "Player — This generation"
+    assert scene._announcement.card.card.subtitle == "Player — This generation"
 
     indefinite_event = EffectApplied(
         target=scene._battle.player, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE, remaining_turns=None
@@ -1625,7 +1624,7 @@ def test_effect_applied_phase_subtitles_a_lifespan_effect_and_an_indefinite_batt
     scene._phases_for(indefinite_event)[0].on_start()
     assert scene._announcement is not None
     assert scene._announcement.card is not None
-    assert scene._announcement.card.subtitle == "Player — Until battle ends"
+    assert scene._announcement.card.card.subtitle == "Player — Until battle ends"
 
 
 def test_effect_applied_phase_is_suppressed_when_the_effect_is_already_active_in_the_same_category() -> None:
@@ -1659,10 +1658,15 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
     phases[0].on_start()
 
     assert scene._announcement == Announcement(
-        text=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
-        card=EffectCard(
-            title="Fibrous", icon=rendered_icons[0], subtitle="Player — Wears off", target=scene._battle.player
-        ),
+        card=AnchoredCard(
+            card=EffectCard(
+                title="Fibrous",
+                icon=rendered_icons[0],
+                description=EFFECT_DESCRIPTIONS[EffectName.FIBROUS],
+                subtitle="Player — Wears off",
+            ),
+            target=scene._battle.player,
+        )
     )
 
 
@@ -1736,19 +1740,21 @@ def test_draw_does_not_raise_with_an_effect_card_announcement_set() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene._announcement = Announcement(
-        text="Lowers attack",
-        card=EffectCard(
-            title="Runt",
-            icon=TextBuffIcon(EffectName.RUNT),
-            subtitle="Player — 3 turns",
+        card=AnchoredCard(
+            card=EffectCard(
+                title="Runt",
+                icon=TextBuffIcon(EffectName.RUNT),
+                description="Lowers attack",
+                subtitle="Player — 3 turns",
+            ),
             target=scene._battle.player,
-        ),
+        )
     )
 
     scene.draw(pygame.Surface((800, 600)))
 
 
-def test_draw_renders_the_effect_cards_icon_at_the_icon_boxs_top_left_and_size() -> None:
+def test_draw_anchors_the_effect_card_over_its_own_combatants_half() -> None:
     render_calls: list[tuple[pygame.Vector2, int]] = []
 
     class _SpyIcon:
@@ -1758,40 +1764,25 @@ def test_draw_renders_the_effect_cards_icon_at_the_icon_boxs_top_left_and_size()
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     surface = pygame.Surface((800, 600))
-    subtitle = "Player — 3 turns"
-    prose = "Lowers attack"
 
     for target, mirrored in ((scene._battle.player, False), (scene._battle.enemy, True)):
         render_calls.clear()
         scene._announcement = Announcement(
-            text=prose, card=EffectCard(title="Runt", icon=_SpyIcon(), subtitle=subtitle, target=target)
+            card=AnchoredCard(
+                card=EffectCard(
+                    title="Runt", icon=_SpyIcon(), description="Lowers attack", subtitle="Player — 3 turns"
+                ),
+                target=target,
+            )
         )
 
         scene.draw(surface)
 
-        # Mirrors _draw_effect_announcement's own geometry, centered on its own combatant's half.
-        column_width = surface.get_width() // 2 - _ANNOUNCEMENT_COLUMN_MARGIN * 2
-        icon_box_size = min(int(_ANNOUNCEMENT_ICON_SIZE * _ANNOUNCEMENT_ICON_SCALE), column_width)
-        title_height = (
-            _fitted_font(("Runt",), _ANNOUNCEMENT_TITLE_FONT_SIZE, column_width).render("Runt", True, "white").height
-        )
-        prose_height = (
-            _fitted_font(prose.split(), _ANNOUNCEMENT_PROSE_FONT_SIZE, column_width).render(prose, True, "white").height
-        )
-        subtitle_height = (
-            _fitted_font((subtitle,), _ANNOUNCEMENT_SUBTITLE_FONT_SIZE, column_width)
-            .render(subtitle, True, "white")
-            .height
-        )
-        block_height = title_height + icon_box_size + prose_height + subtitle_height + _GAP * 3
-        center_x = _combatant_layout(surface, mirrored=mirrored).sprite_center[0]
-        top = surface.get_height() // 2 - block_height // 2
-        expected_pos = pygame.Vector2(center_x - icon_box_size // 2, top + title_height + _GAP)
-
+        # The scene's only share of the placement is which half the card centers over; the block's
+        # own geometry is asserted in tests/gui/test_effect_card.py.
         assert len(render_calls) == 1
         pos, size = render_calls[0]
-        assert pos == expected_pos
-        assert size == icon_box_size
+        assert pos.x + size // 2 == _combatant_layout(surface, mirrored=mirrored).sprite_center[0]
 
 
 def test_every_effect_card_stays_inside_its_combatants_half_of_the_real_window() -> None:
@@ -1811,14 +1802,16 @@ def test_every_effect_card_stays_inside_its_combatants_half_of_the_real_window()
             # Not black: the card's backdrop panel is black too, and would be keyed straight out.
             surface.fill(_UNDRAWN)
             scene._announcement = Announcement(
-                text=EFFECT_DESCRIPTIONS[effect],
-                card=EffectCard(
-                    title=_label(effect),
-                    icon=scene._buff_icon_factory(effect),
-                    # The longest duration phrasing _duration_subtitle can produce.
-                    subtitle=f"{target.name} — Until battle ends",
+                card=AnchoredCard(
+                    card=EffectCard(
+                        title=_label(effect),
+                        icon=scene._buff_icon_factory(effect),
+                        description=EFFECT_DESCRIPTIONS[effect],
+                        # The longest duration phrasing _duration_subtitle can produce.
+                        subtitle=f"{target.name} — Until battle ends",
+                    ),
                     target=target,
-                ),
+                )
             )
 
             scene._draw_announcement(
