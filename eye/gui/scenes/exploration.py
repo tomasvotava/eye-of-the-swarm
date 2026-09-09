@@ -42,7 +42,7 @@ _BUFF_ICON_SIZE = 28
 _BUFF_ICON_STEP = 36
 # Fixed: EffectGranted carries no category, and every effect a pickup grants is Lifespan-scoped.
 _EFFECT_CARD_SUBTITLE = "This generation"
-_EFFECT_CARD_FOOTER = "(press any key to close)"
+_CARD_FOOTER = "(press any key to close)"
 
 type _ScreenEvent = EffectGranted | ResourceGranted | NothingHappened
 
@@ -157,8 +157,8 @@ class ExplorationScene:
         self._displayed_effects = tuple(
             effect for effect in generation.active_lifespan_effects if effect not in unrevealed
         )
-        self._effect_card: Card | None = None
-        self._dismiss_effect_card = False
+        self._card: Card | None = None
+        self._dismiss_card = False
 
         # None when the atlas has no player animation data (e.g. build_placeholder_atlas()) --
         # mirrors DevAssetViewerScene's identical guard for this identical key/enum (ADR 0011).
@@ -204,10 +204,10 @@ class ExplorationScene:
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN:
             return
-        if self._effect_card is not None:
+        if self._card is not None:
             # Returning here, before any _pending_action write, is the entire reason no walk or
             # seed can start while a card is up. Do not add a _pending_action write above it.
-            self._dismiss_effect_card = True
+            self._dismiss_card = True
             return
         action = KEY_ACTIONS.get(pygame_event.key)
         if action is not None:
@@ -218,9 +218,9 @@ class ExplorationScene:
             self._player_animator.update(dt)
         # Below the animator tick, not above it: skipping the tick would drop a frame of the clip
         # that is playing.
-        if self._dismiss_effect_card:
-            self._dismiss_effect_card = False
-            self._effect_card = None
+        if self._dismiss_card:
+            self._dismiss_card = False
+            self._card = None
             return None
         if self._phase in (_Phase.WALKING_TO_EXIT, _Phase.WALKING_TO_ENCOUNTER):
             # A key pressed mid-walk is a silent no-op, not a queued one -- discarded here rather
@@ -314,7 +314,7 @@ class ExplorationScene:
         return None
 
     def _raise_effect_card(self, effect: EffectName) -> None:
-        self._effect_card = Card(
+        self._card = Card(
             title=effect_label(effect),
             icon=self._buff_icon_factory(effect),
             description=EFFECT_DESCRIPTIONS[effect],
@@ -328,7 +328,7 @@ class ExplorationScene:
         self._draw_status_icons(surface)
         self._draw_buff_icons(surface)
         self._draw_hud(surface)
-        self._draw_effect_card(surface)
+        self._draw_raised_card(surface)
 
     def _draw_background(self, surface: pygame.Surface) -> None:
         background = pygame.transform.scale(self._atlas.get(SpriteKey.BACKGROUND), surface.get_size())
@@ -390,16 +390,16 @@ class ExplorationScene:
             self._buff_icon_factory(effect).render(surface, pygame.Vector2(x, _ICON_MARGIN), _BUFF_ICON_SIZE)
             x += _BUFF_ICON_STEP
 
-    def _draw_effect_card(self, surface: pygame.Surface) -> None:
+    def _draw_raised_card(self, surface: pygame.Surface) -> None:
         # Centred, unlike CombatScene's: out here there is only one character to point at.
-        if self._effect_card is None:
+        if self._card is None:
             return
         draw_card(
             surface,
-            self._effect_card,
+            self._card,
             center_x=surface.get_width() // 2,
             column_width=card_column_width(surface),
-            footer=_EFFECT_CARD_FOOTER,
+            footer=_CARD_FOOTER,
         )
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
