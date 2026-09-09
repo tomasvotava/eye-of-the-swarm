@@ -15,6 +15,7 @@ from eye.gui.widgets import BuffIcon
 _TITLE_FONT_SIZE = 44
 _DESCRIPTION_FONT_SIZE = 28
 _SUBTITLE_FONT_SIZE = 14
+_FOOTER_FONT_SIZE = _SUBTITLE_FONT_SIZE
 # Floor for the shrink-to-fit search: below this the text fits its column but can't be read.
 _MIN_FONT_SIZE = 10
 # SIZE is the shipped effect-icon art's native pixel size (210x210); SCALE is the card's own knob.
@@ -73,11 +74,13 @@ class EffectCard:
     subtitle: str
 
 
-def draw_effect_card(surface: pygame.Surface, card: EffectCard, *, center_x: int, column_width: int) -> None:
+def draw_effect_card(
+    surface: pygame.Surface, card: EffectCard, *, center_x: int, column_width: int, footer: str | None = None
+) -> None:
     """Draw `card` as one block over a backdrop panel, centered on `center_x` and on the surface's
     own vertical middle. `column_width` is the width budget every piece is typeset into."""
-    # Card layout: title / icon box / description / subtitle. Every piece is typeset to the column
-    # budget, not off the rest.
+    # Card layout: title / icon box / description / subtitle / footer. Every piece is typeset to
+    # the column budget, not off the rest.
     title_surface = _fitted_font((card.title,), _TITLE_FONT_SIZE, column_width).render(card.title, True, _TEXT_COLOR)
     # Fitted against the individual words: wrapping handles the length.
     description_font = _fitted_font(card.description.split(), _DESCRIPTION_FONT_SIZE, column_width)
@@ -88,6 +91,11 @@ def draw_effect_card(surface: pygame.Surface, card: EffectCard, *, center_x: int
     subtitle_surface = _fitted_font((card.subtitle,), _SUBTITLE_FONT_SIZE, column_width).render(
         card.subtitle, True, _TEXT_COLOR
     )
+    footer_surface = (
+        None
+        if footer is None
+        else _fitted_font((footer,), _FOOTER_FONT_SIZE, column_width).render(footer, True, _TEXT_COLOR)
+    )
     icon_box_size = min(int(_ICON_SIZE * _ICON_SCALE), column_width)
 
     description_height = sum(line.height for line in description_surfaces)
@@ -95,6 +103,9 @@ def draw_effect_card(surface: pygame.Surface, card: EffectCard, *, center_x: int
     block_width = max(
         title_surface.width, icon_box_size, subtitle_surface.width, *(line.width for line in description_surfaces)
     )
+    if footer_surface is not None:
+        block_height += footer_surface.height + _GAP
+        block_width = max(block_width, footer_surface.width)
     top = surface.get_height() // 2 - block_height // 2
 
     backdrop = pygame.Rect(0, 0, block_width + _GAP * 2, block_height + _GAP * 2)
@@ -115,4 +126,8 @@ def draw_effect_card(surface: pygame.Surface, card: EffectCard, *, center_x: int
     for line in description_surfaces:
         surface.blit(line, (center_x - line.width // 2, description_top))
         description_top += line.height
-    surface.blit(subtitle_surface, (center_x - subtitle_surface.width // 2, description_top + _GAP))
+    subtitle_top = description_top + _GAP
+    surface.blit(subtitle_surface, (center_x - subtitle_surface.width // 2, subtitle_top))
+    if footer_surface is not None:
+        footer_top = subtitle_top + subtitle_surface.height + _GAP
+        surface.blit(footer_surface, (center_x - footer_surface.width // 2, footer_top))

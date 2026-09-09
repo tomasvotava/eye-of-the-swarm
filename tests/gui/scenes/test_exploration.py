@@ -15,6 +15,7 @@ from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
     _BUFF_ICON_SIZE,
     _BUFF_ICON_STEP,
+    _EFFECT_CARD_FOOTER,
     _ICON_MARGIN,
     _PLAYER_SCALE_FACTOR,
     KEY_ACTIONS,
@@ -26,7 +27,6 @@ from eye.gui.scenes.exploration import (
 )
 from eye.gui.tuning import (
     ENTRY_X_FRACTION,
-    EXPLORATION_EFFECT_CARD_HOLD_SECONDS,
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
@@ -628,38 +628,97 @@ def test_an_enemy_encounter_raises_no_card() -> None:
     assert scene._effect_card is None
 
 
-def test_the_effect_card_clears_once_its_hold_expires() -> None:
+def test_the_effect_card_stands_however_long_the_player_leaves_it() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
     _resolve_next_screen(scene)
     assert scene._effect_card is not None
 
-    # Idle frames: the hold runs down without the player touching a key.
-    scene.update(EXPLORATION_EFFECT_CARD_HOLD_SECONDS / 2)
+    for _ in range(100):
+        assert scene.update(1.0) is None
+
     assert scene._effect_card is not None
 
-    scene.update(EXPLORATION_EFFECT_CARD_HOLD_SECONDS / 2)
-    assert scene._effect_card is None
 
-
-def test_advancing_early_clears_the_card_and_starts_the_walk_in_the_same_frame() -> None:
+def test_advancing_with_the_card_up_dismisses_it_without_starting_the_walk() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
     _resolve_next_screen(scene)
     assert scene._effect_card is not None
 
     _press(scene, pygame.K_SPACE)
-    scene.update(WALK_TO_EXIT_DURATION_SECONDS / 2)
+    assert scene.update(WALK_TO_EXIT_DURATION_SECONDS) is None
 
     assert scene._effect_card is None
+    assert scene._phase is _Phase.RESOLVED
+
+
+def test_the_frame_that_dismisses_the_card_still_advances_the_player_animation(tmp_path: Path) -> None:
+    # The dismiss branch sits below the animator tick, not above it, so this frame still
+    # advances the clip.
+    scene = _scene_with_real_player_art(tmp_path, [EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
+    _resolve_next_screen(scene)
+    assert scene._effect_card is not None
+    assert scene._player_animator is not None
+    before = scene._player_animator.current_frame()
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(1 / 8)  # exactly one frame at the default 8fps test clip
+
+    assert scene._effect_card is None
+    after = scene._player_animator.current_frame()
+    assert pygame.image.tobytes(before, "RGBA") != pygame.image.tobytes(after, "RGBA")
+
+
+def test_a_key_bound_to_no_action_dismisses_the_card_too() -> None:
+    assert pygame.K_q not in KEY_ACTIONS
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
+    _resolve_next_screen(scene)
+    assert scene._effect_card is not None
+
+    _press(scene, pygame.K_q)
+    assert scene.update(WALK_TO_EXIT_DURATION_SECONDS) is None
+
+    assert scene._effect_card is None
+    assert scene._phase is _Phase.RESOLVED
+
+
+def test_the_plant_key_dismisses_the_card_without_planting() -> None:
+    scene, generation = _scene([EncounterKind.NOTHING] * (_ADVANCES_TO_READY_SEED - 1) + [EncounterKind.EFFECT_PICKUP])
+    for _ in range(_ADVANCES_TO_READY_SEED):
+        _resolve_next_screen(scene)
+    assert generation.is_seed_ready is True
+    assert scene._effect_card is not None
+
+    _press(scene, pygame.K_p)
+    scene.update(0.016)
+
+    assert scene._effect_card is None
+    assert generation.pending_seeds == ()
+    assert generation.is_seed_ready is True
+
+
+def test_a_second_press_advances_once_the_card_has_been_dismissed() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
+    _resolve_next_screen(scene)
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(0.016)
+    assert scene._effect_card is None
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS / 2)
+
     assert scene._phase is _Phase.WALKING_TO_EXIT
 
 
 def test_draw_centers_the_effect_card_at_the_width_battle_typesets_its_own_into(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[EffectCard, int, int]] = []
+    calls: list[tuple[EffectCard, int, int, str | None]] = []
 
-    def spy_draw_effect_card(surface: pygame.Surface, card: EffectCard, *, center_x: int, column_width: int) -> None:
-        calls.append((card, center_x, column_width))
+    def spy_draw_effect_card(
+        surface: pygame.Surface, card: EffectCard, *, center_x: int, column_width: int, footer: str | None = None
+    ) -> None:
+        calls.append((card, center_x, column_width, footer))
 
     monkeypatch.setattr("eye.gui.scenes.exploration.draw_effect_card", spy_draw_effect_card)
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
@@ -668,7 +727,7 @@ def test_draw_centers_the_effect_card_at_the_width_battle_typesets_its_own_into(
 
     scene.draw(surface)
 
-    assert calls == [(scene._effect_card, surface.get_width() // 2, card_column_width(surface))]
+    assert calls == [(scene._effect_card, surface.get_width() // 2, card_column_width(surface), _EFFECT_CARD_FOOTER)]
 
 
 def test_draw_renders_no_effect_card_when_none_is_up(monkeypatch: pytest.MonkeyPatch) -> None:
