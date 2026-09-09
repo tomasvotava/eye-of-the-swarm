@@ -29,7 +29,14 @@ from eye.gui.tuning import (
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, BuffIcon, SpriteBuffIcon, SpriteIcon, effect_label
+from eye.gui.widgets import (
+    EFFECT_DESCRIPTIONS,
+    BuffIcon,
+    SpriteBuffIcon,
+    SpriteIcon,
+    borderless_icon,
+    effect_label,
+)
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
@@ -41,6 +48,9 @@ _ICON_MARGIN = 8
 _PLAYER_SCALE_FACTOR = 3.0
 _BUFF_ICON_SIZE = 28
 _BUFF_ICON_STEP = 36
+_STATUS_ICON_KEYS = (SpriteKey.SEED, SpriteKey.TURF)  # in the order of appearance
+_SPORES_ICON_SIZE = _BUFF_ICON_SIZE
+_SPORES_LABEL_GAP = 4
 # Fixed: EffectGranted carries no category, and every effect a pickup grants is Lifespan-scoped.
 _EFFECT_CARD_SUBTITLE = "This generation"
 _CARD_FOOTER = "(press any key to close)"
@@ -133,6 +143,14 @@ def _resolve_enemy_sprite_key(strain_name: str) -> SpriteKey:
         return SpriteKey.UNKNOWN
 
 
+def _status_icon_row_right(atlas: SpriteAtlas) -> int:
+    """The x of the next drawable element, calculated based on the widest the status row can ever get"""
+    right = _ICON_MARGIN
+    for key in _STATUS_ICON_KEYS:
+        right += atlas.get(key).get_width() + _ICON_MARGIN
+    return right - _ICON_MARGIN
+
+
 def _resolve_encounter_sprite_key(events: Sequence[SessionEvent]) -> SpriteKey | None:
     """What stands at the marker for a not-yet-triggered encounter (ADR 0012: "an enemy sprite
     standing there, etc -- nothing about what it is stays secret"). `None` means the screen is
@@ -169,6 +187,8 @@ class ExplorationScene:
             self._buff_icon_factory = sprite_icons.__getitem__
         # Not routed through buff_icon_factory: that seam is keyed by EffectName.
         self._resource_icons = {kind: SpriteIcon(atlas, key) for kind, key in _RESOURCE_SPRITE_KEYS.items()}
+        self._spores_icon = borderless_icon(atlas, SpriteKey.ICON_SPORES)
+        self._spores_counter_left = _status_icon_row_right(atlas) + _ICON_MARGIN
         self._phase = starting_phase
         self._pending_events = pending_events
         self._walk_elapsed_seconds = 0.0
@@ -180,6 +200,12 @@ class ExplorationScene:
         unrevealed = {event.effect for event in pending_events if isinstance(event, EffectGranted)}
         self._displayed_effects = tuple(
             effect for effect in generation.active_lifespan_effects if effect not in unrevealed
+        )
+        # snapshotted value so that it only advances when collected
+        self._displayed_spores = generation.spores_gained - sum(
+            event.amount
+            for event in pending_events
+            if isinstance(event, ResourceGranted) and event.kind is ResourceKind.SPORES
         )
         self._card: Card | None = None
         self._dismiss_card = False
@@ -322,6 +348,7 @@ class ExplorationScene:
         self._walk_elapsed_seconds = 0.0
         # The reveal point: advance() applied the pickup back when the screen loaded.
         self._displayed_effects = self._generation.active_lifespan_effects
+        self._displayed_spores = self._generation.spores_gained
 
         encounter = next((event for event in events if isinstance(event, EnemyEncountered)), None)
         if encounter is not None:
@@ -358,6 +385,7 @@ class ExplorationScene:
         self._draw_encounter(surface)
         self._draw_player(surface)
         self._draw_status_icons(surface)
+        self._draw_spores_counter(surface)
         self._draw_buff_icons(surface)
         self._draw_hud(surface)
         self._draw_raised_card(surface)
@@ -401,14 +429,29 @@ class ExplorationScene:
         surface.blit(sprite, sprite.get_rect(center=(x, surface.get_rect().centery)))
 
     def _draw_status_icons(self, surface: pygame.Surface) -> None:
+        showing = {
+            SpriteKey.SEED: self._can_plant_seed(),
+            SpriteKey.TURF: bool(self._game.matured_turf_positions),
+        }
         x = _ICON_MARGIN
-        if self._can_plant_seed():
-            seed = self._atlas.get(SpriteKey.SEED)
-            surface.blit(seed, (x, _ICON_MARGIN))
-            x += seed.get_width() + _ICON_MARGIN
-        if self._game.matured_turf_positions:
-            turf = self._atlas.get(SpriteKey.TURF)
-            surface.blit(turf, (x, _ICON_MARGIN))
+        for key in _STATUS_ICON_KEYS:
+            if not showing[key]:
+                continue
+            sprite = self._atlas.get(key)
+            surface.blit(sprite, (x, _ICON_MARGIN))
+            x += sprite.get_width() + _ICON_MARGIN
+
+    def _draw_spores_counter(self, surface: pygame.Surface) -> None:
+        self._spores_icon.render(surface, pygame.Vector2(self._spores_counter_left, _ICON_MARGIN), _SPORES_ICON_SIZE)
+        total = get_font(GameFont.ITHACA, _FONT_SIZE).render(str(self._displayed_spores), True, _TEXT_COLOR)
+        # Centred on the icon's box: a number hung from its top reads as a superscript.
+        surface.blit(
+            total,
+            (
+                self._spores_counter_left + _SPORES_ICON_SIZE + _SPORES_LABEL_GAP,
+                _ICON_MARGIN + (_SPORES_ICON_SIZE - total.get_height()) // 2,
+            ),
+        )
 
     def _draw_buff_icons(self, surface: pygame.Surface) -> None:
         # No countdown beside an icon: a Lifespan effect runs until the generation ends, so it has
@@ -438,7 +481,6 @@ class ExplorationScene:
         font = get_font(GameFont.ITHACA, _FONT_SIZE)
         lines = [
             f"Seed ready to plant: {'yes' if self._can_plant_seed() else 'no'}",
-            f"Spores this life: {self._generation.spores_gained}",
             self._last_message,
             "Space/Enter: advance   P: plant seed",
         ]
