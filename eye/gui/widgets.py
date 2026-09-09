@@ -1,8 +1,9 @@
 """Compound widget seam for buff/debuff and skill-tree-node display (ADR 0009). Both `BuffIcon`
 and `SkillTreeLeaf` are `Protocol`s so an art epic can swap in a richer implementation (icon +
 text + state styling) at each scene's factory call site without touching scene code.
-`SpriteBuffIcon` (ADR 0011) is `CombatScene`'s production default; `TextBuffIcon` remains as a
-plain-text fallback/test double. `TextSkillTreeLeaf` is still `SkillTreeLeaf`'s only
+`SpriteIcon` (ADR 0011) draws an atlas key's art; `SpriteBuffIcon` is its subject-keyed form and
+`CombatScene`'s production default; `TextBuffIcon` remains as a plain-text fallback/test double.
+`TextSkillTreeLeaf` is still `SkillTreeLeaf`'s only
 implementation -- its own art epic hasn't landed yet.
 """
 
@@ -13,7 +14,7 @@ from typing import Protocol, assert_never
 import pygame
 
 from eye.combat.effects import EFFECT_POLARITY, EffectName, EffectPolarity
-from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.assets import IconVariant, SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.skilltree.tree import SkillNode
 
@@ -118,16 +119,17 @@ def _sprite_key_for(source: IconSource) -> SpriteKey:
             assert_never(source)
 
 
-class SpriteBuffIcon:
-    """`BuffIcon` backed by real art (ADR 0011) -- `CombatScene`'s default `buff_icon_factory`."""
+class SpriteIcon:
+    """`BuffIcon` backed by real art (ADR 0011), named by the atlas key it draws. `variant` picks
+    one of the key's named static variants; `None` takes the reserved `sprite.png`."""
 
-    def __init__(self, atlas: SpriteAtlas, source: IconSource) -> None:
-        self._surface = atlas.get(_sprite_key_for(source))
-        # A caller may render the same icon at more than one size (CombatScene's HUD row and
-        # Announcement card differ) -- cached per size after first use, since an icon instance is
-        # built once per subject and reused across frames (see CombatScene's default factory),
-        # rather than rescaled on every render() call (eye/gui/animation.py's scale_sprite
-        # docstring: nothing is gained by recomputing a fixed scale every frame).
+    def __init__(self, atlas: SpriteAtlas, sprite_key: SpriteKey, variant: IconVariant | None = None) -> None:
+        self.sprite_key = sprite_key
+        self._surface = (
+            atlas.get(sprite_key) if variant is None else atlas.get_variant_set(sprite_key, IconVariant)[variant]
+        )
+        # The shipped art is 210x210 while callers render into boxes a few tens of pixels across,
+        # so an unscaled blit would cover a large part of the screen.
         self._scaled: dict[int, pygame.Surface] = {}
 
     def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
@@ -136,6 +138,13 @@ class SpriteBuffIcon:
             scaled = pygame.transform.smoothscale(self._surface, (size, size))
             self._scaled[size] = scaled
         surface.blit(scaled, pos)
+
+
+class SpriteBuffIcon(SpriteIcon):
+    """A `SpriteIcon` named by its subject -- `CombatScene`'s default `buff_icon_factory`."""
+
+    def __init__(self, atlas: SpriteAtlas, source: IconSource) -> None:
+        super().__init__(atlas, _sprite_key_for(source))
 
 
 _STATE_COLORS: dict[SkillNodeState, pygame.typing.ColorLike] = {

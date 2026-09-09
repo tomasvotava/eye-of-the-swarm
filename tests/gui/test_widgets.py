@@ -1,16 +1,21 @@
+from pathlib import Path
+
 import pygame
 
 from eye.combat.effects import EffectName
-from eye.gui.assets import SpriteAtlas, SpriteKey, build_placeholder_atlas
+from eye.gui.assets import IconVariant, SpriteAtlas, SpriteKey, build_art_atlas, build_placeholder_atlas
 from eye.gui.widgets import (
     EFFECT_DESCRIPTIONS,
     NonEffectIcon,
     SkillNodeState,
     SpriteBuffIcon,
+    SpriteIcon,
     TextBuffIcon,
     TextSkillTreeLeaf,
 )
 from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
+
+_SHIPPED_SPRITES_DIR = Path("eye/gui/sprites")
 
 
 def _surface() -> pygame.Surface:
@@ -76,3 +81,38 @@ def test_effect_descriptions_covers_every_effect_name() -> None:
     for effect in EffectName:
         assert effect in EFFECT_DESCRIPTIONS
         assert EFFECT_DESCRIPTIONS[effect]  # non-empty
+
+
+def test_sprite_icon_draws_the_shipped_art_scaled_down_to_the_requested_box() -> None:
+    # The real art, not a fixture: build_placeholder_atlas() is 32x32 for every key and the
+    # tmp_path helpers write 4x4, so only a 210x210 source can catch an unscaled blit.
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+    box = 32
+    destination = pygame.Surface((box * 2, box * 2))
+    destination.fill("black")
+
+    SpriteIcon(atlas, SpriteKey.ICON_HEALTH).render(destination, pygame.Vector2(0, 0), box)
+
+    outside = [
+        (x, y) for x in range(destination.get_width()) for y in range(destination.get_height()) if x >= box or y >= box
+    ]
+    assert all(destination.get_at(pixel) == pygame.Color("black") for pixel in outside)
+    assert any(destination.get_at((x, y)) != pygame.Color("black") for x in range(box) for y in range(box))
+
+
+def test_sprite_icon_takes_the_named_variant_over_the_default_sprite() -> None:
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+    default = _surface()
+    borderless = _surface()
+
+    SpriteIcon(atlas, SpriteKey.ICON_HEALTH).render(default, pygame.Vector2(0, 0), 32)
+    SpriteIcon(atlas, SpriteKey.ICON_HEALTH, IconVariant.BORDERLESS).render(borderless, pygame.Vector2(0, 0), 32)
+
+    assert pygame.image.tobytes(default, "RGBA") != pygame.image.tobytes(borderless, "RGBA")
+
+
+def test_sprite_buff_icon_is_a_sprite_icon_named_by_its_subject() -> None:
+    icon = SpriteBuffIcon(build_placeholder_atlas(), EffectName.FIBROUS)
+
+    assert isinstance(icon, SpriteIcon)
+    assert icon.sprite_key is SpriteKey.EFFECT_FIBROUS
