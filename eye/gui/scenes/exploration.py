@@ -25,7 +25,6 @@ from eye.gui.tuning import (
     ENCOUNTER_X_FRACTION,
     ENTRY_X_FRACTION,
     EXIT_X_FRACTION,
-    EXPLORATION_EFFECT_CARD_HOLD_SECONDS,
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
@@ -43,6 +42,7 @@ _BUFF_ICON_SIZE = 28
 _BUFF_ICON_STEP = 36
 # Fixed: EffectGranted carries no category, and every effect a pickup grants is Lifespan-scoped.
 _EFFECT_CARD_SUBTITLE = "This generation"
+_EFFECT_CARD_FOOTER = "(press any key to close)"
 
 type _ScreenEvent = EffectGranted | ResourceGranted | NothingHappened
 
@@ -158,7 +158,7 @@ class ExplorationScene:
             effect for effect in generation.active_lifespan_effects if effect not in unrevealed
         )
         self._effect_card: EffectCard | None = None
-        self._effect_card_remaining_seconds = 0.0
+        self._dismiss_effect_card = False
 
         # None when the atlas has no player animation data (e.g. build_placeholder_atlas()) --
         # mirrors DevAssetViewerScene's identical guard for this identical key/enum (ADR 0011).
@@ -204,15 +204,24 @@ class ExplorationScene:
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN:
             return
+        if self._effect_card is not None:
+            # Returning here, before any _pending_action write, is the entire reason no walk or
+            # seed can start while a card is up. Do not add a _pending_action write above it.
+            self._dismiss_effect_card = True
+            return
         action = KEY_ACTIONS.get(pygame_event.key)
         if action is not None:
             self._pending_action = action
 
     def update(self, dt: float) -> PlaySceneTransition | None:
-        # Ahead of the early returns below, so a card expires while the player stands still.
-        self._tick_effect_card(dt)
         if self._player_animator is not None:
             self._player_animator.update(dt)
+        # Below the animator tick, not above it: skipping the tick would drop a frame of the clip
+        # that is playing.
+        if self._dismiss_effect_card:
+            self._dismiss_effect_card = False
+            self._effect_card = None
+            return None
         if self._phase in (_Phase.WALKING_TO_EXIT, _Phase.WALKING_TO_ENCOUNTER):
             # A key pressed mid-walk is a silent no-op, not a queued one -- discarded here rather
             # than left to fire the instant the walk ends.
@@ -239,16 +248,9 @@ class ExplorationScene:
         # drive deterministically in tests).
         return self._advance_walk(dt)
 
-    def _tick_effect_card(self, dt: float) -> None:
-        if self._effect_card is None:
-            return
-        self._effect_card_remaining_seconds -= dt
-        if self._effect_card_remaining_seconds <= 0.0:
-            self._effect_card = None
-
     def _begin_walk(self, phase: _Phase) -> None:
-        # The card belongs to the marker being left, so advancing early clears it in this frame.
-        self._effect_card = None
+        # No card can be up here: handle_pygame_event returns before writing _pending_action
+        # while one is raised.
         self._set_phase(phase)
         self._walk_elapsed_seconds = 0.0
 
@@ -318,7 +320,6 @@ class ExplorationScene:
             description=EFFECT_DESCRIPTIONS[effect],
             subtitle=_EFFECT_CARD_SUBTITLE,
         )
-        self._effect_card_remaining_seconds = EXPLORATION_EFFECT_CARD_HOLD_SECONDS
 
     def draw(self, surface: pygame.Surface) -> None:
         self._draw_background(surface)
@@ -394,7 +395,11 @@ class ExplorationScene:
         if self._effect_card is None:
             return
         draw_effect_card(
-            surface, self._effect_card, center_x=surface.get_width() // 2, column_width=card_column_width(surface)
+            surface,
+            self._effect_card,
+            center_x=surface.get_width() // 2,
+            column_width=card_column_width(surface),
+            footer=_EFFECT_CARD_FOOTER,
         )
 
     def _draw_hud(self, surface: pygame.Surface) -> None:

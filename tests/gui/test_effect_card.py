@@ -23,16 +23,19 @@ _SURFACE_SIZE = (800, 600)
 _TITLE = "Runt"
 _DESCRIPTION = "Lowers attack"
 _SUBTITLE = "Player — 3 turns"
+_FOOTER = "(press any key to close)"
 
 
 def _card(icon: BuffIcon) -> EffectCard:
     return EffectCard(title=_TITLE, icon=icon, description=_DESCRIPTION, subtitle=_SUBTITLE)
 
 
-def _drawn_rect(*, center_x: int, column_width: int) -> pygame.Rect:
+def _drawn_rect(*, center_x: int, column_width: int, footer: str | None = None) -> pygame.Rect:
     surface = pygame.Surface(_SURFACE_SIZE)
     surface.fill(_UNDRAWN)
-    draw_effect_card(surface, _card(TextBuffIcon(EffectName.RUNT)), center_x=center_x, column_width=column_width)
+    draw_effect_card(
+        surface, _card(TextBuffIcon(EffectName.RUNT)), center_x=center_x, column_width=column_width, footer=footer
+    )
     surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
     return surface.get_bounding_rect()
 
@@ -81,3 +84,17 @@ def test_the_drawn_block_is_centered_on_the_given_center_x_within_the_given_colu
     assert narrow.centerx == 610
     assert narrow.width <= 90 + _GAP * 2  # the panel's own inset is all that may exceed the budget
     assert narrow.width < wide.width  # the budget clamps the block rather than being ignored
+
+
+def test_a_footer_adds_a_line_inside_the_panel_and_is_absent_without_one() -> None:
+    without = _drawn_rect(center_x=400, column_width=360)
+    with_footer = _drawn_rect(center_x=400, column_width=360, footer=_FOOTER)
+
+    assert with_footer.height > without.height
+    assert with_footer.centerx == 400  # the extra line stays centred with the rest of the block
+
+
+def test_a_long_footer_is_typeset_into_the_column_like_every_other_line() -> None:
+    narrow = _drawn_rect(center_x=400, column_width=90, footer=_FOOTER)
+
+    assert narrow.width <= 90 + _GAP * 2  # the panel's own inset is all that may exceed the budget
