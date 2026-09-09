@@ -178,6 +178,12 @@ def _describe_event(event: BattleEvent, player: Combatant) -> str:
             assert_never(event)
 
 
+def _turn_title(combatant: Combatant) -> str:
+    if combatant.is_player:
+        return "Your turn"
+    return f"{combatant.name}'s turn"
+
+
 @dataclass(frozen=True, slots=True)
 class Phase:
     """One step of a `BattleEvent`'s reveal (ADR 0013): `duration_seconds` of 0 completes in the
@@ -501,6 +507,8 @@ class CombatScene:
         self._announcement: Announcement | None = None
         self._overlay: Overlay | None = None
         self._phase_focus: PhaseFocus | None = None
+        # Latched by update() when a turn is driven, never derived at draw time (ADR 0013).
+        self._turn_banner: str | None = None
         # Scene-wide, unlike _phase_elapsed, so the pulse never restarts at a phase boundary.
         self._elapsed_seconds: float = 0.0
         self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER, _COMBATANT_SCALE_FACTOR)
@@ -557,10 +565,15 @@ class CombatScene:
             return self._conclude()
         turn_phase = self._battle.turn_phase
         if turn_phase is TurnPhase.AWAITING_QUERY:
+            # Latched here, never read off ActionChosen, which _resolve_swing emits only after the
+            # menu: that would name the enemy for the whole player-choice window. Set before
+            # query_player_turn(), which mutates -- a Wilty pre-turn roll can kill the player.
+            self._turn_banner = _turn_title(self._battle.player)
             self._advance_query()
         elif turn_phase is TurnPhase.AWAITING_PLAYER_ACTION:
             self._resolve_pending_action()
         elif turn_phase is TurnPhase.AWAITING_ENEMY_TURN:
+            self._turn_banner = _turn_title(self._battle.enemy)
             self._queue_events(self._battle.resolve_enemy_turn())
             self._tick_displayed_battle_effect_durations()
         # Starts (without necessarily finishing) the freshly queued batch's first phase within
@@ -822,8 +835,18 @@ class CombatScene:
                 ]
             case EffectApplied() | EffectExpired():
                 return self._effect_announcement_phase(event)
-            case TurnSkipped() | ExtraActionTriggered() | BattleEnded():
+            case TurnSkipped() | ExtraActionTriggered():
                 return [self._announcement_phase(Announcement(text=_describe_event(event, self._battle.player)))]
+            case BattleEnded():
+                result = self._announcement_phase(Announcement(text=_describe_event(event, self._battle.player)))
+
+                # Only the next turn ever replaces the banner, and there is none, so clear it here
+                # or it sits over the result.
+                def on_start() -> None:
+                    result.on_start()
+                    self._turn_banner = None
+
+                return [replace(result, on_start=on_start)]
             case MeterFilled(combatant=combatant, meter_after=meter_after):
                 return [_meter_tween_phase(self._displayed_for(combatant), meter_after)]
             case MeterConsumed(combatant=combatant, meter_after=meter_after):
@@ -863,6 +886,7 @@ class CombatScene:
         enemy_layout = _combatant_layout(surface, mirrored=True)
         self._draw_combatant(surface, self._battle.player, self._player_displayed, player_layout)
         self._draw_combatant(surface, self._battle.enemy, self._enemy_displayed, enemy_layout)
+        self._draw_turn_banner(surface)
         self._draw_menu(surface)
         self._draw_overlay(surface, player_layout, enemy_layout)
         self._draw_announcement(surface, player_layout, enemy_layout)
@@ -986,6 +1010,14 @@ class CombatScene:
                 label = duration_font.render(str(max(0, remaining)), True, _TEXT_COLOR)
                 surface.blit(label, (x + _BUFF_ICON_SIZE - label.get_width(), icon_y))
             x += _BUFF_ICON_STEP
+
+    def _draw_turn_banner(self, surface: pygame.Surface) -> None:
+        if self._turn_banner is None:
+            return
+        font = get_font(GameFont.ITHACA, _FONT_SIZE)
+        text = font.render(self._turn_banner, True, _TEXT_COLOR)
+        # The middle of the combatants' name row is clear, unlike the HP row below it.
+        surface.blit(text, (surface.get_width() // 2 - text.get_width() // 2, _MARGIN))
 
     def _draw_menu(self, surface: pygame.Surface) -> None:
         if self._pending_query is None:
