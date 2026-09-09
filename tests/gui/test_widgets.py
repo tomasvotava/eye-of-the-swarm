@@ -2,7 +2,14 @@ import pygame
 
 from eye.combat.effects import EffectName
 from eye.gui.assets import SpriteAtlas, SpriteKey, build_placeholder_atlas
-from eye.gui.widgets import EFFECT_DESCRIPTIONS, SkillNodeState, SpriteBuffIcon, TextBuffIcon, TextSkillTreeLeaf
+from eye.gui.widgets import (
+    EFFECT_DESCRIPTIONS,
+    NonEffectIcon,
+    SkillNodeState,
+    SpriteBuffIcon,
+    TextBuffIcon,
+    TextSkillTreeLeaf,
+)
 from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
 
 
@@ -46,6 +53,11 @@ def test_sprite_buff_icon_render_does_not_raise_for_every_effect_name() -> None:
     # shape for it transparently (ADR 0011), so no special-casing is needed here.
     for effect in EffectName:
         SpriteBuffIcon(build_placeholder_atlas(), effect).render(_surface(), pygame.Vector2(0, 0), 64)
+
+
+def test_sprite_buff_icon_render_does_not_raise_for_every_non_effect_source() -> None:
+    for source in NonEffectIcon:
+        SpriteBuffIcon(build_placeholder_atlas(), source).render(_surface(), pygame.Vector2(0, 0), 64)
 
 
 def test_text_skill_tree_leaf_render_does_not_raise_when_locked() -> None:

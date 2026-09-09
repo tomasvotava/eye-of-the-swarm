@@ -29,6 +29,16 @@ class BuffIcon(Protocol):
     def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None: ...
 
 
+class NonEffectIcon(Enum):
+    """An icon subject with no `EffectName` behind it to name it by."""
+
+    RECOIL = auto()
+
+
+# Everything a scene's icon factory can be asked to resolve, effect or not.
+type IconSource = EffectName | NonEffectIcon
+
+
 class SkillNodeState(Enum):
     LOCKED = auto()  # prerequisite tier missing, or too few spores
     AVAILABLE = auto()  # not yet purchased, but purchasable now
@@ -63,6 +73,9 @@ EFFECT_DESCRIPTIONS: Mapping[EffectName, str] = {
 
 
 class TextBuffIcon:
+    """Plain-text `BuffIcon` for an effect, coloured by its polarity. Effect-only on purpose: a
+    non-effect subject has no polarity to colour by."""
+
     def __init__(self, effect: EffectName) -> None:
         self.effect = effect
 
@@ -71,8 +84,8 @@ class TextBuffIcon:
         surface.blit(get_font(GameFont.ITHACA, _FONT_SIZE).render(effect_label(self.effect), True, color), pos)
 
 
-def _sprite_key_for(effect: EffectName) -> SpriteKey:
-    match effect:
+def _sprite_key_for(source: IconSource) -> SpriteKey:
+    match source:
         case EffectName.TOXICITY:
             return SpriteKey.EFFECT_TOXICITY
         case EffectName.NOURISHED:
@@ -99,18 +112,20 @@ def _sprite_key_for(effect: EffectName) -> SpriteKey:
             return SpriteKey.EFFECT_VEGETATIVE
         case EffectName.RESONANCE:
             return SpriteKey.EFFECT_RESONANCE
+        case NonEffectIcon.RECOIL:
+            return SpriteKey.ICON_RECOIL
         case _:
-            assert_never(effect)
+            assert_never(source)
 
 
 class SpriteBuffIcon:
     """`BuffIcon` backed by real art (ADR 0011) -- `CombatScene`'s default `buff_icon_factory`."""
 
-    def __init__(self, atlas: SpriteAtlas, effect: EffectName) -> None:
-        self._surface = atlas.get(_sprite_key_for(effect))
+    def __init__(self, atlas: SpriteAtlas, source: IconSource) -> None:
+        self._surface = atlas.get(_sprite_key_for(source))
         # A caller may render the same icon at more than one size (CombatScene's HUD row and
         # Announcement card differ) -- cached per size after first use, since an icon instance is
-        # built once per effect and reused across frames (see CombatScene's default factory),
+        # built once per subject and reused across frames (see CombatScene's default factory),
         # rather than rescaled on every render() call (eye/gui/animation.py's scale_sprite
         # docstring: nothing is gained by recomputing a fixed scale every frame).
         self._scaled: dict[int, pygame.Surface] = {}
