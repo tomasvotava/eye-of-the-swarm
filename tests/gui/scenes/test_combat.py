@@ -36,6 +36,7 @@ from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, EncounterKind, Str
 from eye.exploration.events import EnemyEncountered
 from eye.gui.app import _WINDOW_SIZE
 from eye.gui.assets import PLACEHOLDER_SPRITE_SIZE, SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
     _ANNOUNCEMENT_COLUMN_MARGIN,
@@ -57,6 +58,7 @@ from eye.gui.scenes.combat import (
     _METER_COLOR,
     _METER_HEIGHT,
     _OVERLAY_ICON_SIZE,
+    _OVERLAY_LABEL_FONT_SIZE,
     ACTION_KEYS,
     Announcement,
     CombatAnimationState,
@@ -75,6 +77,7 @@ from eye.gui.scenes.combat import (
     _hp_tween_phase,
     _label,
     _LoadedCombatAnimationState,
+    _overlay_label_lines,
     _resolve_enemy_sprite_key,
 )
 from eye.gui.tuning import (
@@ -923,7 +926,7 @@ def test_overlay_phase_shows_the_effect_at_the_target_on_start_and_clears_it_on_
     assert scene._overlay is None
 
     phases[0].on_start()
-    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.TOXICITY)
+    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-3)
 
     phases[0].on_complete()
     assert scene._overlay is None
@@ -955,7 +958,7 @@ def test_heal_applied_tweens_the_targets_displayed_hp_up_after_its_overlay() -> 
 
     assert len(phases) == 2
     phases[0].on_start()
-    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.NOURISHED)
+    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.NOURISHED, hp_delta=4)
     phases[1].on_progress(0.5)
     assert scene._player_displayed.hp == pytest.approx(7.0)
     phases[1].on_complete()
@@ -976,20 +979,23 @@ def test_draw_renders_the_overlay_icon_above_the_targets_own_sprite(mirrored: bo
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
     target = scene._battle.enemy if mirrored else scene._battle.player
-    scene._overlay = Overlay(target=target, effect=EffectName.TOXICITY)
+    scene._overlay = Overlay(target=target, effect=EffectName.TOXICITY, hp_delta=-2)
     surface = pygame.Surface((800, 600))
 
     scene.draw(surface)
 
     layout = _combatant_layout(surface, mirrored=mirrored)
     sprite = scene._enemy_static_sprite if mirrored else scene._player_static_sprite
+    font = get_font(GameFont.ITHACA, _OVERLAY_LABEL_FONT_SIZE)
+    text_width = max(font.size(line)[0] for line in _overlay_label_lines(scene._overlay))
+    block_width = _OVERLAY_ICON_SIZE + _GAP + text_width
     expected_pos = pygame.Vector2(
-        layout.sprite_center[0] - _OVERLAY_ICON_SIZE // 2,
+        layout.sprite_center[0] - block_width // 2,
         layout.sprite_topleft(sprite)[1] - _GAP - _OVERLAY_ICON_SIZE,
     )
     assert render_calls == [(expected_pos, _OVERLAY_ICON_SIZE)]
     # Target-local, not the Announcement's center-screen block (ADR 0013).
-    assert expected_pos.x != surface.get_width() // 2 - _OVERLAY_ICON_SIZE // 2
+    assert expected_pos.x != surface.get_width() // 2 - block_width // 2
 
 
 def _heal_applied(scene: CombatScene, amount: int = 2) -> HealApplied:
@@ -999,6 +1005,129 @@ def _heal_applied(scene: CombatScene, amount: int = 2) -> HealApplied:
         amount=amount,
         target_hp_after=scene._battle.enemy.current_hp + amount,
     )
+
+
+def test_overlay_carries_the_hp_its_event_moved_signed_by_direction() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    scene._phases_for(_dot_ticked(scene, damage=3))[0].on_start()
+    assert scene._overlay == Overlay(target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-3)
+
+    scene._phases_for(_heal_applied(scene, amount=2))[0].on_start()
+    assert scene._overlay == Overlay(target=scene._battle.enemy, effect=EffectName.NOURISHED, hp_delta=2)
+
+
+def test_the_overlay_label_reports_the_movement_a_capped_heal_actually_makes() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    player = scene._battle.player
+    scene._player_displayed.hp = float(player.base_stats.max_hp - 1)
+    event = HealApplied(target=player, effect=EffectName.NOURISHED, amount=3, target_hp_after=player.base_stats.max_hp)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._overlay is not None
+    assert scene._overlay.hp_delta == 1
+    assert _overlay_label_lines(scene._overlay)[1] == "+1 HP"
+
+
+def test_the_overlay_label_reports_the_movement_an_overkill_tick_actually_makes() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._player_displayed.hp = 2.0
+    event = DotTicked(target=scene._battle.player, effect=EffectName.TOXICITY, damage=5, target_hp_after=-3)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._overlay is not None
+    assert scene._overlay.hp_delta == -2
+    assert _overlay_label_lines(scene._overlay)[1] == "-2 HP"
+
+
+@pytest.mark.parametrize(
+    ("effect", "hp_delta", "expected"),
+    [
+        (EffectName.TOXICITY, -2, ("Toxicity", "-2 HP")),
+        (EffectName.NOURISHED, 3, ("Nourished", "+3 HP")),
+    ],
+)
+def test_overlay_label_names_the_effect_and_the_signed_hp_it_moved(
+    effect: EffectName, hp_delta: int, expected: tuple[str, str]
+) -> None:
+    assert _overlay_label_lines(Overlay(target=_combatant(), effect=effect, hp_delta=hp_delta)) == expected
+
+
+def test_draw_lays_the_overlay_label_beside_its_icon_vertically_centered_against_it() -> None:
+    class _SilentIcon:
+        def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
+            return None
+
+    generation = _generation()
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=lambda effect: _SilentIcon()
+    )
+    scene._overlay = Overlay(target=scene._battle.player, effect=EffectName.TOXICITY, hp_delta=-2)
+    surface = pygame.Surface((800, 600))
+    surface.fill(_UNDRAWN)
+
+    scene._draw_overlay(surface, _combatant_layout(surface, mirrored=False), _combatant_layout(surface, mirrored=True))
+
+    surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only the label
+    drawn = surface.get_bounding_rect()
+    layout = _combatant_layout(surface, mirrored=False)
+    icon_top = layout.sprite_topleft(scene._player_static_sprite)[1] - _GAP - _OVERLAY_ICON_SIZE
+    font = get_font(GameFont.ITHACA, _OVERLAY_LABEL_FONT_SIZE)
+    text_width = max(font.size(line)[0] for line in _overlay_label_lines(scene._overlay))
+    block_left = layout.sprite_center[0] - (_OVERLAY_ICON_SIZE + _GAP + text_width) // 2
+
+    assert drawn.left == block_left + _OVERLAY_ICON_SIZE + _GAP
+    icon_rows = pygame.Rect(drawn.left, icon_top, drawn.width, _OVERLAY_ICON_SIZE)
+    assert icon_rows.contains(drawn)
+    assert drawn.top - icon_top == pytest.approx(icon_rows.bottom - drawn.bottom, abs=1)
+
+
+@pytest.mark.parametrize("effect", list(EffectName))
+@pytest.mark.parametrize("mirrored", [False, True])
+def test_every_overlay_block_clears_the_hud_panel_of_the_real_window(effect: EffectName, mirrored: bool) -> None:
+    # The real art, not build_placeholder_atlas(): that is 32x32 for every key, so it would miss
+    # the enemy's 64px frame, which is what leaves the overlay only a few pixels under the HUD.
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
+    target = scene._battle.enemy if mirrored else scene._battle.player
+    scene._overlay = Overlay(target=target, effect=effect, hp_delta=-99)
+    surface = pygame.Surface(_WINDOW_SIZE)
+    # _UNDRAWN is not a colour the icon art paints, or the colourkey would key it back out.
+    surface.fill(_UNDRAWN)
+
+    scene._draw_overlay(surface, _combatant_layout(surface, mirrored=False), _combatant_layout(surface, mirrored=True))
+
+    surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
+    drawn = surface.get_bounding_rect()
+    hud_bottom = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _GAP + _METER_HEIGHT + _GAP + _BUFF_ICON_SIZE
+
+    assert drawn.size != (0, 0), effect  # an empty rect clears everything and proves nothing
+    assert surface.get_rect().contains(drawn), effect
+    assert drawn.top >= hud_bottom, effect
+
+
+@pytest.mark.parametrize("strain", ENCOUNTERABLE_STRAINS)
+def test_every_encounterable_strain_leaves_the_overlay_block_clear_of_the_hud(strain: Strain) -> None:
+    # A future strain shipped with a taller frame should fail here, not quietly eat the clearance.
+    generation = _generation(strain_queue=[strain])
+    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
+    scene._overlay = Overlay(target=scene._battle.enemy, effect=EffectName.TOXICITY, hp_delta=-2)
+    surface = pygame.Surface(_WINDOW_SIZE)
+    surface.fill(_UNDRAWN)
+
+    scene._draw_overlay(surface, _combatant_layout(surface, mirrored=False), _combatant_layout(surface, mirrored=True))
+
+    surface.set_colorkey(_UNDRAWN)  # so get_bounding_rect() measures only what was drawn
+    drawn = surface.get_bounding_rect()
+    hud_bottom = _MARGIN + _FONT_SIZE + _BAR_HEIGHT + _GAP + _METER_HEIGHT + _GAP + _BUFF_ICON_SIZE
+
+    assert drawn.size != (0, 0), strain  # an empty rect clears everything and proves nothing
+    assert drawn.top >= hud_bottom, strain
 
 
 def test_a_dot_tick_hops_only_the_ticking_effects_icon_in_that_row() -> None:

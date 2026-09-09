@@ -86,6 +86,8 @@ _BUFF_ICON_DURATION_FONT_SIZE = 12
 # raising BATTLE_BUFF_ICON_HOP_PIXELS past it is inert instead of a collision.
 _BUFF_ICON_HOP_CEILING = _GAP
 _OVERLAY_ICON_SIZE = 40
+# _draw_overlay's layout needs both label lines plus their gap to fit inside _OVERLAY_ICON_SIZE.
+_OVERLAY_LABEL_FONT_SIZE = 16
 _COMBATANT_SCALE_FACTOR = 3
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _BAR_BG_COLOR: pygame.typing.ColorLike = "dimgray"
@@ -447,10 +449,15 @@ class Announcement:
 
 @dataclass(frozen=True, slots=True)
 class Overlay:
-    """The target-local counterpart to `Announcement` (ADR 0013): an icon drawn at `target`."""
+    """The target-local counterpart to `Announcement` (ADR 0013): an icon and label drawn at `target`."""
 
     target: Combatant
     effect: EffectName
+    hp_delta: int
+
+
+def _overlay_label_lines(overlay: Overlay) -> tuple[str, str]:
+    return (_label(overlay.effect), f"{overlay.hp_delta:+d} HP")
 
 
 @dataclass(frozen=True, slots=True)
@@ -682,11 +689,14 @@ class CombatScene:
 
         return Phase(duration_seconds=duration, on_start=on_start, on_complete=on_complete)
 
-    def _overlay_phase(self, target: Combatant, effect: EffectName) -> Phase:
+    def _overlay_phase(self, target: Combatant, effect: EffectName, hp_after: int) -> Phase:
         # Wraps _reaction_phase so the overlay holds for exactly the target's own flinch clip.
         reaction = self._reaction_phase(target)
-        overlay = Overlay(target=target, effect=effect)
         displayed = self._displayed_for(target)
+        # The bar's actual movement, not the event's nominal damage/amount: the domain caps a heal
+        # at max_hp and applies no floor to a tick.
+        hp_delta = round(max(0, hp_after) - max(0.0, displayed.hp))
+        overlay = Overlay(target=target, effect=effect, hp_delta=hp_delta)
 
         def on_start() -> None:
             reaction.on_start()
@@ -828,12 +838,12 @@ class CombatScene:
                 ]
             case DotTicked(target=target, effect=effect, target_hp_after=target_hp_after):
                 return [
-                    self._overlay_phase(target, effect),
+                    self._overlay_phase(target, effect, target_hp_after),
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case HealApplied(target=target, effect=effect, target_hp_after=target_hp_after):
                 return [
-                    self._overlay_phase(target, effect),
+                    self._overlay_phase(target, effect, target_hp_after),
                     _hp_tween_phase(self._displayed_for(target), target_hp_after),
                 ]
             case _:
@@ -989,11 +999,19 @@ class CombatScene:
             return
         target = self._overlay.target
         layout = player_layout if target is self._battle.player else enemy_layout
-        icon_x = layout.sprite_center[0] - _OVERLAY_ICON_SIZE // 2
-        icon_y = layout.sprite_topleft(self._current_sprite(target))[1] - _GAP - _OVERLAY_ICON_SIZE
-        self._buff_icon_factory(self._overlay.effect).render(
-            surface, pygame.Vector2(icon_x, icon_y), _OVERLAY_ICON_SIZE
-        )
+        font = get_font(GameFont.ITHACA, _OVERLAY_LABEL_FONT_SIZE)
+        lines = [font.render(text, True, _TEXT_COLOR) for text in _overlay_label_lines(self._overlay)]
+        label_height = sum(line.height for line in lines) + _GAP
+        # Beside the icon, not stacked: the HUD panel ends about a dozen pixels above the 64px-framed
+        # enemy sprite, so a stack runs into it at any legible font size.
+        block_width = _OVERLAY_ICON_SIZE + _GAP + max(line.width for line in lines)
+        left = layout.sprite_center[0] - block_width // 2
+        top = layout.sprite_topleft(self._current_sprite(target))[1] - _GAP - _OVERLAY_ICON_SIZE
+        self._buff_icon_factory(self._overlay.effect).render(surface, pygame.Vector2(left, top), _OVERLAY_ICON_SIZE)
+        line_y = top + (_OVERLAY_ICON_SIZE - label_height) // 2
+        for line in lines:
+            surface.blit(line, (left + _OVERLAY_ICON_SIZE + _GAP, line_y))
+            line_y += line.height + _GAP
 
     def _draw_announcement(
         self, surface: pygame.Surface, player_layout: CombatantLayout, enemy_layout: CombatantLayout
