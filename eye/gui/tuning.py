@@ -13,6 +13,11 @@ ENTRY_X_FRACTION = 0.1
 ENCOUNTER_X_FRACTION = 0.5
 EXIT_X_FRACTION = 0.9
 
+# Category-scaled, not one shared factor: enemy matches CombatScene's own _COMBATANT_SCALE_FACTOR
+# (fights at preview size); pickups shrink toward the player's own rendered height instead.
+ENCOUNTER_ENEMY_SCALE_FACTOR = 3.0
+ENCOUNTER_PICKUP_SCALE_FACTOR = 0.45
+
 # Battle event playback (ADR 0013). Animation-driven phases derive their own duration from clip
 # data instead -- these cover the phase kinds that have no clip to time against.
 BATTLE_VALUE_TWEEN_SECONDS = 0.25
