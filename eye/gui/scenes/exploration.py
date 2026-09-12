@@ -176,6 +176,26 @@ def _encounter_scale_factor(key: SpriteKey) -> float:
     return ENCOUNTER_PICKUP_SCALE_FACTOR if key in _PICKUP_MARKER_KEYS else ENCOUNTER_ENEMY_SCALE_FACTOR
 
 
+class EncounterAnimationState(StrEnum):
+    """The marker's only animated state -- an unresolved encounter never fights (ADR 0011)."""
+
+    IDLE = "idle"
+
+
+def _build_encounter_animator(
+    atlas: SpriteAtlas, key: SpriteKey, scale_factor: float
+) -> Animator[EncounterAnimationState] | None:
+    """`None` for a key with no animation clips at all -- the pickup markers, BRAMBLE/UNKNOWN, or
+    any `build_placeholder_atlas()`-based test -- which draws `_encounter_static_sprite` instead."""
+    if not atlas.has_animation_set(key):
+        return None
+    clips = {
+        state: scale_clip(clip, scale_factor)
+        for state, clip in atlas.get_animation_set(key, EncounterAnimationState).items()
+    }
+    return Animator(clips, initial_state=EncounterAnimationState.IDLE)
+
+
 class ExplorationScene:
     def __init__(
         self,
@@ -202,7 +222,9 @@ class ExplorationScene:
         self._spores_counter_left = _status_icon_row_right(atlas) + _ICON_MARGIN
         self._phase = starting_phase
         self._pending_events = pending_events
-        self._encounter_sprite = self._resolve_encounter_sprite()
+        self._encounter_animator: Animator[EncounterAnimationState] | None = None
+        self._encounter_static_sprite: pygame.Surface | None = None
+        self._rebuild_encounter_visuals()
         self._walk_elapsed_seconds = 0.0
         self._pending_action: ExplorationAction | None = None
         self._last_message = "You explore outward from the hive."
@@ -278,8 +300,10 @@ class ExplorationScene:
     def update(self, dt: float) -> PlaySceneTransition | None:
         if self._player_animator is not None:
             self._player_animator.update(dt)
-        # Below the animator tick, not above it: skipping the tick would drop a frame of the clip
-        # that is playing.
+        if self._encounter_animator is not None:
+            self._encounter_animator.update(dt)
+        # Below the animator ticks, not above them: skipping a tick would drop a frame of
+        # whichever clip is playing.
         if self._dismiss_card:
             self._dismiss_card = False
             self._card = None
@@ -351,18 +375,22 @@ class ExplorationScene:
 
     def _arrive_at_exit(self) -> None:
         self._pending_events = self._generation.advance()
-        self._encounter_sprite = self._resolve_encounter_sprite()
+        self._rebuild_encounter_visuals()
         self._set_phase(_Phase.AT_ENTRY)
         self._walk_elapsed_seconds = 0.0
 
-    def _resolve_encounter_sprite(self) -> pygame.Surface | None:
-        # Called from __init__ and _arrive_at_exit, not every draw() -- one scale_sprite per
-        # encounter (ADR 0011), not one per frame. _arrive_at_encounter clears _pending_events
-        # without calling this; draw()'s own phase gate means that staleness is never seen.
+    def _rebuild_encounter_visuals(self) -> None:
+        # Called from __init__ and _arrive_at_exit, not every draw() -- built once per encounter
+        # (ADR 0011), not once per frame. _arrive_at_encounter clears _pending_events without
+        # calling this; draw()'s own phase gate means that staleness is never seen.
         key = _resolve_encounter_sprite_key(self._pending_events)
         if key is None:
-            return None
-        return scale_sprite(self._atlas.get(key), _encounter_scale_factor(key))
+            self._encounter_animator = None
+            self._encounter_static_sprite = None
+            return
+        scale_factor = _encounter_scale_factor(key)
+        self._encounter_animator = _build_encounter_animator(self._atlas, key, scale_factor)
+        self._encounter_static_sprite = scale_sprite(self._atlas.get(key), scale_factor)
 
     def _arrive_at_encounter(self) -> PlaySceneTransition | None:
         events, self._pending_events = self._pending_events, ()
@@ -443,10 +471,15 @@ class ExplorationScene:
         # toward it (WALKING_TO_ENCOUNTER) -- untriggered the whole time, per ADR 0012.
         if self._phase not in (_Phase.AT_ENTRY, _Phase.WALKING_TO_ENCOUNTER):
             return
-        if self._encounter_sprite is None:
+        sprite = (
+            self._encounter_animator.current_frame()
+            if self._encounter_animator is not None
+            else self._encounter_static_sprite
+        )
+        if sprite is None:
             return
         x = round(surface.get_width() * ENCOUNTER_X_FRACTION)
-        surface.blit(self._encounter_sprite, self._encounter_sprite.get_rect(center=(x, surface.get_rect().centery)))
+        surface.blit(sprite, sprite.get_rect(center=(x, surface.get_rect().centery)))
 
     def _draw_status_icons(self, surface: pygame.Surface) -> None:
         showing = {
