@@ -59,6 +59,33 @@ class SpriteKey(StrEnum):
     ICON_SEED_GROWTH = "icon_seed_growth"
     ICON_DISTANCE_DISCOUNT = "icon_distance_discount"
     ICON_RECOIL = "icon_recoil"
+    # One member per SkillNodeId (eye/skilltree/catalog.py) -- keyed by (branch, sub_branch, tier),
+    # not by skill name, so a narrative rename of a skill (PROJECT_BRIEF.md §0) never touches this
+    # key. Each carries acquired/locked/normal named variants, not sprite.png (ADR 0014).
+    SKILL_SELF_ATTACK_0 = "skill_self_attack_0"
+    SKILL_SELF_ATTACK_1 = "skill_self_attack_1"
+    SKILL_SELF_ATTACK_2 = "skill_self_attack_2"
+    SKILL_SELF_DEFENSE_0 = "skill_self_defense_0"
+    SKILL_SELF_DEFENSE_1 = "skill_self_defense_1"
+    SKILL_SELF_DEFENSE_2 = "skill_self_defense_2"
+    SKILL_SELF_UTILITY_0 = "skill_self_utility_0"
+    SKILL_SELF_UTILITY_1 = "skill_self_utility_1"
+    SKILL_SELF_UTILITY_2 = "skill_self_utility_2"
+    SKILL_SWARM_ATTACK_0 = "skill_swarm_attack_0"
+    SKILL_SWARM_ATTACK_1 = "skill_swarm_attack_1"
+    SKILL_SWARM_ATTACK_2 = "skill_swarm_attack_2"
+    SKILL_SWARM_DEFENSE_0 = "skill_swarm_defense_0"
+    SKILL_SWARM_DEFENSE_1 = "skill_swarm_defense_1"
+    SKILL_SWARM_DEFENSE_2 = "skill_swarm_defense_2"
+    SKILL_SWARM_UTILITY_0 = "skill_swarm_utility_0"
+    SKILL_SWARM_UTILITY_1 = "skill_swarm_utility_1"
+    SKILL_SWARM_UTILITY_2 = "skill_swarm_utility_2"
+    # One member per Biome (PROJECT_BRIEF.md §9.3): sprite.png is the background+path, and a pool
+    # of unenumerated prop_*.png files sampled randomly for foreground dressing (ADR 0014) -- not
+    # a fixed named variant set, so no consumer enum resolves these today.
+    BIOME_TURF = "biome_turf"
+    BIOME_DEAD_FOREST = "biome_dead_forest"
+    BIOME_FOREST = "biome_forest"
 
 
 class IconVariant(StrEnum):
@@ -170,6 +197,27 @@ _PLACEHOLDER_SHAPES: Mapping[SpriteKey, _PlaceholderShape] = {
     SpriteKey.ICON_SEED_GROWTH: _PlaceholderShape(color="yellowgreen", is_circle=False),
     SpriteKey.ICON_DISTANCE_DISCOUNT: _PlaceholderShape(color="steelblue", is_circle=False),
     SpriteKey.ICON_RECOIL: _PlaceholderShape(color="tomato", is_circle=False),
+    SpriteKey.SKILL_SELF_ATTACK_0: _PlaceholderShape(color="salmon", is_circle=False),
+    SpriteKey.SKILL_SELF_ATTACK_1: _PlaceholderShape(color="coral", is_circle=False),
+    SpriteKey.SKILL_SELF_ATTACK_2: _PlaceholderShape(color="chocolate", is_circle=False),
+    SpriteKey.SKILL_SELF_DEFENSE_0: _PlaceholderShape(color="tan", is_circle=False),
+    SpriteKey.SKILL_SELF_DEFENSE_1: _PlaceholderShape(color="wheat", is_circle=False),
+    SpriteKey.SKILL_SELF_DEFENSE_2: _PlaceholderShape(color="khaki", is_circle=False),
+    SpriteKey.SKILL_SELF_UTILITY_0: _PlaceholderShape(color="yellowgreen", is_circle=False),
+    SpriteKey.SKILL_SELF_UTILITY_1: _PlaceholderShape(color="limegreen", is_circle=False),
+    SpriteKey.SKILL_SELF_UTILITY_2: _PlaceholderShape(color="mediumspringgreen", is_circle=False),
+    SpriteKey.SKILL_SWARM_ATTACK_0: _PlaceholderShape(color="cadetblue", is_circle=False),
+    SpriteKey.SKILL_SWARM_ATTACK_1: _PlaceholderShape(color="steelblue", is_circle=False),
+    SpriteKey.SKILL_SWARM_ATTACK_2: _PlaceholderShape(color="royalblue", is_circle=False),
+    SpriteKey.SKILL_SWARM_DEFENSE_0: _PlaceholderShape(color="cornflowerblue", is_circle=False),
+    SpriteKey.SKILL_SWARM_DEFENSE_1: _PlaceholderShape(color="mediumpurple", is_circle=False),
+    SpriteKey.SKILL_SWARM_DEFENSE_2: _PlaceholderShape(color="darkslateblue", is_circle=False),
+    SpriteKey.SKILL_SWARM_UTILITY_0: _PlaceholderShape(color="orchid", is_circle=False),
+    SpriteKey.SKILL_SWARM_UTILITY_1: _PlaceholderShape(color="plum", is_circle=False),
+    SpriteKey.SKILL_SWARM_UTILITY_2: _PlaceholderShape(color="violet", is_circle=False),
+    SpriteKey.BIOME_TURF: _PlaceholderShape(color="darkslategray", is_circle=False),
+    SpriteKey.BIOME_DEAD_FOREST: _PlaceholderShape(color="dimgray", is_circle=False),
+    SpriteKey.BIOME_FOREST: _PlaceholderShape(color="seagreen", is_circle=False),
 }
 
 

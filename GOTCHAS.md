@@ -109,3 +109,15 @@ edits stay unstaged and never enter the commit.
 
 Stage after the review pass, and confirm with `git show --stat` that the commit holds what you
 think it does.
+
+## 2026-09-12 - Source art doesn't always arrive as `.png`
+
+A delivered Biome's background and props were `.jpg`, while the other two Biomes' were `.png`.
+
+`build_art_atlas` only globs `*.png` (ADR 0011) — a `.jpg` sitting in a `SpriteKey` directory is
+silently invisible to it, no error, just a placeholder as if the file weren't there at all.
+
+Convert to `.png` when landing the art, before it goes under `eye/gui/sprites/` — not something the
+loader should special-case. A source format conversion doesn't imply the art itself is complete:
+converting a no-alpha `.jpg` to `.png` still has no alpha channel, it just renders as an opaque
+rectangle now instead of failing to load at all.

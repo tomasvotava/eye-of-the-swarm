@@ -38,6 +38,27 @@ _SHIPPED_ICON_KEYS = (
     SpriteKey.EFFECT_RESONANCE,
 )
 _SHIPPED_ICON_KEYS_WITH_VARIANTS = (SpriteKey.ICON_HEALTH, SpriteKey.ICON_SPORES, SpriteKey.EFFECT_RESONANCE)
+_SHIPPED_SKILL_ICON_KEYS = (
+    SpriteKey.SKILL_SELF_ATTACK_0,
+    SpriteKey.SKILL_SELF_ATTACK_1,
+    SpriteKey.SKILL_SELF_ATTACK_2,
+    SpriteKey.SKILL_SELF_DEFENSE_0,
+    SpriteKey.SKILL_SELF_DEFENSE_1,
+    SpriteKey.SKILL_SELF_DEFENSE_2,
+    SpriteKey.SKILL_SELF_UTILITY_0,
+    SpriteKey.SKILL_SELF_UTILITY_1,
+    SpriteKey.SKILL_SELF_UTILITY_2,
+    SpriteKey.SKILL_SWARM_ATTACK_0,
+    SpriteKey.SKILL_SWARM_ATTACK_1,
+    SpriteKey.SKILL_SWARM_ATTACK_2,
+    SpriteKey.SKILL_SWARM_DEFENSE_0,
+    SpriteKey.SKILL_SWARM_DEFENSE_1,
+    SpriteKey.SKILL_SWARM_DEFENSE_2,
+    SpriteKey.SKILL_SWARM_UTILITY_0,
+    SpriteKey.SKILL_SWARM_UTILITY_1,
+    SpriteKey.SKILL_SWARM_UTILITY_2,
+)
+_SHIPPED_BIOME_KEYS = (SpriteKey.BIOME_TURF, SpriteKey.BIOME_DEAD_FOREST, SpriteKey.BIOME_FOREST)
 
 
 class _BrambleState(StrEnum):
@@ -202,3 +223,21 @@ def test_build_art_atlas_resolves_every_icon_variant_of_a_shipped_icon_key(key: 
 
     assert variants[IconVariant.BORDERLESS] is not atlas.get(key)
     assert variants[IconVariant.BORDERLESS].get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+
+
+@pytest.mark.parametrize("key", _SHIPPED_SKILL_ICON_KEYS)
+def test_build_art_atlas_loads_all_three_variants_of_a_shipped_skill_icon_key(key: SpriteKey) -> None:
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+
+    # No sprite.png for a skill icon (ADR 0014) -- .get falls back to the placeholder shape, and
+    # acquired/locked/normal only resolve through has_variant_set/get_variant_set.
+    assert atlas.get(key).get_size() == (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+    assert atlas.has_variant_set(key) is True
+
+
+@pytest.mark.parametrize("key", _SHIPPED_BIOME_KEYS)
+def test_build_art_atlas_resolves_a_shipped_biome_key_to_real_art_and_a_prop_pool(key: SpriteKey) -> None:
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+
+    assert atlas.get(key).get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+    assert atlas.has_variant_set(key) is True
