@@ -177,9 +177,9 @@ Recommend keeping the first pass to a single Strain (enemy archetype, §6), a si
 ## 8. Open Questions / TBD
 
 - Final tone: sinister invasive plant vs. sympathetic natural growth (art-driven decision).
-- How many distinct Biomes the path is divided into (visually and by Strain difficulty), and
-  whether Biome affects which Strains can spawn there. **Planned for v2 (§9.3): three**, art
-  direction permitting — not locked until the art proves feasible.
+- Whether Biome affects which Strains can spawn there. **Decided for v2 (§9.3): three Biomes**
+  (`turf`, `dead_forest`, `forest`), ordered and named; the Strain-affinity question is separate
+  and still open.
 - Whether "Struggle" stays purely mechanical or gets a narrative-flavored name once the world's tone is set.
 - Whether basic platformer movement (§6 stretch goal) makes it into the jam build or gets pushed to post-jam.
 - Exact numeric tuning for buff/debuff magnitudes, durations, "may" chance percentages, and AI difficulty T values (§5.6, §5.7) — playtesting-driven, not fixed by this brief.
@@ -221,12 +221,25 @@ building later is an open question (§8), not part of this plan.
 
 ### 9.3 Biome progression
 
-As screen count rises (distance from the hive's turf, §5.1/§6), background art gradually shifts
-from the swarm's home biome toward the next — planned for a small, fixed number of biomes (three,
-art direction permitting, §8), with a gradual transition rather than a hard cut: the closing
-screens of one biome thin out its scenery as the opening screens of the next introduce theirs.
-Purely a GUI-side function of screen count — the domain already tracks distance from turf, no new
-domain state is needed.
+**Decided: three Biomes, named and ordered** by distance from the hive's turf (§5.1/§6): `turf`
+(home) → `dead_forest` → `forest` (furthest out). The ordering carries the theme's dark twist
+explicitly: the player is not fleeing their home *into* increasingly hostile territory, they are
+the hostile thing — `forest` is unspoiled, `dead_forest` is `forest` already being throttled by the
+swarm's spread, and `turf` is what the swarm has fully assimilated into itself. Pushing further
+out is walking into land the hive hasn't consumed yet; each subsequent generation's `turf` grows
+by planting Seeds (§5.2) into what used to be `dead_forest`.
+
+Each Biome has one fixed background (with a walkable path/road across its lower section, per §6)
+and a pool of foreground props rendered at random positions on top of it. The background never
+changes within a Biome; only the prop mix does. As screen count rises within a Biome, its own
+props thin out; near the boundary with the next Biome, that next Biome's props start appearing
+alongside the thinning ones, before the background itself cuts over — the closing screens of one
+Biome and the opening screens of the next overlap in *dressing* before they overlap in
+*background*. This is purely a GUI-side function of screen count (the domain already tracks
+distance from turf, §5.1) — no new domain state is needed. See ADR 0014 for how the background and
+prop-pool art is keyed and stored under `eye/gui/sprites/`; the actual placement/weighting
+algorithm and the renderer that consumes it are unstarted future work, not specified by this
+Epic.
 
 ### 9.4 Distance-from-home / distance-from-turf display
 

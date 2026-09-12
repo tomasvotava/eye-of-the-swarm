@@ -19,3 +19,4 @@ Design source: [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 | [0011](adr/0011-sprite-asset-pipeline-and-animation-framework.md) | Sprite asset pipeline & animation framework | Accepted |
 | [0012](adr/0012-screen-walking-movement.md) | Screen-walking movement | Accepted |
 | [0013](adr/0013-battle-event-animation.md) | Battle event animation | Accepted |
+| [0014](adr/0014-biome-and-skill-icon-art-assets.md) | Skill icon keying and biome prop-pool assets | Accepted |
