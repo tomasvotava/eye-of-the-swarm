@@ -36,10 +36,14 @@ from eye.gui.scenes.exploration import (
     ExplorationAction,
     ExplorationScene,
     PlayerAnimationState,
+    _encounter_scale_factor,
     _Phase,
     _resolve_encounter_sprite_key,
 )
 from eye.gui.tuning import (
+    ENCOUNTER_ENEMY_SCALE_FACTOR,
+    ENCOUNTER_PICKUP_SCALE_FACTOR,
+    ENCOUNTER_X_FRACTION,
     ENTRY_X_FRACTION,
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
@@ -81,6 +85,12 @@ def _scene_with_real_player_art(tmp_path: Path, kind_queue: Sequence[EncounterKi
     game = Game(ScriptedEncounterRandom(kind_queue))
     generation = game.start_generation()
     return ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+
+
+def _write_static_sprite(tmp_path: Path, key: SpriteKey, size: int) -> None:
+    sprite_dir = tmp_path / key.value
+    sprite_dir.mkdir(parents=True, exist_ok=True)
+    pygame.image.save(pygame.Surface((size, size)), sprite_dir / "sprite.png")
 
 
 def _press(scene: ExplorationScene, key: int) -> None:
@@ -307,6 +317,85 @@ def test_resolve_encounter_sprite_key_for_each_screen_event_kind() -> None:
     )
     assert _resolve_encounter_sprite_key([NothingHappened()]) is None
     assert _resolve_encounter_sprite_key([]) is None
+
+
+def test_encounter_scale_factor_is_the_pickup_factor_for_either_pickup_marker() -> None:
+    assert _encounter_scale_factor(SpriteKey.EFFECT_PICKUP) == ENCOUNTER_PICKUP_SCALE_FACTOR
+    assert _encounter_scale_factor(SpriteKey.RESOURCE_PICKUP) == ENCOUNTER_PICKUP_SCALE_FACTOR
+
+
+def test_encounter_scale_factor_is_the_enemy_factor_for_a_strain_or_unknown() -> None:
+    assert _encounter_scale_factor(SpriteKey.GOLEM) == ENCOUNTER_ENEMY_SCALE_FACTOR
+    assert _encounter_scale_factor(SpriteKey.UNKNOWN) == ENCOUNTER_ENEMY_SCALE_FACTOR
+
+
+def test_encounter_sprite_is_none_when_the_screen_is_empty() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+
+    assert scene._encounter_sprite is None
+
+
+def test_encounter_sprite_is_scaled_by_the_pickup_factor(tmp_path: Path) -> None:
+    # 20 * ENCOUNTER_PICKUP_SCALE_FACTOR (0.45) is an exact 9 -- avoids relying on how
+    # pygame.transform.scale_by rounds a fractional pixel count.
+    _write_static_sprite(tmp_path, SpriteKey.EFFECT_PICKUP, size=20)
+    game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP]))
+    generation = game.start_generation()
+
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+
+    assert scene._encounter_sprite is not None
+    expected = round(20 * ENCOUNTER_PICKUP_SCALE_FACTOR)
+    assert scene._encounter_sprite.get_size() == (expected, expected)
+
+
+def test_encounter_sprite_is_scaled_by_the_enemy_factor(tmp_path: Path) -> None:
+    _write_static_sprite(tmp_path, SpriteKey.GOLEM, size=4)
+    game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
+    generation = game.start_generation()
+
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+
+    assert scene._encounter_sprite is not None
+    expected = round(4 * ENCOUNTER_ENEMY_SCALE_FACTOR)
+    assert scene._encounter_sprite.get_size() == (expected, expected)
+
+
+def test_encounter_sprite_is_rebuilt_on_arrival_at_the_next_screen(tmp_path: Path) -> None:
+    _write_static_sprite(tmp_path, SpriteKey.EFFECT_PICKUP, size=20)
+    _write_static_sprite(tmp_path, SpriteKey.RESOURCE_PICKUP, size=40)
+    game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP, EncounterKind.RESOURCE_PICKUP]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    first_size = round(20 * ENCOUNTER_PICKUP_SCALE_FACTOR)
+    assert scene._encounter_sprite is not None
+    assert scene._encounter_sprite.get_size() == (first_size, first_size)
+
+    _resolve_next_screen(scene)  # reveals screen 1 (RESOLVED); encounter sprite is still screen 1's
+    _resolve_next_screen(scene)  # walks off screen 1, advance() fires for screen 2, reveals it too
+
+    second_size = round(40 * ENCOUNTER_PICKUP_SCALE_FACTOR)
+    assert scene._encounter_sprite is not None
+    assert scene._encounter_sprite.get_size() == (second_size, second_size)
+
+
+def test_draw_blits_the_scaled_encounter_sprite_centered_on_the_marker(tmp_path: Path) -> None:
+    _write_static_sprite(tmp_path, SpriteKey.EFFECT_PICKUP, size=20)
+    game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    assert scene._encounter_sprite is not None
+
+    # Large enough that the player's own placeholder sprite, drawn near the left edge, can't
+    # reach as far as the marker sampled below.
+    surface = pygame.Surface(_WINDOW_SIZE)
+    scene.draw(surface)
+
+    x = round(surface.get_width() * ENCOUNTER_X_FRACTION)
+    sampled = surface.get_at((x, surface.get_height() // 2))
+    assert sampled == scene._encounter_sprite.get_at(
+        (scene._encounter_sprite.get_width() // 2, scene._encounter_sprite.get_height() // 2)
+    )
 
 
 @pytest.mark.parametrize("surface_size", [(64, 64), (800, 600)])
