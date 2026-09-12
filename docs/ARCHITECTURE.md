@@ -20,3 +20,5 @@ Design source: [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 | [0012](adr/0012-screen-walking-movement.md) | Screen-walking movement | Accepted |
 | [0013](adr/0013-battle-event-animation.md) | Battle event animation | Accepted |
 | [0014](adr/0014-biome-and-skill-icon-art-assets.md) | Skill icon keying and biome prop-pool assets | Accepted |
+| [0015](adr/0015-skill-tree-node-presentation.md) | Skill tree node presentation | Accepted |
+| [0016](adr/0016-biome-aware-background-rendering-and-prop-placement.md) | Biome-aware background rendering and prop placement | Accepted |
