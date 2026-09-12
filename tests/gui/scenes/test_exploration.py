@@ -33,9 +33,11 @@ from eye.gui.scenes.exploration import (
     _TEXT_COLOR,
     KEY_ACTIONS,
     RESOURCE_DESCRIPTIONS,
+    EncounterAnimationState,
     ExplorationAction,
     ExplorationScene,
     PlayerAnimationState,
+    _build_encounter_animator,
     _encounter_scale_factor,
     _Phase,
     _resolve_encounter_sprite_key,
@@ -91,6 +93,20 @@ def _write_static_sprite(tmp_path: Path, key: SpriteKey, size: int) -> None:
     sprite_dir = tmp_path / key.value
     sprite_dir.mkdir(parents=True, exist_ok=True)
     pygame.image.save(pygame.Surface((size, size)), sprite_dir / "sprite.png")
+
+
+def _write_idle_clip(tmp_path: Path, key: SpriteKey, frame_count: int = 2, frame_size: int = 4, fps: float = 8) -> None:
+    # Distinct fill colour per frame (mirrors _write_player_clips) so a frame-advance test can
+    # tell them apart.
+    key_dir = tmp_path / key.value
+    key_dir.mkdir(parents=True, exist_ok=True)
+    sheet = pygame.Surface((frame_size * frame_count, frame_size))
+    for index in range(frame_count):
+        color = (index * 40 % 256, 0, 0, 255)
+        sheet.fill(color, pygame.Rect(index * frame_size, 0, frame_size, frame_size))
+    pygame.image.save(sheet, key_dir / "idle.png")
+    manifest = {"frame_width": frame_size, "frame_height": frame_size, "frame_count": frame_count, "fps": fps}
+    (key_dir / "idle.json").write_text(json.dumps(manifest))
 
 
 def _press(scene: ExplorationScene, key: int) -> None:
@@ -329,13 +345,14 @@ def test_encounter_scale_factor_is_the_enemy_factor_for_a_strain_or_unknown() ->
     assert _encounter_scale_factor(SpriteKey.UNKNOWN) == ENCOUNTER_ENEMY_SCALE_FACTOR
 
 
-def test_encounter_sprite_is_none_when_the_screen_is_empty() -> None:
+def test_encounter_static_sprite_is_none_when_the_screen_is_empty() -> None:
     scene, _ = _scene([EncounterKind.NOTHING])
 
-    assert scene._encounter_sprite is None
+    assert scene._encounter_animator is None
+    assert scene._encounter_static_sprite is None
 
 
-def test_encounter_sprite_is_scaled_by_the_pickup_factor(tmp_path: Path) -> None:
+def test_encounter_static_sprite_is_scaled_by_the_pickup_factor(tmp_path: Path) -> None:
     # 20 * ENCOUNTER_PICKUP_SCALE_FACTOR (0.45) is an exact 9 -- avoids relying on how
     # pygame.transform.scale_by rounds a fractional pixel count.
     _write_static_sprite(tmp_path, SpriteKey.EFFECT_PICKUP, size=20)
@@ -344,39 +361,41 @@ def test_encounter_sprite_is_scaled_by_the_pickup_factor(tmp_path: Path) -> None
 
     scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
 
-    assert scene._encounter_sprite is not None
+    assert scene._encounter_animator is None  # pickup markers never carry animation data
+    assert scene._encounter_static_sprite is not None
     expected = round(20 * ENCOUNTER_PICKUP_SCALE_FACTOR)
-    assert scene._encounter_sprite.get_size() == (expected, expected)
+    assert scene._encounter_static_sprite.get_size() == (expected, expected)
 
 
-def test_encounter_sprite_is_scaled_by_the_enemy_factor(tmp_path: Path) -> None:
+def test_encounter_static_sprite_is_scaled_by_the_enemy_factor(tmp_path: Path) -> None:
     _write_static_sprite(tmp_path, SpriteKey.GOLEM, size=4)
     game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
     generation = game.start_generation()
 
     scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
 
-    assert scene._encounter_sprite is not None
+    assert scene._encounter_animator is None  # no idle.json written -- static art only
+    assert scene._encounter_static_sprite is not None
     expected = round(4 * ENCOUNTER_ENEMY_SCALE_FACTOR)
-    assert scene._encounter_sprite.get_size() == (expected, expected)
+    assert scene._encounter_static_sprite.get_size() == (expected, expected)
 
 
-def test_encounter_sprite_is_rebuilt_on_arrival_at_the_next_screen(tmp_path: Path) -> None:
+def test_encounter_static_sprite_is_rebuilt_on_arrival_at_the_next_screen(tmp_path: Path) -> None:
     _write_static_sprite(tmp_path, SpriteKey.EFFECT_PICKUP, size=20)
     _write_static_sprite(tmp_path, SpriteKey.RESOURCE_PICKUP, size=40)
     game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP, EncounterKind.RESOURCE_PICKUP]))
     generation = game.start_generation()
     scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
     first_size = round(20 * ENCOUNTER_PICKUP_SCALE_FACTOR)
-    assert scene._encounter_sprite is not None
-    assert scene._encounter_sprite.get_size() == (first_size, first_size)
+    assert scene._encounter_static_sprite is not None
+    assert scene._encounter_static_sprite.get_size() == (first_size, first_size)
 
     _resolve_next_screen(scene)  # reveals screen 1 (RESOLVED); encounter sprite is still screen 1's
     _resolve_next_screen(scene)  # walks off screen 1, advance() fires for screen 2, reveals it too
 
     second_size = round(40 * ENCOUNTER_PICKUP_SCALE_FACTOR)
-    assert scene._encounter_sprite is not None
-    assert scene._encounter_sprite.get_size() == (second_size, second_size)
+    assert scene._encounter_static_sprite is not None
+    assert scene._encounter_static_sprite.get_size() == (second_size, second_size)
 
 
 def test_draw_blits_the_scaled_encounter_sprite_centered_on_the_marker(tmp_path: Path) -> None:
@@ -384,7 +403,7 @@ def test_draw_blits_the_scaled_encounter_sprite_centered_on_the_marker(tmp_path:
     game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP]))
     generation = game.start_generation()
     scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
-    assert scene._encounter_sprite is not None
+    assert scene._encounter_static_sprite is not None
 
     # Large enough that the player's own placeholder sprite, drawn near the left edge, can't
     # reach as far as the marker sampled below.
@@ -393,9 +412,82 @@ def test_draw_blits_the_scaled_encounter_sprite_centered_on_the_marker(tmp_path:
 
     x = round(surface.get_width() * ENCOUNTER_X_FRACTION)
     sampled = surface.get_at((x, surface.get_height() // 2))
-    assert sampled == scene._encounter_sprite.get_at(
-        (scene._encounter_sprite.get_width() // 2, scene._encounter_sprite.get_height() // 2)
+    assert sampled == scene._encounter_static_sprite.get_at(
+        (scene._encounter_static_sprite.get_width() // 2, scene._encounter_static_sprite.get_height() // 2)
     )
+
+
+def test_build_encounter_animator_returns_none_without_animation_data() -> None:
+    atlas = build_placeholder_atlas()
+
+    assert _build_encounter_animator(atlas, SpriteKey.GOLEM, scale_factor=3.0) is None
+
+
+def test_build_encounter_animator_scales_every_frame_by_scale_factor(tmp_path: Path) -> None:
+    _write_idle_clip(tmp_path, SpriteKey.GOLEM)  # 4x4 test clip frames
+    atlas = build_art_atlas(tmp_path)
+
+    animator = _build_encounter_animator(atlas, SpriteKey.GOLEM, scale_factor=3.0)
+
+    assert animator is not None
+    assert animator.current_frame().get_size() == (12, 12)
+
+
+def test_encounter_animator_is_built_for_a_strain_with_animation_data(tmp_path: Path) -> None:
+    _write_idle_clip(tmp_path, SpriteKey.GOLEM)  # 4x4 test clip frames
+    game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
+    generation = game.start_generation()
+
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+
+    assert scene._encounter_animator is not None
+    frame_size = round(4 * ENCOUNTER_ENEMY_SCALE_FACTOR)
+    assert scene._encounter_animator.current_frame().get_size() == (frame_size, frame_size)
+    assert scene._encounter_animator.state is EncounterAnimationState.IDLE
+
+
+def test_encounter_animator_is_rebuilt_to_none_when_the_next_screen_has_no_animation_data(tmp_path: Path) -> None:
+    _write_idle_clip(tmp_path, SpriteKey.GOLEM)
+    game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY, EncounterKind.NOTHING], strain_queue=[Strain.GOLEM]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    assert scene._encounter_animator is not None
+
+    _resolve_next_screen(scene)  # reveals screen 1 (RESOLVED); animator is still screen 1's Strain
+    _resolve_next_screen(scene)  # walks off screen 1, advance() fires for the empty screen 2
+
+    assert scene._encounter_animator is None
+    assert scene._encounter_static_sprite is None
+
+
+def test_updating_advances_the_encounter_animation_frame(tmp_path: Path) -> None:
+    _write_idle_clip(tmp_path, SpriteKey.GOLEM)  # 2 frames at 8fps
+    game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    assert scene._encounter_animator is not None
+    first_frame = scene._encounter_animator.current_frame()
+
+    scene.update(1 / 8)  # exactly one frame at the default 8fps test clip
+
+    second_frame = scene._encounter_animator.current_frame()
+    assert pygame.image.tobytes(first_frame, "RGBA") != pygame.image.tobytes(second_frame, "RGBA")
+
+
+def test_draw_blits_the_encounter_animator_frame_when_available(tmp_path: Path) -> None:
+    _write_idle_clip(tmp_path, SpriteKey.GOLEM)
+    game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    assert scene._encounter_animator is not None
+
+    surface = pygame.Surface(_WINDOW_SIZE)
+    scene.draw(surface)
+
+    expected = scene._encounter_animator.current_frame()
+    x = round(surface.get_width() * ENCOUNTER_X_FRACTION)
+    sampled = surface.get_at((x, surface.get_height() // 2))
+    assert sampled == expected.get_at((expected.get_width() // 2, expected.get_height() // 2))
 
 
 @pytest.mark.parametrize("surface_size", [(64, 64), (800, 600)])
