@@ -22,3 +22,4 @@ Design source: [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 | [0014](adr/0014-biome-and-skill-icon-art-assets.md) | Skill icon keying and biome prop-pool assets | Accepted |
 | [0015](adr/0015-skill-tree-node-presentation.md) | Skill tree node presentation | Accepted |
 | [0016](adr/0016-biome-aware-background-rendering-and-prop-placement.md) | Biome-aware background rendering and prop placement | Accepted |
+| [0017](adr/0017-menu-save-slots-and-settings.md) | Menu, save slots, and settings | Accepted |
