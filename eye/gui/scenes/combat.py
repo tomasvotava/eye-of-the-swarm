@@ -39,8 +39,9 @@ from eye.combat.events import (
 )
 from eye.combat.stats import Combatant
 from eye.exploration.events import EnemyEncountered
-from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
+from eye.gui.animation import AnimationClip, Animator, crop_to_cover, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
@@ -509,6 +510,7 @@ class CombatScene:
         buff_icon_factory: Callable[[IconSource], BuffIcon] | None = None,
     ) -> None:
         self._generation = generation
+        self._atlas = atlas
         if buff_icon_factory is not None:
             self._buff_icon_factory = buff_icon_factory
         else:
@@ -935,7 +937,7 @@ class CombatScene:
                 assert_never(event)
 
     def draw(self, surface: pygame.Surface) -> None:
-        surface.fill("black")
+        self._draw_background(surface)
         player_layout = _combatant_layout(surface, mirrored=False)
         enemy_layout = _combatant_layout(surface, mirrored=True)
         self._draw_combatant(surface, self._battle.player, self._player_displayed, player_layout)
@@ -944,6 +946,13 @@ class CombatScene:
         self._draw_menu(surface)
         self._draw_overlay(surface, player_layout, enemy_layout)
         self._draw_announcement(surface, player_layout, enemy_layout)
+
+    def _draw_background(self, surface: pygame.Surface) -> None:
+        # Keyed off distance_from_home, not encounter.biome (ADR 0016) -- the domain's Biome enum
+        # is still a placeholder; ExplorationScene resolves its own background the same way.
+        key = resolve_biome(self._generation.distance_from_home)
+        background = crop_to_cover(self._atlas.get(key), surface.get_size())
+        surface.blit(background, (0, 0))
 
     def _current_sprite(self, combatant: Combatant) -> pygame.Surface:
         animator = self._animator_for(combatant)
