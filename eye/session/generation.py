@@ -76,6 +76,10 @@ class Generation:
         return self._exploration.is_seed_ready
 
     @property
+    def distance_from_home(self) -> int:
+        return self._exploration.distance_from_home
+
+    @property
     def active_lifespan_effects(self) -> tuple[EffectName, ...]:
         """Snapshot of the Lifespan-scoped effects the character holds, in `EffectName` order, each
         named once. A Battle-scoped effect of the same name is a separate slot (PROJECT_BRIEF.md §5.6)."""

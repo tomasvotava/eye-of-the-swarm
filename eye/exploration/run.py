@@ -39,6 +39,7 @@ class ExplorationRun:
     ) -> None:
         self._character = character
         self._generator = EncounterGenerator(rng)
+        self._starting_screen = starting_screen
         self._current_screen = starting_screen
         self._matured_turfs = tuple(matured_turfs)
         self._pending_seeds: tuple[int, ...] = ()
@@ -102,6 +103,10 @@ class ExplorationRun:
     @property
     def spores_gained(self) -> int:
         return self._spores_gained
+
+    @property
+    def distance_from_home(self) -> int:
+        return self._current_screen - self._starting_screen
 
     def _grow_seed(self, amount: float) -> SeedGrew:
         self._seed_meter += amount
