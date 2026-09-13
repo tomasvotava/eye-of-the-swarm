@@ -67,3 +67,9 @@ PROP_BOUNDARY_BLEND_SCREENS = 3
 PROP_SCALE_FACTOR = 0.5
 PROP_Y_BAND_MIN_FRACTION = 0.55
 PROP_Y_BAND_MAX_FRACTION = 0.85
+
+# How close a pixel must be (PixelArray.replace's normalized 0-1 distance) to a prop art file's
+# own top-left corner pixel to be keyed transparent -- the shipped prop_*.png exports carry no
+# alpha channel of their own, just a flat canvas color sampled from that corner. Placeholder until
+# the art itself ships with real alpha.
+PROP_BACKGROUND_KEY_DISTANCE = 0.06
