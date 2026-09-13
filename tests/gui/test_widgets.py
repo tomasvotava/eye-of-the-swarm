@@ -21,7 +21,7 @@ from eye.gui.widgets import (
     effect_label,
 )
 from eye.skilltree.catalog import CATALOG
-from eye.skilltree.tree import Branch, ExplorationModifierDelta, SkillNode, SkillNodeId, StatsDelta, SubBranch
+from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, StatsDelta, SubBranch
 
 _SHIPPED_SPRITES_DIR = Path("eye/gui/sprites")
 
@@ -189,13 +189,12 @@ def test_sprite_skill_tree_leaf_also_truncates_a_long_node_name() -> None:
 
 
 def test_truncate_to_width_shortens_a_summary_line_that_overflows_the_cell() -> None:
-    # Matches "Close to Home"'s actual shape (tier-2 Swarm/Utility): the one catalog node that
-    # combines both exploration-modifier fields, producing the longest _skill_effect_summary line.
-    node = SkillNode(
-        id=SkillNodeId(branch=Branch.SWARM, sub_branch=SubBranch.UTILITY, tier=2),
-        cost=1,
-        exploration_modifier=ExplorationModifierDelta(seed_growth_rate_multiplier=1.20, proximity_discount_bonus=0.10),
-    )
+    # The real "Close to Home" (tier-2 Swarm/Utility): the one CATALOG node that combines both
+    # exploration-modifier fields, producing the longest _skill_effect_summary line. Uses the
+    # actual catalog entry rather than a hand-built stand-in, so the assertions below are against
+    # production data, not values that merely resemble it.
+    node = CATALOG[SkillNodeId(branch=Branch.SWARM, sub_branch=SubBranch.UTILITY, tier=2)]
+    assert node.name == "Close to Home"
     summary = _skill_effect_summary(node)
     font = get_font(GameFont.ITHACA, _FONT_SIZE)
     icon_size = 40
