@@ -81,3 +81,9 @@ def test_skill_nodes_with_equal_fields_compare_equal() -> None:
     node_id = SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.UTILITY, tier=0)
 
     assert SkillNode(id=node_id, cost=5) == SkillNode(id=node_id, cost=5)
+
+
+def test_skill_node_description_defaults_to_empty_string() -> None:
+    node = SkillNode(id=SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.ATTACK, tier=0), cost=1)
+
+    assert node.description == ""

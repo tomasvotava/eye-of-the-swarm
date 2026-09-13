@@ -44,6 +44,7 @@ class SkillNode:
     id: SkillNodeId
     cost: int
     name: str = ""
+    description: str = ""
     stats_delta: StatsDelta = StatsDelta()
     lifespan_effects: tuple[EffectName, ...] = ()
     unlocked_actions: tuple[ActionDefinition, ...] = ()
