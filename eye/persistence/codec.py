@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, TypeIs
+from typing import TYPE_CHECKING, Any
 
 from eye.session.game import Game
 from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
+
+if TYPE_CHECKING:
+    from typing import TypeIs
 
 SCHEMA_VERSION = 1
 

@@ -1,8 +1,7 @@
 import random
+import sys
 import warnings
 from pathlib import Path
-
-import platformdirs
 
 from eye.persistence.codec import SaveDataError, decode, encode
 from eye.persistence.port import SaveStore
@@ -45,8 +44,16 @@ def default_store() -> SaveStore:
 
 
 def _resolve_store(save_store: SaveStore | None) -> SaveStore:
-    return save_store if save_store is not None else default_save_store(_default_save_path())
+    if save_store is not None:
+        return save_store
+    # emscripten's default_save_store() ignores filesystem_path entirely -- skip computing it
+    # there so platformdirs (unneeded and pygbag-hostile) never has to be a web dependency.
+    if sys.platform == "emscripten":
+        return default_save_store()
+    return default_save_store(_default_save_path())
 
 
 def _default_save_path() -> Path:
+    import platformdirs
+
     return Path(platformdirs.user_data_dir(_APP_NAME)) / _SAVE_FILENAME

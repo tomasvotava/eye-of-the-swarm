@@ -2,7 +2,12 @@
 playback (ADR 0013) -- playtesting-driven placeholders (PROJECT_BRIEF.md §8), not final tuning.
 """
 
-import pygame.typing
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pygame.typing
 
 WALK_TO_EXIT_DURATION_SECONDS = 0.6
 WALK_TO_ENCOUNTER_DURATION_SECONDS = 0.6

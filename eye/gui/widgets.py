@@ -10,9 +10,11 @@ plain-text fallback/test double. `SpriteSkillTreeLeaf` (ADR 0015) renders a node
 `TextSkillTreeLeaf` remains as a plain-text fallback/test double.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from enum import Enum, auto
-from typing import ClassVar, Protocol, assert_never
+from typing import TYPE_CHECKING, ClassVar, Protocol, assert_never
 
 import pygame
 
@@ -20,6 +22,9 @@ from eye.combat.effects import EFFECT_POLARITY, EffectName, EffectPolarity
 from eye.gui.assets import IconVariant, SkillIconVariant, SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.skilltree.tree import SkillNode
+
+if TYPE_CHECKING:
+    import pygame.typing
 
 _FONT_SIZE = 16
 _BUFF_COLOR: pygame.typing.ColorLike = "mediumseagreen"

@@ -9,12 +9,14 @@ after every successful purchase so `GameDriver` can persist -- mirroring
 frame off `_row`/`_col` rather than a separate selection-confirm step.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from enum import Enum, auto
 from itertools import groupby
+from typing import TYPE_CHECKING
 
 import pygame
-import pygame.typing
 
 from eye.gui.assets import SkillIconVariant, SpriteAtlas
 from eye.gui.card import Card, draw_card
@@ -25,6 +27,9 @@ from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
 from eye.skilltree.tree import SkillNode
+
+if TYPE_CHECKING:
+    import pygame.typing
 
 _FONT_SIZE = 16
 _ROW_LABEL_WIDTH = 80  # was 100 -- freed width the taller icon-bearing cells now need

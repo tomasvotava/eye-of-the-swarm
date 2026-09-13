@@ -1,5 +1,7 @@
 """Time-driven animation state machine, generic over each entity's own state enum (ADR 0011)."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum

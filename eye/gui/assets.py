@@ -4,17 +4,22 @@ epic replaces with `build_art_atlas(assets_dir)`, swapped in at its one call sit
 scene code.
 """
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pygame
-import pygame.typing
 
 from eye.gui.animation import AnimationClip
 from eye.gui.spritesheet import load_spritesheet_clip
 from eye.gui.tuning import PROP_BACKGROUND_KEY_DISTANCE
+
+if TYPE_CHECKING:
+    import pygame.typing
 
 PLACEHOLDER_SPRITE_SIZE = 32
 _STATIC_SPRITE_FILENAME = "sprite.png"

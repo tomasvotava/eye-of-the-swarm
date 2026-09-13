@@ -7,13 +7,14 @@ deferred until the player's sprite reaches the marker. Owned and routed by `Game
 never constructs a sibling scene itself.
 """
 
+from __future__ import annotations
+
 import random
 from collections.abc import Callable, Mapping, Sequence
 from enum import Enum, StrEnum, auto
-from typing import assert_never
+from typing import TYPE_CHECKING, assert_never
 
 import pygame
-import pygame.typing
 
 from eye.combat.effects import EffectName
 from eye.exploration.encounters import ResourceKind
@@ -49,6 +50,9 @@ from eye.gui.widgets import (
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
+
+if TYPE_CHECKING:
+    import pygame.typing
 
 _FONT_SIZE = 20
 _TEXT_COLOR: pygame.typing.ColorLike = "white"

@@ -150,3 +150,35 @@ is not among them.
 
 List every dot-directory you need excluded explicitly in `pygbag.ini`'s `ignoreDirs`
 (`/.venv`, `/.ruff_cache`, `/.pytest_cache`, …) — never rely on the dot prefix alone.
+
+## 2026-09-13 - `eye/gui/*` needs `from __future__ import annotations` for the web build
+
+A module-level constant (`_TEXT_COLOR: pygame.typing.ColorLike = "white"`) raised
+`AttributeError: module 'pygame' has no attribute 'typing'` in the browser, despite working
+natively and passing mypy. The same class of error later hit `pygame.Surface` and `pygame.K_1`
+in different files, each only surfacing once the previous one was fixed.
+
+This project targets Python 3.14, which defers annotation evaluation by default (PEP 649) — so
+an annotation referencing anything not yet a real binding (a `TYPE_CHECKING`-only import, or a
+`pygame.*` attribute pygame-ce's WASM build populates asynchronously after `import pygame`
+returns) never actually gets evaluated natively. pygbag's browser runtime is CPython 3.12, which
+has no such default, so the same annotation is evaluated eagerly and blows up.
+
+Any module whose annotations reference a `TYPE_CHECKING`-only import or a `pygame.*` attribute
+needs `from __future__ import annotations` as its first statement after the module docstring, if
+it has one. Nothing in the toolchain catches a missing one — there's no 3.12 job, and mypy/ruff
+both target 3.14.
+
+## 2026-09-13 - a web-reachable module must not import a dependency it won't actually use there
+
+`eye/persistence/save.py` called `platformdirs.user_data_dir(...)` unconditionally to build a
+fallback save path, even though `eye/persistence/select.py::default_save_store` throws that path
+away unread on `sys.platform == "emscripten"` in favor of `LocalStorageSaveStore`. That eager,
+unnecessary call dragged `platformdirs` into the browser build's import graph, where pygbag
+either has to be told about it upfront (a PEP 723 header in `main.py`) or it falls into pygbag's
+reactive dependency installer — which hangs indefinitely rather than failing, the moment anything
+reaches it, regardless of whether the underlying install itself succeeds.
+
+Check `sys.platform` before computing anything a browser-reachable code path won't use, not just
+before choosing what to do with it — an unused eager `import`/call is invisible right up until it
+either needs pygbag's fragile install machinery or hangs it.

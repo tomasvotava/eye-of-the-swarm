@@ -8,6 +8,8 @@ screens this Epic ships (`DevAssetViewerScene`, `GameDriver`) actually get chose
 splash/menu epic adds screens here without touching `App`.
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import random
