@@ -1,10 +1,11 @@
 import random
 from collections.abc import Callable
+from pathlib import Path
 
 import pygame
 import pytest
 
-from eye.gui.assets import build_placeholder_atlas
+from eye.gui.assets import build_art_atlas, build_placeholder_atlas
 from eye.gui.play_scene import Continue
 from eye.gui.scenes.skilltree import _ROWS, KEY_ACTIONS, SkillTreeAction, SkillTreeScene, _node_state
 from eye.gui.widgets import SkillNodeState
@@ -12,13 +13,19 @@ from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
 
+_SHIPPED_SPRITES_DIR = Path("eye/gui/sprites")
+
 
 def _noop() -> None:
     pass
 
 
+def _game() -> Game:
+    return Game(random.Random())
+
+
 def _scene(spores: int = 0, on_purchase: Callable[[], None] = _noop) -> tuple[SkillTreeScene, Game]:
-    game = Game(random.Random())
+    game = _game()
     game.skill_tree.add_spores(spores)
     return SkillTreeScene(game, build_placeholder_atlas(), on_purchase=on_purchase), game
 
@@ -200,3 +207,36 @@ def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
     scene, _ = _scene()
 
     scene.draw(pygame.Surface(surface_size))
+
+
+def test_card_for_selected_node_reflects_the_cursor_position() -> None:
+    scene, _ = _scene()
+
+    card = scene._card_for_selected_node()
+
+    expected = _ROWS[0][0]
+    assert card.title == expected.name
+    assert card.description == expected.description
+
+
+def test_card_for_selected_node_updates_immediately_when_the_cursor_moves() -> None:
+    scene, _ = _scene()
+    before = scene._card_for_selected_node()
+
+    _press(scene, pygame.K_RIGHT)
+    scene.update(0.016)
+    after = scene._card_for_selected_node()
+
+    assert after.title == _ROWS[0][1].name
+    assert after.title != before.title
+
+
+def test_card_for_selected_node_builds_for_every_shipped_node_and_state() -> None:
+    game = _game()
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+    scene = SkillTreeScene(game, atlas, on_purchase=lambda: None)
+    for row_index, row in enumerate(_ROWS):
+        for col_index, _node in enumerate(row):
+            scene._row, scene._col = row_index, col_index
+            card = scene._card_for_selected_node()
+            assert card.title

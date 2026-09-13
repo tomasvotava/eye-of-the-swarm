@@ -5,7 +5,8 @@ when the player is done spending; `GameDriver` (ADR 0010) is the one that calls
 `game.start_generation()` and constructs the next `ExplorationScene`. `on_purchase` is invoked
 after every successful purchase so `GameDriver` can persist -- mirroring
 `eye/tui/skilltree_menu.py::run()`'s own `on_purchase` hook -- without this scene needing to know
-`eye.persistence` exists.
+`eye.persistence` exists. A `Card` (ADR 0015) reflects the cursored node live, refreshed every
+frame off `_row`/`_col` rather than a separate selection-confirm step.
 """
 
 from collections.abc import Callable
@@ -15,10 +16,11 @@ from itertools import groupby
 import pygame
 import pygame.typing
 
-from eye.gui.assets import SpriteAtlas
+from eye.gui.assets import SkillIconVariant, SpriteAtlas
+from eye.gui.card import Card, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import Continue, PlaySceneTransition
-from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, SpriteSkillTreeLeaf
+from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, SpriteSkillTreeLeaf, StaticSpriteIcon, _skill_sprite_key
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
@@ -32,6 +34,8 @@ _ROW_HEIGHT = 40  # was 28 -- fits the icon height plus the two text lines Sprit
 _ROW_GAP = 6
 _BRANCH_GAP = 16  # extra vertical gap where a row's branch differs from the previous row's
 _MARGIN = 8
+# Narrower than card_column_width()'s half-screen default -- leaves room for the grid's tier columns.
+_CARD_COLUMN_WIDTH = 200
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _CURSOR_COLOR: pygame.typing.ColorLike = "slategray"
 
@@ -143,6 +147,36 @@ class SkillTreeScene:
         surface.fill("black")
         self._draw_grid(surface)
         self._draw_hud(surface)
+        self._draw_card(surface)
+
+    def _card_for_selected_node(self) -> Card:
+        node = _ROWS[self._row][self._col]
+        state = _node_state(self._game.skill_tree, node)
+        sprite_key = _skill_sprite_key(node)
+        variant = {
+            SkillNodeState.LOCKED: SkillIconVariant.LOCKED,
+            SkillNodeState.AVAILABLE: SkillIconVariant.NORMAL,
+            SkillNodeState.PURCHASED: SkillIconVariant.ACQUIRED,
+        }[state]
+        if self._atlas.has_variant_set(sprite_key):
+            surface_variant = self._atlas.get_variant_set(sprite_key, SkillIconVariant)[variant]
+            icon = StaticSpriteIcon(surface_variant)
+        else:
+            icon = StaticSpriteIcon(self._atlas.get(sprite_key))  # placeholder atlas: no variant split
+        return Card(
+            title=node.name,
+            icon=icon,
+            description=node.description,
+            subtitle=f"{node.id.branch.name.title()} / {node.id.sub_branch.name.title()} -- {node.cost} spores",
+        )
+
+    def _draw_card(self, surface: pygame.Surface) -> None:
+        draw_card(
+            surface,
+            self._card_for_selected_node(),
+            center_x=surface.get_width() - _CARD_COLUMN_WIDTH // 2 - _MARGIN,
+            column_width=_CARD_COLUMN_WIDTH,
+        )
 
     def _draw_grid(self, surface: pygame.Surface) -> None:
         skill_tree = self._game.skill_tree

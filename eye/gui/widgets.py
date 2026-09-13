@@ -3,9 +3,11 @@ and `SkillTreeLeaf` are `Protocol`s so an art epic can swap in a richer implemen
 text + state styling) at each scene's factory call site without touching scene code.
 `SpriteIcon` (ADR 0011) draws an atlas key's art; `SpriteBuffIcon` is its subject-keyed form and
 `CombatScene`'s default, and `borderless_icon` the form a label on bare background takes.
-`TextBuffIcon` remains as a plain-text fallback/test double. `SpriteSkillTreeLeaf` (ADR 0015)
-renders a node's icon (keyed by `SkillIconVariant`) plus name and effect summary, and is
-`SkillTreeScene`'s default; `TextSkillTreeLeaf` remains as a plain-text fallback/test double.
+`StaticSpriteIcon` (ADR 0015) wraps one already-resolved `Surface` for a caller that re-selects
+its variant on every render, e.g. the skill-tree inspector card. `TextBuffIcon` remains as a
+plain-text fallback/test double. `SpriteSkillTreeLeaf` (ADR 0015) renders a node's icon (keyed by
+`SkillIconVariant`) plus name and effect summary, and is `SkillTreeScene`'s default;
+`TextSkillTreeLeaf` remains as a plain-text fallback/test double.
 """
 
 from collections.abc import Mapping
@@ -138,6 +140,19 @@ class SpriteIcon:
         if scaled is None:
             scaled = pygame.transform.smoothscale(self._surface, (size, size))
             self._scaled[size] = scaled
+        surface.blit(scaled, pos)
+
+
+class StaticSpriteIcon:
+    """A `BuffIcon` wrapping one already-resolved `Surface` -- for a caller (like the skill-tree
+    inspector) that re-selects its variant every render rather than fixing it at construction, the
+    way `SpriteIcon` does."""
+
+    def __init__(self, surface: pygame.Surface) -> None:
+        self._surface = surface
+
+    def render(self, surface: pygame.Surface, pos: pygame.Vector2, size: int) -> None:
+        scaled = pygame.transform.smoothscale(self._surface, (size, size))
         surface.blit(scaled, pos)
 
 
