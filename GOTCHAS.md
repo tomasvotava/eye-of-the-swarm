@@ -182,3 +182,17 @@ reaches it, regardless of whether the underlying install itself succeeds.
 Check `sys.platform` before computing anything a browser-reachable code path won't use, not just
 before choosing what to do with it — an unused eager `import`/call is invisible right up until it
 either needs pygbag's fragile install machinery or hangs it.
+
+## 2026-09-13 - `GameDriver`'s boot screen keys off whether a save loaded, not whether it decoded
+
+Choosing "New Game" on a save slot with corrupt data boots into the skill-tree screen with 0
+spores and nothing purchasable, instead of a fresh exploration run.
+
+`GameDriver.__init__` sets `had_existing_save = self._save_store.load() is not None` before calling
+`save.load_or_new()`, which falls back to a fresh `Game` on undecodable data (ADR 0005) — but
+`load()` already returned the corrupt raw string, so `had_existing_save` is `True` regardless. The
+boot-scene choice and the save-decoding fallback disagree with each other.
+
+Fixing it means deriving `had_existing_save` from decodability (e.g. via `save.peek()`), not from
+whether `load()` returned anything — out of scope for whatever change surfaces it; file a follow-up
+rather than patching it inline.
