@@ -7,6 +7,7 @@ deferred until the player's sprite reaches the marker. Owned and routed by `Game
 never constructs a sibling scene itself.
 """
 
+import random
 from collections.abc import Callable, Mapping, Sequence
 from enum import Enum, StrEnum, auto
 from typing import assert_never
@@ -23,12 +24,16 @@ from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
+from eye.gui.props import resolve_prop_sampling
 from eye.gui.tuning import (
     ENCOUNTER_ENEMY_SCALE_FACTOR,
     ENCOUNTER_PICKUP_SCALE_FACTOR,
     ENCOUNTER_X_FRACTION,
     ENTRY_X_FRACTION,
     EXIT_X_FRACTION,
+    PROP_SCALE_FACTOR,
+    PROP_Y_BAND_MAX_FRACTION,
+    PROP_Y_BAND_MIN_FRACTION,
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
@@ -256,6 +261,9 @@ class ExplorationScene:
             self._player_animator = Animator(clips, initial_state=_animation_state_for_phase(starting_phase))
         # Fallback for a placeholder atlas with no player animation data (same guard as above).
         self._player_static_sprite = scale_sprite(atlas.get(SpriteKey.PLAYER), _PLAYER_SCALE_FACTOR)
+        # Not seeded, unlike EncounterGenerator's rolls: prop placement has no determinism
+        # requirement (ADR 0016).
+        self._prop_rng = random.Random()  # noqa: S311 -- game RNG, not cryptographic
 
     @classmethod
     def for_new_generation(
@@ -433,6 +441,7 @@ class ExplorationScene:
 
     def draw(self, surface: pygame.Surface) -> None:
         self._draw_background(surface)
+        self._draw_props(surface)
         self._draw_encounter(surface)
         self._draw_player(surface)
         self._draw_status_icons(surface)
@@ -445,6 +454,22 @@ class ExplorationScene:
         key = resolve_biome(self._generation.distance_from_home)
         background = crop_to_cover(self._atlas.get(key), surface.get_size())
         surface.blit(background, (0, 0))
+
+    def _draw_props(self, surface: pygame.Surface) -> None:
+        sampling = resolve_prop_sampling(self._generation.distance_from_home)
+        width, height = surface.get_size()
+        y_min = round(height * PROP_Y_BAND_MIN_FRACTION)
+        y_max = round(height * PROP_Y_BAND_MAX_FRACTION)
+        for key, count in sampling:
+            pool = list(self._atlas.get_props(key).values())
+            if not pool:
+                continue
+            for _ in range(count):
+                prop = self._prop_rng.choice(pool)
+                scaled = scale_sprite(prop, PROP_SCALE_FACTOR)
+                x = self._prop_rng.randint(0, max(0, width - scaled.get_width()))
+                y = self._prop_rng.randint(y_min, max(y_min, y_max - scaled.get_height()))
+                surface.blit(scaled, (x, y))
 
     def _player_x_fraction(self) -> float:
         match self._phase:

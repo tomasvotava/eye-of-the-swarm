@@ -50,3 +50,16 @@ BATTLE_BUFF_ICON_HOP_DURATION_SECONDS = 0.35
 # GUI-side function of screen count. Playtesting-driven placeholders.
 BIOME_DEAD_FOREST_THRESHOLD_SCREENS = 5
 BIOME_FOREST_THRESHOLD_SCREENS = 15
+
+# Prop placement (ADR 0016, PROJECT_BRIEF.md §9.3) -- distance-weighted scattered foreground
+# dressing, thinning across a Biome's span and blending with the next Biome's pool near a
+# boundary. Playtesting-driven placeholders.
+PROP_MIN_COUNT_PER_SCREEN = 1
+PROP_MAX_COUNT_PER_SCREEN = 4
+PROP_BOUNDARY_BLEND_SCREENS = 3
+
+# Prop rendering geometry (ADR 0016) -- where on screen a sampled prop can land and how large it
+# draws, both playtesting-driven placeholders.
+PROP_SCALE_FACTOR = 0.5
+PROP_Y_BAND_MIN_FRACTION = 0.55
+PROP_Y_BAND_MAX_FRACTION = 0.85

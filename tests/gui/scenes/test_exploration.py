@@ -1283,3 +1283,27 @@ def test_the_bottom_hud_leaves_the_spore_total_to_the_top_row() -> None:
         expected.blit(font.render(line, True, _TEXT_COLOR), (_HUD_MARGIN, top + index * _FONT_SIZE))
 
     assert pygame.image.tobytes(surface, "RGBA") == pygame.image.tobytes(expected, "RGBA")
+
+
+def test_draw_props_samples_the_resolved_pools_the_correct_number_of_times(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, _art_atlas())
+    choice_calls = 0
+    original_choice = scene._prop_rng.choice
+
+    def _counting_choice(pool: list[pygame.Surface]) -> pygame.Surface:
+        nonlocal choice_calls
+        choice_calls += 1
+        return original_choice(pool)
+
+    monkeypatch.setattr(scene._prop_rng, "choice", _counting_choice)
+
+    scene.draw(pygame.Surface(_WINDOW_SIZE))
+
+    from eye.gui.props import resolve_prop_sampling
+
+    expected_total = sum(count for _, count in resolve_prop_sampling(generation.distance_from_home))
+    assert choice_calls == expected_total
