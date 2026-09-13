@@ -202,6 +202,18 @@ def _skill_sprite_key(node: SkillNode) -> SpriteKey:
     return SpriteKey(f"skill_{node.id.branch.name.lower()}_{node.id.sub_branch.name.lower()}_{node.id.tier}")
 
 
+def _truncate_to_width(text: str, font: pygame.font.Font, max_width: int) -> str:
+    """`text`, shortened with a trailing ellipsis if needed so it renders no wider than
+    `max_width` in `font` -- a grid leaf's cell is a quick-glance summary, not the full detail
+    the inspector Card (ADR 0015) shows on selection, so losing a long line's tail is acceptable."""
+    if font.size(text)[0] <= max_width:
+        return text
+    ellipsis = "..."
+    while text and font.size(text + ellipsis)[0] > max_width:
+        text = text[:-1]
+    return text + ellipsis if text else ellipsis
+
+
 class SpriteSkillTreeLeaf:
     """`SkillTreeLeaf` backed by real art (ADR 0015): a node's icon (keyed by `SkillIconVariant`
     off `state`), its name, and a short effect-summary line -- `SkillTreeScene`'s default in place
@@ -232,7 +244,10 @@ class SpriteSkillTreeLeaf:
         surface.blit(icon, rect.topleft)
         font = get_font(GameFont.ITHACA, _FONT_SIZE)
         text_x = rect.left + icon_size + 4
-        surface.blit(font.render(node.name, True, _STATE_COLORS[state]), (text_x, rect.top))
+        available_width = rect.width - icon_size - 4
+        name = _truncate_to_width(node.name, font, available_width)
+        surface.blit(font.render(name, True, _STATE_COLORS[state]), (text_x, rect.top))
         summary = _skill_effect_summary(node)
         if summary:
+            summary = _truncate_to_width(summary, font, available_width)
             surface.blit(font.render(summary, True, _STATE_COLORS[state]), (text_x, rect.top + _FONT_SIZE))
