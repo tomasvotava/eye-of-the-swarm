@@ -89,3 +89,8 @@ def test_self_utility_tiers_apply_multipliers_in_ascending_order() -> None:
 
     assert tier0.exploration_modifier.seed_growth_rate_multiplier == 1.1
     assert tier2.exploration_modifier.seed_growth_rate_multiplier == 1.25
+
+
+def test_every_catalog_entry_has_a_non_empty_description() -> None:
+    for node in CATALOG.values():
+        assert node.description, f"{node.id} has no description"
