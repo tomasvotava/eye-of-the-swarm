@@ -33,6 +33,22 @@ def scale_sprite(sprite: pygame.Surface, factor: float) -> pygame.Surface:
     return sprite if factor == 1 else pygame.transform.scale_by(sprite, factor)
 
 
+def crop_to_cover(surface: pygame.Surface, target_size: tuple[int, int]) -> pygame.Surface:
+    """Scale `surface` uniformly so it fully covers `target_size`, cropping whichever axis
+    overflows, rather than stretching non-uniformly (ADR 0016). Preserves aspect ratio at the cost
+    of showing less than the full source image -- a standing constraint on future Biome art:
+    author assuming the frame may be cropped at the edges, not that the whole image is visible.
+    """
+    target_width, target_height = target_size
+    source_width, source_height = surface.get_size()
+    scale = max(target_width / source_width, target_height / source_height)
+    scaled_size = (round(source_width * scale), round(source_height * scale))
+    scaled = pygame.transform.smoothscale(surface, scaled_size)
+    crop_x = (scaled_size[0] - target_width) // 2
+    crop_y = (scaled_size[1] - target_height) // 2
+    return scaled.subsurface(pygame.Rect(crop_x, crop_y, target_width, target_height)).copy()
+
+
 def scale_clip(clip: AnimationClip, factor: float) -> AnimationClip:
     """Scale every frame of `clip` by `factor`, a no-op passthrough at `factor == 1`."""
     if factor == 1:

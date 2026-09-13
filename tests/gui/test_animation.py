@@ -3,7 +3,7 @@ from enum import StrEnum
 import pygame
 import pytest
 
-from eye.gui.animation import AnimationClip, Animator, scale_clip, scale_sprite
+from eye.gui.animation import AnimationClip, Animator, crop_to_cover, scale_clip, scale_sprite
 
 
 class _State(StrEnum):
@@ -175,3 +175,30 @@ def test_update_freezes_on_the_last_frame_under_an_oversized_dt_for_a_non_loopin
     animator.update(10.0)  # far exceeds total_duration_seconds -- must not wrap past the last frame
 
     assert animator.current_frame() is clips[_SingleState.IDLE].frames[2]
+
+
+def test_crop_to_cover_returns_exactly_the_target_size() -> None:
+    surface = pygame.Surface((1456, 816))  # 16:9, wider than the 4:3 target -- overflow on x
+
+    cropped = crop_to_cover(surface, (640, 480))
+
+    assert cropped.get_size() == (640, 480)
+
+
+def test_crop_to_cover_preserves_aspect_ratio_via_uniform_scale() -> None:
+    # A pure-vertical source (portrait prop-style art) overflows on y once scaled to cover a
+    # square target -- crop_to_cover must scale up by the SAME factor on both axes, not stretch
+    # x and y independently the way pygame.transform.scale would.
+    surface = pygame.Surface((768, 1536))
+
+    cropped = crop_to_cover(surface, (200, 200))
+
+    assert cropped.get_size() == (200, 200)
+
+
+def test_crop_to_cover_is_a_noop_sized_copy_when_source_already_matches_target() -> None:
+    surface = pygame.Surface((640, 480))
+
+    cropped = crop_to_cover(surface, (640, 480))
+
+    assert cropped.get_size() == (640, 480)

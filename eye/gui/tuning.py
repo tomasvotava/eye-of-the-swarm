@@ -44,3 +44,9 @@ BATTLE_HIT_FLASH_DURATION_SECONDS = 0.12
 # whole up-and-down, kept inside the flinch clip carrying it.
 BATTLE_BUFF_ICON_HOP_PIXELS = 4
 BATTLE_BUFF_ICON_HOP_DURATION_SECONDS = 0.35
+
+# Biome resolution (ADR 0016, PROJECT_BRIEF.md §9.3) -- distance_from_home, in screens, at which
+# the GUI switches which Biome background/prop pool it draws. Never read by the domain; purely a
+# GUI-side function of screen count. Playtesting-driven placeholders.
+BIOME_DEAD_FOREST_THRESHOLD_SCREENS = 5
+BIOME_FOREST_THRESHOLD_SCREENS = 15
