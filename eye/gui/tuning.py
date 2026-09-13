@@ -40,6 +40,11 @@ BATTLE_HIGHLIGHT_PULSE_STRENGTH = 0.55
 BATTLE_ACTING_HIGHLIGHT_COLOR: pygame.typing.ColorLike = "deepskyblue"
 BATTLE_RECEIVING_HIGHLIGHT_COLOR: pygame.typing.ColorLike = "orangered"
 
+# Whose *turn* it is (distinct from the two above, which name a hit's own reveal, per PhaseFocus's
+# docstring): how far the combatant not currently acting is dimmed, 0-1 multiplied into their
+# sprite's RGB. Kept above 0 so the inactive side stays legible rather than blacked out.
+BATTLE_INACTIVE_COMBATANT_DIM_FACTOR = 0.45
+
 # The tint is multiplied into the sprite's pixels and then added: addition alone can only brighten,
 # so on a light pixel every channel clips and the hue is lost. Strength is how much arrives at the
 # instant of impact, 0-1, falling off linearly.

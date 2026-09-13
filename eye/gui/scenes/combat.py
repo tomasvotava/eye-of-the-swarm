@@ -58,6 +58,7 @@ from eye.gui.tuning import (
     BATTLE_HIT_FLASH_DURATION_SECONDS,
     BATTLE_HIT_FLASH_HEALING_COLOR,
     BATTLE_HIT_FLASH_STRENGTH,
+    BATTLE_INACTIVE_COMBATANT_DIM_FACTOR,
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
@@ -450,6 +451,16 @@ def _lit_by_hit_flash(sprite: pygame.Surface, strength: float, valence: HitValen
     return lit
 
 
+def _dimmed(sprite: pygame.Surface, factor: float) -> pygame.Surface:
+    """A copy of `sprite` with its RGB channels scaled by `factor` (0-1), alpha untouched -- so the
+    combatant not currently taking their turn dims without its silhouette's transparent margin
+    turning grey."""
+    dimmed = sprite.copy()
+    level = round(255 * factor)
+    dimmed.fill((level, level, level), special_flags=pygame.BLEND_RGB_MULT)
+    return dimmed
+
+
 @dataclass(frozen=True, slots=True)
 class AnchoredCard:
     """A `Card` and the combatant it landed on, carried as one value: draw() picks the half to
@@ -544,6 +555,9 @@ class CombatScene:
         self._phase_focus: PhaseFocus | None = None
         # Latched by update() when a turn is driven, never derived at draw time (ADR 0013).
         self._turn_banner: str | None = None
+        # Same latch, same two call sites -- who _turn_banner's text names, kept as the Combatant
+        # itself so _draw_combatant can dim whichever side it isn't without re-deriving the text.
+        self._active_combatant: Combatant | None = None
         # Scene-wide, unlike _phase_elapsed, so the pulse never restarts at a phase boundary.
         self._elapsed_seconds: float = 0.0
         self._player_animator = _build_combat_animator(atlas, SpriteKey.PLAYER, _COMBATANT_SCALE_FACTOR)
@@ -604,11 +618,13 @@ class CombatScene:
             # menu: that would name the enemy for the whole player-choice window. Set before
             # query_player_turn(), which mutates -- a Wilty pre-turn roll can kill the player.
             self._turn_banner = _turn_title(self._battle.player)
+            self._active_combatant = self._battle.player
             self._advance_query()
         elif turn_phase is TurnPhase.AWAITING_PLAYER_ACTION:
             self._resolve_pending_action()
         elif turn_phase is TurnPhase.AWAITING_ENEMY_TURN:
             self._turn_banner = _turn_title(self._battle.enemy)
+            self._active_combatant = self._battle.enemy
             self._queue_events(self._battle.resolve_enemy_turn())
             self._tick_displayed_battle_effect_durations()
         # Starts (without necessarily finishing) the freshly queued batch's first phase within
@@ -895,11 +911,12 @@ class CombatScene:
             case BattleEnded():
                 result = self._announcement_phase(Announcement(text=_describe_event(event, self._battle.player)))
 
-                # Only the next turn ever replaces the banner, and there is none, so clear it here
-                # or it sits over the result.
+                # Only the next turn ever replaces the banner (or which side it names), and there
+                # is none, so clear both here or the loser sits dimmed over the result.
                 def on_start() -> None:
                     result.on_start()
                     self._turn_banner = None
+                    self._active_combatant = None
 
                 return [replace(result, on_start=on_start)]
             case MeterFilled(combatant=combatant, meter_after=meter_after):
@@ -1014,8 +1031,10 @@ class CombatScene:
         flash = displayed.hit_flash
         flash_strength = self._hit_flash_strength(displayed)
         drawn_sprite = sprite
+        if self._active_combatant is not None and combatant is not self._active_combatant:
+            drawn_sprite = _dimmed(drawn_sprite, BATTLE_INACTIVE_COMBATANT_DIM_FACTOR)
         if flash is not None and flash_strength > 0.0:
-            drawn_sprite = _lit_by_hit_flash(sprite, flash_strength, flash.valence)
+            drawn_sprite = _lit_by_hit_flash(drawn_sprite, flash_strength, flash.valence)
         surface.blit(drawn_sprite, layout.sprite_topleft(sprite))
 
         # Steady on the name (who), pulsing on the HP bar (the value about to move).

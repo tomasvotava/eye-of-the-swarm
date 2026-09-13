@@ -79,6 +79,7 @@ from eye.gui.scenes.combat import (
     _combatant_layout,
     _DeadVariant,
     _describe_event,
+    _dimmed,
     _hp_tween_phase,
     _label,
     _lit_by_hit_flash,
@@ -99,6 +100,7 @@ from eye.gui.tuning import (
     BATTLE_HIT_FLASH_DURATION_SECONDS,
     BATTLE_HIT_FLASH_HEALING_COLOR,
     BATTLE_HIT_FLASH_STRENGTH,
+    BATTLE_INACTIVE_COMBATANT_DIM_FACTOR,
     BATTLE_RECEIVING_HIGHLIGHT_COLOR,
     BATTLE_VALUE_TWEEN_SECONDS,
 )
@@ -2530,6 +2532,21 @@ def test_drawing_a_hit_flash_leaves_the_animators_cached_frame_untouched(tmp_pat
     assert pygame.image.tobytes(frame, "RGBA") == pixels_before
 
 
+def test_drawing_a_dimmed_combatant_leaves_the_animators_cached_frame_untouched(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
+    atlas = build_art_atlas(tmp_path)
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene._active_combatant = scene._battle.enemy  # leaves the player dimmed
+    frame = scene._current_sprite(scene._battle.player)
+    pixels_before = pygame.image.tobytes(frame, "RGBA")
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert pixels_before != bytes(len(pixels_before))  # sanity: the sprite isn't already blank
+    assert pygame.image.tobytes(frame, "RGBA") == pixels_before
+
+
 def test_draw_does_not_raise_while_a_hit_flash_is_active() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
@@ -2671,6 +2688,179 @@ def test_the_turn_banner_clears_both_name_labels_at_the_real_window_size(strain:
     assert pygame.Rect(0, player_name.top, surface.get_width(), player_name.height).contains(drawn), strain
     assert not drawn.colliderect(player_name), strain
     assert not drawn.colliderect(enemy_name), strain
+
+
+def test_the_active_combatant_is_absent_before_the_first_turn() -> None:
+    # Mirrors test_the_turn_banner_is_absent_before_the_first_turn -- same latch, same call sites.
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    assert scene._active_combatant is None
+
+    scene.update(0.016)
+
+    assert scene._current_phases or scene._pending_events  # start()'s own events are still playing
+    assert scene._active_combatant is None
+
+
+def test_the_active_combatant_is_the_player_while_the_action_menu_is_up() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    scene.update(0.016)
+
+    assert scene._pending_query is not None
+    assert scene._active_combatant is scene._battle.player
+
+
+def test_the_active_combatant_is_the_enemy_during_the_enemy_turn() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)
+    _press(scene, ACTION_KEYS[0])
+
+    for _ in range(400):
+        scene.update(0.016)
+        if scene._active_combatant is not scene._battle.player:
+            break
+    else:
+        raise AssertionError("the enemy's turn never came around")
+
+    assert scene._active_combatant is scene._battle.enemy
+
+
+def test_the_active_combatant_is_cleared_before_the_battle_result_is_announced() -> None:
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=overwhelming)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    active_over_the_result: list[Combatant | None] = []
+
+    for _ in range(2000):
+        _press(scene, ACTION_KEYS[0])
+        transition = scene.update(0.016)
+        # No effect is ever in play, so the result is the only card-less announcement here.
+        if scene._announcement is not None and scene._announcement.card is None:
+            active_over_the_result.append(scene._active_combatant)
+        if transition is not None:
+            break
+    else:
+        raise AssertionError("battle did not conclude within the frame budget")
+
+    assert active_over_the_result  # the result really was on screen to be measured
+    assert set(active_over_the_result) == {None}
+    assert scene._active_combatant is None
+
+
+def test_dimmed_darkens_every_rgb_channel_toward_black() -> None:
+    sprite = pygame.Surface((1, 1), pygame.SRCALPHA)
+    sprite.fill((200, 100, 50, 255))
+
+    dimmed = _dimmed(sprite, 0.5)
+
+    pixel = dimmed.get_at((0, 0))
+    assert pixel.r < 200
+    assert pixel.g < 100
+    assert pixel.b < 50
+    assert pixel.a == 255
+
+
+def test_dimmed_at_factor_one_leaves_the_sprite_unchanged() -> None:
+    sprite = pygame.Surface((256, 1), pygame.SRCALPHA)
+    for x in range(256):
+        sprite.set_at((x, 0), (x, 255 - x, (x * 7) % 256, 255))
+
+    dimmed = _dimmed(sprite, 1.0)
+
+    assert [dimmed.get_at((x, 0)) for x in range(256)] == [sprite.get_at((x, 0)) for x in range(256)]
+
+
+def test_dimmed_at_factor_zero_blacks_out_rgb_but_keeps_alpha() -> None:
+    sprite = pygame.Surface((1, 1), pygame.SRCALPHA)
+    sprite.fill((200, 100, 50, 128))
+
+    pixel = _dimmed(sprite, 0.0).get_at((0, 0))
+
+    assert (pixel.r, pixel.g, pixel.b) == (0, 0, 0)
+    assert pixel.a == 128
+
+
+def test_dimmed_leaves_the_sprites_transparent_margin_transparent() -> None:
+    sprite = pygame.Surface((2, 1), pygame.SRCALPHA)
+    sprite.set_at((0, 0), (10, 20, 30, 0))
+    sprite.set_at((1, 0), (10, 20, 30, 255))
+
+    dimmed = _dimmed(sprite, BATTLE_INACTIVE_COMBATANT_DIM_FACTOR)
+
+    assert dimmed.get_at((0, 0)).a == 0
+    assert dimmed.get_at((1, 0)).a == 255
+
+
+def _sprite_pixel(
+    surface: pygame.Surface, scene: CombatScene, combatant: Combatant, layout: CombatantLayout
+) -> pygame.Color:
+    sprite = scene._current_sprite(combatant)
+    topleft = layout.sprite_topleft(sprite)
+    return surface.get_at((topleft[0] + sprite.get_width() // 2, topleft[1] + sprite.get_height() // 2))
+
+
+def test_draw_combatant_dims_only_the_side_that_is_not_the_active_combatant() -> None:
+    # Pixel-level, not a spy on _dimmed: the earlier version only proved the helper was *called*,
+    # which stayed green even with the dim (and the hit-flash tint) dropped from the blit entirely.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    surface = pygame.Surface(_WINDOW_SIZE)
+    player_layout = _combatant_layout(surface, mirrored=False)
+    enemy_layout = _combatant_layout(surface, mirrored=True)
+
+    scene._active_combatant = None
+    scene._draw_combatant(surface, scene._battle.player, scene._player_displayed, player_layout)
+    scene._draw_combatant(surface, scene._battle.enemy, scene._enemy_displayed, enemy_layout)
+    baseline_player = _sprite_pixel(surface, scene, scene._battle.player, player_layout)
+    baseline_enemy = _sprite_pixel(surface, scene, scene._battle.enemy, enemy_layout)
+
+    scene._active_combatant = scene._battle.player
+    scene._draw_combatant(surface, scene._battle.player, scene._player_displayed, player_layout)
+    scene._draw_combatant(surface, scene._battle.enemy, scene._enemy_displayed, enemy_layout)
+    player_pixel = _sprite_pixel(surface, scene, scene._battle.player, player_layout)
+    dimmed_enemy = _sprite_pixel(surface, scene, scene._battle.enemy, enemy_layout)
+
+    assert (player_pixel.r, player_pixel.g, player_pixel.b) == (baseline_player.r, baseline_player.g, baseline_player.b)
+    assert dimmed_enemy.r <= baseline_enemy.r
+    assert dimmed_enemy.g <= baseline_enemy.g
+    assert dimmed_enemy.b <= baseline_enemy.b
+    assert (dimmed_enemy.r, dimmed_enemy.g, dimmed_enemy.b) != (baseline_enemy.r, baseline_enemy.g, baseline_enemy.b)
+
+
+def test_draw_combatant_dims_neither_side_before_a_turn_is_latched() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    assert scene._active_combatant is None
+    surface = pygame.Surface(_WINDOW_SIZE)
+    player_layout = _combatant_layout(surface, mirrored=False)
+    enemy_layout = _combatant_layout(surface, mirrored=True)
+
+    scene._draw_combatant(surface, scene._battle.player, scene._player_displayed, player_layout)
+    scene._draw_combatant(surface, scene._battle.enemy, scene._enemy_displayed, enemy_layout)
+
+    player_sprite = scene._current_sprite(scene._battle.player)
+    enemy_sprite = scene._current_sprite(scene._battle.enemy)
+    player_pixel = _sprite_pixel(surface, scene, scene._battle.player, player_layout)
+    enemy_pixel = _sprite_pixel(surface, scene, scene._battle.enemy, enemy_layout)
+    raw_player = player_sprite.get_at((player_sprite.get_width() // 2, player_sprite.get_height() // 2))
+    raw_enemy = enemy_sprite.get_at((enemy_sprite.get_width() // 2, enemy_sprite.get_height() // 2))
+
+    assert (player_pixel.r, player_pixel.g, player_pixel.b) == (raw_player.r, raw_player.g, raw_player.b)
+    assert (enemy_pixel.r, enemy_pixel.g, enemy_pixel.b) == (raw_enemy.r, raw_enemy.g, raw_enemy.b)
+
+
+def test_draw_does_not_raise_while_a_turn_is_latched() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)
+    assert scene._active_combatant is not None
+
+    scene.draw(pygame.Surface(_WINDOW_SIZE))
 
 
 def test_draw_background_uses_the_resolved_biome_key(monkeypatch: pytest.MonkeyPatch) -> None:
