@@ -14,6 +14,8 @@ spending "between runs," and a fresh process launch is exactly that boundary. A 
 prior save) skips straight to exploration instead, since there's nothing to spend yet.
 """
 
+from __future__ import annotations
+
 import random
 from typing import assert_never
 

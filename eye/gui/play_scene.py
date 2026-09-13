@@ -5,6 +5,8 @@ Mirrors `eye/gui/scene.py`'s own role at the outer, `app.py`-facing level, one t
 module imports no concrete scene either.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Protocol
 

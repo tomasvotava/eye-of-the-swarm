@@ -2,14 +2,19 @@
 into a column given as a centre-x and a width, so anchoring is the caller's decision, and every
 scene sizes that column with `card_column_width`."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pygame
-import pygame.typing
 
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.widgets import BuffIcon
+
+if TYPE_CHECKING:
+    import pygame.typing
 
 # Ceilings, not fixed sizes: _fitted_font drops below them when a label won't fit the column.
 _TITLE_FONT_SIZE = 44

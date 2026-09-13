@@ -5,11 +5,14 @@ import pytest
 
 from eye.persistence import save
 from eye.persistence.adapters.filesystem import FilesystemSaveStore
+from eye.persistence.adapters.local_storage import LocalStorageSaveStore
 from eye.persistence.codec import SCHEMA_VERSION, encode
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.tree import Branch, SkillNodeId, SubBranch
+from tests.persistence.adapters.test_local_storage import FakeJSStorage
 from tests.persistence.doubles import FakeSaveStore
+from tests.persistence.test_select import _install_fake_emscripten_platform
 from tests.session.doubles import ScriptedEncounterRandom
 
 _TIER0_SELF_ATTACK = SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.ATTACK, tier=0)
@@ -93,3 +96,13 @@ def test_default_store_targets_the_same_path_as_the_default_save_location() -> N
 
     assert isinstance(store, FilesystemSaveStore)
     assert store._path == save._default_save_path()
+
+
+def test_default_store_never_computes_a_filesystem_path_under_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _unreachable() -> None:
+        raise AssertionError("the browser build has no filesystem save path to compute")
+
+    _install_fake_emscripten_platform(monkeypatch, FakeJSStorage())
+    monkeypatch.setattr(save, "_default_save_path", _unreachable)
+
+    assert isinstance(save.default_store(), LocalStorageSaveStore)

@@ -4,16 +4,21 @@ generational loop (ADR 0009). Wired in behind a dev-only entry point in app.py -
 in the normal exploration -> combat -> skill-tree -> rebirth loop.
 """
 
+from __future__ import annotations
+
 from enum import Enum, StrEnum, auto
+from typing import TYPE_CHECKING
 
 import pygame
-import pygame.typing
 
 from eye.gui.animation import Animator
 from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.scene import Scene
 from eye.gui.scenes.exploration import PlayerAnimationState
+
+if TYPE_CHECKING:
+    import pygame.typing
 
 _FONT_SIZE = 14
 _TEXT_COLOR: pygame.typing.ColorLike = "white"

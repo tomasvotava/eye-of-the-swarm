@@ -7,15 +7,16 @@ one that reads `generation.died` and decides whether that means a return to expl
 to the skill tree, mirroring `eye/tui/combat.py::play_battle()`, which never decides that either.
 """
 
+from __future__ import annotations
+
 import math
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum, StrEnum, auto
-from typing import assert_never
+from typing import TYPE_CHECKING, assert_never
 
 import pygame
-import pygame.typing
 
 from eye.combat.battle import Battle, PlayerTurnNeedsAction, TurnPhase
 from eye.combat.effects import EffectCategory, EffectName
@@ -69,6 +70,9 @@ from eye.gui.widgets import (
     borderless_icon,
 )
 from eye.session.generation import Generation
+
+if TYPE_CHECKING:
+    import pygame.typing
 
 _FONT_SIZE = 20
 # The single centered line of a plain announcement. Deliberately the same size as an effect card's
