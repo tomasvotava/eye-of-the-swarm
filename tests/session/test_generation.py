@@ -264,3 +264,12 @@ def test_finish_battle_raises_for_a_battle_this_generation_did_not_start() -> No
 
     with pytest.raises(RuntimeError):
         generation.finish_battle(foreign_battle)
+
+
+def test_distance_from_home_threads_through_from_the_exploration_run() -> None:
+    generation = _generation(kind_queue=[EncounterKind.NOTHING] * 2)
+
+    advance_flat(generation)
+    advance_flat(generation)
+
+    assert generation.distance_from_home == 2

@@ -238,3 +238,20 @@ def test_spores_gained_accumulates_across_advances() -> None:
     run.advance()
 
     assert run.spores_gained == RESOURCE_SPORES_MAGNITUDE * 2
+
+
+def test_distance_from_home_is_zero_at_the_starting_screen() -> None:
+    run = ExplorationRun(_character(), _ScriptedRandom([]), starting_screen=5, matured_turfs=())
+
+    assert run.distance_from_home == 0
+
+
+def test_distance_from_home_grows_by_one_per_advance() -> None:
+    run = ExplorationRun(
+        _character(), _ScriptedRandom([EncounterKind.NOTHING] * 3), starting_screen=5, matured_turfs=()
+    )
+
+    run.advance()
+    run.advance()
+
+    assert run.distance_from_home == 2
