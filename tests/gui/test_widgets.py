@@ -10,10 +10,15 @@ from eye.gui.widgets import (
     SkillNodeState,
     SpriteBuffIcon,
     SpriteIcon,
+    SpriteSkillTreeLeaf,
     TextBuffIcon,
     TextSkillTreeLeaf,
+    _skill_effect_summary,
+    _skill_sprite_key,
+    effect_label,
 )
-from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
+from eye.skilltree.catalog import CATALOG
+from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, StatsDelta, SubBranch
 
 _SHIPPED_SPRITES_DIR = Path("eye/gui/sprites")
 
@@ -116,3 +121,45 @@ def test_sprite_buff_icon_is_a_sprite_icon_named_by_its_subject() -> None:
 
     assert isinstance(icon, SpriteIcon)
     assert icon.sprite_key is SpriteKey.EFFECT_FIBROUS
+
+
+def test_sprite_skill_tree_leaf_effect_summary_describes_a_stats_delta() -> None:
+    node = SkillNode(
+        id=SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.ATTACK, tier=0),
+        cost=1,
+        stats_delta=StatsDelta(attack=2),
+    )
+
+    assert "Attack +2" in _skill_effect_summary(node)
+
+
+def test_sprite_skill_tree_leaf_effect_summary_describes_a_lifespan_effect() -> None:
+    node = SkillNode(
+        id=SkillNodeId(branch=Branch.SWARM, sub_branch=SubBranch.ATTACK, tier=1),
+        cost=1,
+        lifespan_effects=(EffectName.FIBROUS,),
+    )
+
+    assert effect_label(EffectName.FIBROUS) in _skill_effect_summary(node)
+
+
+def test_skill_sprite_key_matches_the_shipped_sprite_key_naming() -> None:
+    node = SkillNode(id=SkillNodeId(branch=Branch.SELF, sub_branch=SubBranch.ATTACK, tier=0), cost=1)
+
+    assert _skill_sprite_key(node) is SpriteKey.SKILL_SELF_ATTACK_0
+
+
+def test_sprite_skill_tree_leaf_render_does_not_raise_for_every_shipped_skill_key() -> None:
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+    leaf = SpriteSkillTreeLeaf(atlas)
+    for node in CATALOG.values():
+        for state in SkillNodeState:
+            leaf.render(_surface(), pygame.Rect(0, 0, 190, 40), node, state)
+
+
+def test_sprite_skill_tree_leaf_falls_back_to_plain_get_for_a_placeholder_atlas() -> None:
+    atlas = build_placeholder_atlas()
+    leaf = SpriteSkillTreeLeaf(atlas)
+    node = next(iter(CATALOG.values()))
+
+    leaf.render(_surface(), pygame.Rect(0, 0, 190, 40), node, SkillNodeState.AVAILABLE)  # must not raise

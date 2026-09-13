@@ -3,19 +3,19 @@ and `SkillTreeLeaf` are `Protocol`s so an art epic can swap in a richer implemen
 text + state styling) at each scene's factory call site without touching scene code.
 `SpriteIcon` (ADR 0011) draws an atlas key's art; `SpriteBuffIcon` is its subject-keyed form and
 `CombatScene`'s default, and `borderless_icon` the form a label on bare background takes.
-`TextBuffIcon` remains as a plain-text fallback/test double. `TextSkillTreeLeaf` is still
-`SkillTreeLeaf`'s only
-implementation -- its own art epic hasn't landed yet.
+`TextBuffIcon` remains as a plain-text fallback/test double. `SpriteSkillTreeLeaf` (ADR 0015)
+renders a node's icon (keyed by `SkillIconVariant`) plus name and effect summary, and is
+`SkillTreeScene`'s default; `TextSkillTreeLeaf` remains as a plain-text fallback/test double.
 """
 
 from collections.abc import Mapping
 from enum import Enum, auto
-from typing import Protocol, assert_never
+from typing import ClassVar, Protocol, assert_never
 
 import pygame
 
 from eye.combat.effects import EFFECT_POLARITY, EffectName, EffectPolarity
-from eye.gui.assets import IconVariant, SpriteAtlas, SpriteKey
+from eye.gui.assets import IconVariant, SkillIconVariant, SpriteAtlas, SpriteKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.skilltree.tree import SkillNode
 
@@ -162,8 +162,77 @@ _STATE_COLORS: dict[SkillNodeState, pygame.typing.ColorLike] = {
 
 
 class TextSkillTreeLeaf:
+    def __init__(self, atlas: SpriteAtlas | None = None) -> None:
+        pass  # no art dependency -- accepts an atlas only to match SkillTreeLeaf-factory's signature
+
     def render(self, surface: pygame.Surface, rect: pygame.Rect, node: SkillNode, state: SkillNodeState) -> None:
         surface.blit(
             get_font(GameFont.ITHACA, _FONT_SIZE).render(f"{node.name} ({node.cost})", True, _STATE_COLORS[state]),
             rect.topleft,
         )
+
+
+def _skill_effect_summary(node: SkillNode) -> str:
+    """A short, single-line description of what `node` grants -- the grid leaf's caption line."""
+    parts: list[str] = []
+    delta = node.stats_delta
+    if delta.max_hp:
+        parts.append(f"Max HP {delta.max_hp:+d}")
+    if delta.attack:
+        parts.append(f"Attack {delta.attack:+d}")
+    if delta.defense:
+        parts.append(f"Defense {delta.defense:+d}")
+    if delta.recoil:
+        parts.append(f"Recoil {delta.recoil:+.1f}")
+    if delta.meter_fill_rate:
+        parts.append(f"Meter fill {delta.meter_fill_rate:+d}")
+    for effect in node.lifespan_effects:
+        parts.append(effect_label(effect))
+    for action in node.unlocked_actions:
+        parts.append(f"Unlocks {action.name}")
+    modifier = node.exploration_modifier
+    if modifier.seed_growth_rate_multiplier != 1.0:
+        parts.append(f"Seed growth x{modifier.seed_growth_rate_multiplier:.2f}")
+    if modifier.proximity_discount_bonus:
+        parts.append(f"Proximity discount +{modifier.proximity_discount_bonus:.1f}")
+    return ", ".join(parts)
+
+
+def _skill_sprite_key(node: SkillNode) -> SpriteKey:
+    return SpriteKey(f"skill_{node.id.branch.name.lower()}_{node.id.sub_branch.name.lower()}_{node.id.tier}")
+
+
+class SpriteSkillTreeLeaf:
+    """`SkillTreeLeaf` backed by real art (ADR 0015): a node's icon (keyed by `SkillIconVariant`
+    off `state`), its name, and a short effect-summary line -- `SkillTreeScene`'s default in place
+    of `TextSkillTreeLeaf`."""
+
+    _STATE_VARIANTS: ClassVar[dict[SkillNodeState, SkillIconVariant]] = {
+        SkillNodeState.LOCKED: SkillIconVariant.LOCKED,
+        SkillNodeState.AVAILABLE: SkillIconVariant.NORMAL,
+        SkillNodeState.PURCHASED: SkillIconVariant.ACQUIRED,
+    }
+
+    def __init__(self, atlas: SpriteAtlas) -> None:
+        self._atlas = atlas
+        self._variants: dict[SpriteKey, Mapping[SkillIconVariant, pygame.Surface]] = {}
+
+    def _icon_surface(self, sprite_key: SpriteKey, state: SkillNodeState) -> pygame.Surface:
+        if not self._atlas.has_variant_set(sprite_key):
+            return self._atlas.get(sprite_key)  # placeholder atlas: no acquired/locked/normal split
+        variants = self._variants.setdefault(sprite_key, self._atlas.get_variant_set(sprite_key, SkillIconVariant))
+        return variants[self._STATE_VARIANTS[state]]
+
+    def render(self, surface: pygame.Surface, rect: pygame.Rect, node: SkillNode, state: SkillNodeState) -> None:
+        icon_size = rect.height
+        icon = pygame.transform.smoothscale(
+            self._icon_surface(_skill_sprite_key(node), state),
+            (icon_size, icon_size),
+        )
+        surface.blit(icon, rect.topleft)
+        font = get_font(GameFont.ITHACA, _FONT_SIZE)
+        text_x = rect.left + icon_size + 4
+        surface.blit(font.render(node.name, True, _STATE_COLORS[state]), (text_x, rect.top))
+        summary = _skill_effect_summary(node)
+        if summary:
+            surface.blit(font.render(summary, True, _STATE_COLORS[state]), (text_x, rect.top + _FONT_SIZE))

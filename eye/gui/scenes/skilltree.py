@@ -18,16 +18,17 @@ import pygame.typing
 from eye.gui.assets import SpriteAtlas
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import Continue, PlaySceneTransition
-from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, TextSkillTreeLeaf
+from eye.gui.widgets import SkillNodeState, SkillTreeLeaf, SpriteSkillTreeLeaf
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
 from eye.skilltree.tree import SkillNode
 
 _FONT_SIZE = 16
-_ROW_LABEL_WIDTH = 100
-_CELL_WIDTH = 190
-_ROW_HEIGHT = 28
+_ROW_LABEL_WIDTH = 80  # was 100 -- freed width the taller icon-bearing cells now need
+_CELL_WIDTH = 150  # was 190 -- a ~36px icon plus a two-line name/effects caption, kept small
+# enough to fit all three tier columns inside the 640px window
+_ROW_HEIGHT = 40  # was 28 -- fits the icon height plus the two text lines SpriteSkillTreeLeaf draws
 _ROW_GAP = 6
 _BRANCH_GAP = 16  # extra vertical gap where a row's branch differs from the previous row's
 _MARGIN = 8
@@ -83,11 +84,11 @@ class SkillTreeScene:
         game: Game,
         atlas: SpriteAtlas,
         on_purchase: Callable[[], None],
-        leaf_factory: Callable[[], SkillTreeLeaf] = TextSkillTreeLeaf,
+        leaf_factory: Callable[[SpriteAtlas], SkillTreeLeaf] = SpriteSkillTreeLeaf,
     ) -> None:
         self._game = game
         self._atlas = atlas
-        self._leaf = leaf_factory()
+        self._leaf = leaf_factory(atlas)
         self._on_purchase = on_purchase
         self._row = 0
         self._col = 0
