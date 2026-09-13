@@ -153,6 +153,12 @@ class SpriteAtlas:
         raw = self._variants.get(key, {})
         return _resolve_named_set(key, raw, variant_type, label="variants")
 
+    def get_props(self, key: SpriteKey) -> Mapping[str, pygame.Surface]:
+        """Every non-`sprite.png` file loaded for `key` (ADR 0014/0016) -- raw filename stem ->
+        `Surface`, with no enum resolution and no all-or-nothing requirement, since a prop pool
+        has no fixed membership to be missing from."""
+        return self._variants.get(key, {})
+
 
 def _resolve_named_set[T, TEnum: StrEnum](
     key: SpriteKey, raw: Mapping[str, T], enum_type: type[TEnum], *, label: str

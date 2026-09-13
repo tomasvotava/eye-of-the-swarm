@@ -252,3 +252,32 @@ def test_build_art_atlas_resolves_every_skill_icon_variant_via_get_variant_set()
         assert variants[SkillIconVariant.ACQUIRED].get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
         assert variants[SkillIconVariant.LOCKED].get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
         assert variants[SkillIconVariant.NORMAL].get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+
+
+def test_get_props_returns_the_raw_prop_file_mapping_for_a_biome_key(tmp_path: Path) -> None:
+    directory = tmp_path / SpriteKey.BIOME_TURF.value
+    directory.mkdir()
+    pygame.image.save(pygame.Surface((100, 100)), directory / "prop_rock.png")
+    pygame.image.save(pygame.Surface((100, 100)), directory / "prop_bush.png")
+
+    atlas = build_art_atlas(tmp_path)
+    props = atlas.get_props(SpriteKey.BIOME_TURF)
+
+    assert set(props) == {"prop_rock", "prop_bush"}
+    assert all(isinstance(surface, pygame.Surface) for surface in props.values())
+
+
+def test_get_props_returns_an_empty_mapping_for_a_key_with_no_props() -> None:
+    atlas = build_placeholder_atlas()
+
+    assert atlas.get_props(SpriteKey.PLAYER) == {}
+
+
+@pytest.mark.parametrize("key", _SHIPPED_BIOME_KEYS)
+def test_get_props_returns_a_non_empty_pool_for_every_shipped_biome_key(key: SpriteKey) -> None:
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+
+    props = atlas.get_props(key)
+
+    assert props
+    assert all(isinstance(surface, pygame.Surface) for surface in props.values())
