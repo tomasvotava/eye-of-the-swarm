@@ -4,7 +4,9 @@ import pygame
 
 from eye.combat.effects import EffectName
 from eye.gui.assets import IconVariant, SpriteAtlas, SpriteKey, build_art_atlas, build_placeholder_atlas
+from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.widgets import (
+    _FONT_SIZE,
     EFFECT_DESCRIPTIONS,
     NonEffectIcon,
     SkillNodeState,
@@ -15,10 +17,11 @@ from eye.gui.widgets import (
     TextSkillTreeLeaf,
     _skill_effect_summary,
     _skill_sprite_key,
+    _truncate_to_width,
     effect_label,
 )
 from eye.skilltree.catalog import CATALOG
-from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, StatsDelta, SubBranch
+from eye.skilltree.tree import Branch, ExplorationModifierDelta, SkillNode, SkillNodeId, StatsDelta, SubBranch
 
 _SHIPPED_SPRITES_DIR = Path("eye/gui/sprites")
 
@@ -163,3 +166,44 @@ def test_sprite_skill_tree_leaf_falls_back_to_plain_get_for_a_placeholder_atlas(
     node = next(iter(CATALOG.values()))
 
     leaf.render(_surface(), pygame.Rect(0, 0, 190, 40), node, SkillNodeState.AVAILABLE)  # must not raise
+
+
+def test_sprite_skill_tree_leaf_also_truncates_a_long_node_name() -> None:
+    # "Plants Together Strong" (tier-0 Swarm/Defense) is the one catalog name long enough to
+    # overflow a 150px cell's available width -- its tail was visually eaten by the next column's
+    # icon before this fix (re-check found alongside the summary-line overflow ruling).
+    node = SkillNode(
+        id=SkillNodeId(branch=Branch.SWARM, sub_branch=SubBranch.DEFENSE, tier=0),
+        cost=1,
+        name="Plants Together Strong",
+    )
+    font = get_font(GameFont.ITHACA, _FONT_SIZE)
+    icon_size = 40
+    max_width = 150 - icon_size - 4
+    assert font.size(node.name)[0] > max_width  # the untruncated name would have overflowed the cell
+
+    leaf = SpriteSkillTreeLeaf(build_placeholder_atlas())
+    leaf.render(_surface(), pygame.Rect(0, 0, 150, 40), node, SkillNodeState.AVAILABLE)  # must not raise
+
+    assert font.size(_truncate_to_width(node.name, font, max_width))[0] <= max_width
+
+
+def test_truncate_to_width_shortens_a_summary_line_that_overflows_the_cell() -> None:
+    # Matches "Close to Home"'s actual shape (tier-2 Swarm/Utility): the one catalog node that
+    # combines both exploration-modifier fields, producing the longest _skill_effect_summary line.
+    node = SkillNode(
+        id=SkillNodeId(branch=Branch.SWARM, sub_branch=SubBranch.UTILITY, tier=2),
+        cost=1,
+        exploration_modifier=ExplorationModifierDelta(seed_growth_rate_multiplier=1.20, proximity_discount_bonus=0.10),
+    )
+    summary = _skill_effect_summary(node)
+    font = get_font(GameFont.ITHACA, _FONT_SIZE)
+    icon_size = 40
+    max_width = 150 - icon_size - 4  # matches SpriteSkillTreeLeaf.render's own available-width math
+
+    assert font.size(summary)[0] > max_width  # the untruncated line would have overflowed the cell
+
+    truncated = _truncate_to_width(summary, font, max_width)
+
+    assert font.size(truncated)[0] <= max_width
+    assert truncated.endswith("...")
