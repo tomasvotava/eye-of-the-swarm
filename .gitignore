@@ -6,7 +6,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-/eye/build/
+/build/
 
 # Brainstorming specs/plans are working artefacts, not committed history.
 # Durable decisions get recorded as ADRs under docs/adr/ instead.
