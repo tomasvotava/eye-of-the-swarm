@@ -121,3 +121,32 @@ Convert to `.png` when landing the art, before it goes under `eye/gui/sprites/` 
 loader should special-case. A source format conversion doesn't imply the art itself is complete:
 converting a no-alpha `.jpg` to `.png` still has no alpha channel, it just renders as an opaque
 rectangle now instead of failing to load at all.
+
+## 2026-09-13 - pygbag's `ignoreDirs` needs a leading slash, or subdirectories still get packed
+
+A `pygbag.ini` entry of `"tests"` (no leading slash) excluded the top-level `tests/` folder from
+the archive, but every file inside `tests/persistence/`, `tests/combat/`, etc. still got packed.
+
+pygbag's `filtering.py` matches each candidate folder two ways: `folder.match(block)` (true only
+when the folder's own last path segment equals the pattern) and `fx.startswith(f"{block}/")`
+where `fx` always starts with `/`. A bare `"tests"` never satisfies the second form, so only the
+directory literally named `tests` at the walked root is rejected — everything nested under it
+passes straight through.
+
+Always write `ignoreDirs` entries as `"/tests"`, matching pygbag's own default list's style
+(`/build`, `/.git`, …).
+
+## 2026-09-13 - pygbag does not actually skip dot-directories by default
+
+Assuming `pygbag .` (pointed at the repo root) would leave `.venv` alone the way it leaves `.git`
+alone. It does not — a full `.venv` (including `pygame`'s own bundled examples/tests) got walked
+into the packed archive.
+
+`filtering.py` has a `if fx.startswith("."): continue` check that looks like a blanket dot-folder
+skip, but `gathering.py` always builds `fx` as `Path("/").joinpath(...)`, so it starts with `/`,
+never `.`. That check is dead code. Only directories named explicitly in the (non-configurable)
+default `IGNORE` list — `/.git`, `/.github`, `/.mypy_cache`, etc. — are actually skipped; `/.venv`
+is not among them.
+
+List every dot-directory you need excluded explicitly in `pygbag.ini`'s `ignoreDirs`
+(`/.venv`, `/.ruff_cache`, `/.pytest_cache`, …) — never rely on the dot prefix alone.
