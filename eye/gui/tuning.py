@@ -13,6 +13,10 @@ ENTRY_X_FRACTION = 0.1
 ENCOUNTER_X_FRACTION = 0.5
 EXIT_X_FRACTION = 0.9
 
+# Shared by the player and the encounter marker so they still meet at the same point when the walk
+# arrives -- screen-center read as "floating," per playtesting feedback.
+EXPLORATION_GROUND_Y_FRACTION = 0.8
+
 # Category-scaled, not one shared factor: enemy matches CombatScene's own _COMBATANT_SCALE_FACTOR
 # (fights at preview size); pickups shrink toward the player's own rendered height instead.
 ENCOUNTER_ENEMY_SCALE_FACTOR = 3.0
