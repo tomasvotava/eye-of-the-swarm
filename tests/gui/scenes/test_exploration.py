@@ -48,6 +48,7 @@ from eye.gui.tuning import (
     ENCOUNTER_PICKUP_SCALE_FACTOR,
     ENCOUNTER_X_FRACTION,
     ENTRY_X_FRACTION,
+    EXPLORATION_GROUND_Y_FRACTION,
     WALK_TO_ENCOUNTER_DURATION_SECONDS,
     WALK_TO_EXIT_DURATION_SECONDS,
 )
@@ -412,7 +413,8 @@ def test_draw_blits_the_scaled_encounter_sprite_centered_on_the_marker(tmp_path:
     scene.draw(surface)
 
     x = round(surface.get_width() * ENCOUNTER_X_FRACTION)
-    sampled = surface.get_at((x, surface.get_height() // 2))
+    y = round(surface.get_height() * EXPLORATION_GROUND_Y_FRACTION)
+    sampled = surface.get_at((x, y))
     assert sampled == scene._encounter_static_sprite.get_at(
         (scene._encounter_static_sprite.get_width() // 2, scene._encounter_static_sprite.get_height() // 2)
     )
@@ -487,7 +489,8 @@ def test_draw_blits_the_encounter_animator_frame_when_available(tmp_path: Path) 
 
     expected = scene._encounter_animator.current_frame()
     x = round(surface.get_width() * ENCOUNTER_X_FRACTION)
-    sampled = surface.get_at((x, surface.get_height() // 2))
+    y = round(surface.get_height() * EXPLORATION_GROUND_Y_FRACTION)
+    sampled = surface.get_at((x, y))
     assert sampled == expected.get_at((expected.get_width() // 2, expected.get_height() // 2))
 
 
@@ -612,7 +615,8 @@ def test_draw_with_animation_data_blits_the_animator_frame(tmp_path: Path) -> No
 
     expected = scene._player_animator.current_frame()
     x = round(surface.get_width() * ENTRY_X_FRACTION)
-    sampled = surface.get_at((x, surface.get_height() // 2))
+    y = round(surface.get_height() * EXPLORATION_GROUND_Y_FRACTION)
+    sampled = surface.get_at((x, y))
     assert sampled == expected.get_at((expected.get_width() // 2, expected.get_height() // 2))
 
 

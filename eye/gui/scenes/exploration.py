@@ -31,6 +31,7 @@ from eye.gui.tuning import (
     ENCOUNTER_X_FRACTION,
     ENTRY_X_FRACTION,
     EXIT_X_FRACTION,
+    EXPLORATION_GROUND_Y_FRACTION,
     PROP_SCALE_FACTOR,
     PROP_Y_BAND_MAX_FRACTION,
     PROP_Y_BAND_MIN_FRACTION,
@@ -491,7 +492,8 @@ class ExplorationScene:
             self._player_animator.current_frame() if self._player_animator is not None else self._player_static_sprite
         )
         x = round(surface.get_width() * self._player_x_fraction())
-        surface.blit(player, player.get_rect(center=(x, surface.get_rect().centery)))
+        y = round(surface.get_height() * EXPLORATION_GROUND_Y_FRACTION)
+        surface.blit(player, player.get_rect(center=(x, y)))
 
     def _draw_encounter(self, surface: pygame.Surface) -> None:
         # Visible from the moment a screen's encounter is generated (AT_ENTRY) through the walk
@@ -506,7 +508,8 @@ class ExplorationScene:
         if sprite is None:
             return
         x = round(surface.get_width() * ENCOUNTER_X_FRACTION)
-        surface.blit(sprite, sprite.get_rect(center=(x, surface.get_rect().centery)))
+        y = round(surface.get_height() * EXPLORATION_GROUND_Y_FRACTION)
+        surface.blit(sprite, sprite.get_rect(center=(x, y)))
 
     def _draw_status_icons(self, surface: pygame.Surface) -> None:
         showing = {
