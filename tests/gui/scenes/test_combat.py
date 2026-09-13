@@ -209,6 +209,20 @@ def _press(scene: CombatScene, key: int) -> None:
     scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=key))
 
 
+def _keep_background_black(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutralizes `_draw_background` for tests written before it existed, which key off a plain
+    black surface to isolate what the rest of `draw()` paints -- background rendering has its own
+    dedicated test."""
+    import eye.gui.scenes.combat as combat_module
+
+    def _black_crop_to_cover(surface: pygame.Surface, target_size: tuple[int, int]) -> pygame.Surface:
+        black = pygame.Surface(target_size)
+        black.fill("black")
+        return black
+
+    monkeypatch.setattr(combat_module, "crop_to_cover", _black_crop_to_cover)
+
+
 def _drive_to_transition(scene: CombatScene, max_frames: int = 2000) -> PlaySceneTransition:
     # Generous budget: beyond the animation-driven swing/tween phases (ADR 0013) already accounted
     # for here, EffectApplied/EffectExpired/TurnSkipped/ExtraActionTriggered/BattleEnded now each
@@ -451,11 +465,12 @@ def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
     scene.draw(pygame.Surface(surface_size))
 
 
-def test_draw_anchors_the_player_left_and_the_enemy_right() -> None:
+def test_draw_anchors_the_player_left_and_the_enemy_right(monkeypatch: pytest.MonkeyPatch) -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     surface = pygame.Surface((800, 600))
     surface.fill("black")
+    _keep_background_black(monkeypatch)
 
     scene.draw(surface)
 
@@ -477,7 +492,7 @@ def test_draw_anchors_the_player_left_and_the_enemy_right() -> None:
     assert max(non_black_columns) == enemy_x + enemy_sprite.get_width() - 1
 
 
-def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> None:
+def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface(monkeypatch: pytest.MonkeyPatch) -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     # SpriteBuffIcon (the default factory) renders every icon at a fixed size regardless of the
@@ -487,6 +502,7 @@ def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface() -> N
         scene._enemy_displayed.active_effects.add((EffectCategory.BATTLE, effect))
     surface = pygame.Surface((800, 600))
     surface.fill("black")
+    _keep_background_black(monkeypatch)
 
     scene.draw(surface)
 
@@ -2655,3 +2671,30 @@ def test_the_turn_banner_clears_both_name_labels_at_the_real_window_size(strain:
     assert pygame.Rect(0, player_name.top, surface.get_width(), player_name.height).contains(drawn), strain
     assert not drawn.colliderect(player_name), strain
     assert not drawn.colliderect(enemy_name), strain
+
+
+def test_draw_background_uses_the_resolved_biome_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    seen_keys: list[SpriteKey] = []
+
+    def _fake_crop_to_cover(surface: pygame.Surface, target_size: tuple[int, int]) -> pygame.Surface:
+        return surface
+
+    import eye.gui.scenes.combat as combat_module
+
+    original_get = scene._atlas.get
+
+    def _tracking_get(key: SpriteKey) -> pygame.Surface:
+        if key in (SpriteKey.BIOME_TURF, SpriteKey.BIOME_DEAD_FOREST, SpriteKey.BIOME_FOREST):
+            seen_keys.append(key)
+        return original_get(key)
+
+    monkeypatch.setattr(scene._atlas, "get", _tracking_get)
+    monkeypatch.setattr(combat_module, "crop_to_cover", _fake_crop_to_cover)
+
+    scene.draw(pygame.Surface(_WINDOW_SIZE))
+
+    from eye.gui.biome import resolve_biome
+
+    assert seen_keys == [resolve_biome(scene._generation.distance_from_home)]
