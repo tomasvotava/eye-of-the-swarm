@@ -265,6 +265,10 @@ class ExplorationScene:
         # Not seeded, unlike EncounterGenerator's rolls: prop placement has no determinism
         # requirement (ADR 0016).
         self._prop_rng = random.Random()  # noqa: S311 -- game RNG, not cryptographic
+        # Rolled once per screen (on first draw() and again at _arrive_at_exit), not every frame --
+        # a prop's position stays fixed for as long as the screen does.
+        self._cached_props: list[tuple[pygame.Surface, int, int]] = []
+        self._props_dirty = True
 
     @classmethod
     def for_new_generation(
@@ -386,6 +390,7 @@ class ExplorationScene:
     def _arrive_at_exit(self) -> None:
         self._pending_events = self._generation.advance()
         self._rebuild_encounter_visuals()
+        self._props_dirty = True
         self._set_phase(_Phase.AT_ENTRY)
         self._walk_elapsed_seconds = 0.0
 
@@ -457,10 +462,18 @@ class ExplorationScene:
         surface.blit(background, (0, 0))
 
     def _draw_props(self, surface: pygame.Surface) -> None:
+        if self._props_dirty:
+            self._rebuild_props(surface.get_size())
+            self._props_dirty = False
+        for prop, x, y in self._cached_props:
+            surface.blit(prop, (x, y))
+
+    def _rebuild_props(self, size: tuple[int, int]) -> None:
         sampling = resolve_prop_sampling(self._generation.distance_from_home)
-        width, height = surface.get_size()
+        width, height = size
         y_min = round(height * PROP_Y_BAND_MIN_FRACTION)
         y_max = round(height * PROP_Y_BAND_MAX_FRACTION)
+        props: list[tuple[pygame.Surface, int, int]] = []
         for key, count in sampling:
             pool = list(self._atlas.get_props(key).values())
             if not pool:
@@ -470,7 +483,8 @@ class ExplorationScene:
                 scaled = scale_sprite(prop, PROP_SCALE_FACTOR)
                 x = self._prop_rng.randint(0, max(0, width - scaled.get_width()))
                 y = self._prop_rng.randint(y_min, max(y_min, y_max - scaled.get_height()))
-                surface.blit(scaled, (x, y))
+                props.append((scaled, x, y))
+        self._cached_props = props
 
     def _player_x_fraction(self) -> float:
         match self._phase:
