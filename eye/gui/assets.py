@@ -14,6 +14,7 @@ import pygame.typing
 
 from eye.gui.animation import AnimationClip
 from eye.gui.spritesheet import load_spritesheet_clip
+from eye.gui.tuning import PROP_BACKGROUND_KEY_DISTANCE
 
 PLACEHOLDER_SPRITE_SIZE = 32
 _STATIC_SPRITE_FILENAME = "sprite.png"
@@ -237,6 +238,22 @@ _PLACEHOLDER_SHAPES: Mapping[SpriteKey, _PlaceholderShape] = {
 }
 
 
+def _load_variant_surface(path: Path) -> pygame.Surface:
+    """Loads a named static variant (prop art, skill/effect icon variants), keying out a flat
+    background color for art with no real alpha channel of its own. Real per-pixel alpha art
+    (bitsize 32) is returned untouched -- distance 0 would key nothing anyway, but skipping the
+    `PixelArray` pass avoids the cost on every already-correct icon variant."""
+    surface = pygame.image.load(path)
+    if surface.get_bitsize() == 32:
+        return surface.convert_alpha()
+    keyed = surface.convert_alpha()
+    corner = surface.get_at((0, 0))
+    pixels = pygame.PixelArray(keyed)
+    pixels.replace(corner, (0, 0, 0, 0), distance=PROP_BACKGROUND_KEY_DISTANCE)
+    pixels.close()
+    return keyed
+
+
 def _build_placeholder_surface(key: SpriteKey) -> pygame.Surface:
     shape = _PLACEHOLDER_SHAPES[key]
     surface = pygame.Surface((PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE), pygame.SRCALPHA)
@@ -293,7 +310,7 @@ def build_art_atlas(assets_dir: Path) -> SpriteAtlas:
                     frames=sheet_clip.frames, frame_duration_seconds=sheet_clip.frame_duration_seconds
                 )
             else:
-                key_variants[png_path.stem] = pygame.image.load(png_path).convert_alpha()
+                key_variants[png_path.stem] = _load_variant_surface(png_path)
         if key_clips:
             clips[key] = key_clips
         if key_variants:
