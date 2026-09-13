@@ -9,6 +9,7 @@ from eye.gui.animation import AnimationClip
 from eye.gui.assets import (
     PLACEHOLDER_SPRITE_SIZE,
     IconVariant,
+    SkillIconVariant,
     SpriteAtlas,
     SpriteKey,
     build_art_atlas,
@@ -241,3 +242,13 @@ def test_build_art_atlas_resolves_a_shipped_biome_key_to_real_art_and_a_prop_poo
 
     assert atlas.get(key).get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
     assert atlas.has_variant_set(key) is True
+
+
+def test_build_art_atlas_resolves_every_skill_icon_variant_via_get_variant_set() -> None:
+    atlas = build_art_atlas(_SHIPPED_SPRITES_DIR)
+
+    for key in _SHIPPED_SKILL_ICON_KEYS:
+        variants = atlas.get_variant_set(key, SkillIconVariant)
+        assert variants[SkillIconVariant.ACQUIRED].get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+        assert variants[SkillIconVariant.LOCKED].get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)
+        assert variants[SkillIconVariant.NORMAL].get_size() != (PLACEHOLDER_SPRITE_SIZE, PLACEHOLDER_SPRITE_SIZE)

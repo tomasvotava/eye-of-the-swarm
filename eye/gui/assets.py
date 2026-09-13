@@ -95,6 +95,16 @@ class IconVariant(StrEnum):
     BORDERLESS = "borderless"
 
 
+class SkillIconVariant(StrEnum):
+    """Named static variants of a skill-tree node's icon (ADR 0015), resolved the same way
+    `IconVariant` is: via `get_variant_set`. All three exist as their own files for every
+    `SKILL_*` key today, so the all-or-nothing contract is satisfiable as delivered."""
+
+    ACQUIRED = "acquired"
+    LOCKED = "locked"
+    NORMAL = "normal"
+
+
 class SpriteAtlas:
     def __init__(
         self,
