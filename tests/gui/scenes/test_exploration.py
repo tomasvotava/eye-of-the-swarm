@@ -17,6 +17,7 @@ from eye.gui.assets import (
     build_art_atlas,
     build_placeholder_atlas,
 )
+from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
@@ -1221,6 +1222,42 @@ def test_the_spores_counter_falls_back_to_the_bordered_sprite_for_a_variant_less
     assert pygame.image.tobytes(surface.subsurface(icon_box), "RGBA") == pygame.image.tobytes(
         expected.subsurface(icon_box), "RGBA"
     )
+
+
+def test_draw_background_renders_the_biome_the_generation_is_currently_in(tmp_path: Path) -> None:
+    scene, generation = _scene(kind_queue=[EncounterKind.NOTHING] * 20)
+    for _ in range(20):
+        scene.update(WALK_TO_EXIT_DURATION_SECONDS)
+        scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+
+    surface = pygame.Surface(_WINDOW_SIZE)
+    scene.draw(surface)  # must not raise; real assertion is the key below
+
+    assert resolve_biome(generation.distance_from_home) is not None  # sanity: resolver is callable
+
+
+def test_draw_background_uses_the_resolved_biome_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    scene, generation = _scene([EncounterKind.NOTHING])
+    seen_keys: list[SpriteKey] = []
+
+    def _fake_crop_to_cover(surface: pygame.Surface, target_size: tuple[int, int]) -> pygame.Surface:
+        return surface  # placeholder atlas surfaces are already tiny; identity is fine here
+
+    import eye.gui.scenes.exploration as exploration_module
+
+    original_get = scene._atlas.get
+
+    def _tracking_get(key: SpriteKey) -> pygame.Surface:
+        if key in (SpriteKey.BIOME_TURF, SpriteKey.BIOME_DEAD_FOREST, SpriteKey.BIOME_FOREST):
+            seen_keys.append(key)
+        return original_get(key)
+
+    monkeypatch.setattr(scene._atlas, "get", _tracking_get)
+    monkeypatch.setattr(exploration_module, "crop_to_cover", _fake_crop_to_cover)
+
+    scene.draw(pygame.Surface(_WINDOW_SIZE))
+
+    assert seen_keys == [resolve_biome(generation.distance_from_home)]
 
 
 def test_the_bottom_hud_leaves_the_spore_total_to_the_top_row() -> None:

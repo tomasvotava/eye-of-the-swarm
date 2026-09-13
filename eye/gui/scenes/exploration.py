@@ -17,8 +17,9 @@ import pygame.typing
 from eye.combat.effects import EffectName
 from eye.exploration.encounters import ResourceKind
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
-from eye.gui.animation import Animator, scale_clip, scale_sprite
+from eye.gui.animation import Animator, crop_to_cover, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
@@ -441,7 +442,8 @@ class ExplorationScene:
         self._draw_raised_card(surface)
 
     def _draw_background(self, surface: pygame.Surface) -> None:
-        background = pygame.transform.scale(self._atlas.get(SpriteKey.BACKGROUND), surface.get_size())
+        key = resolve_biome(self._generation.distance_from_home)
+        background = crop_to_cover(self._atlas.get(key), surface.get_size())
         surface.blit(background, (0, 0))
 
     def _player_x_fraction(self) -> float:
