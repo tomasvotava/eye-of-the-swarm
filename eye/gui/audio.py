@@ -10,6 +10,7 @@ observes that happened.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -84,15 +85,6 @@ def _sound_path(key: SoundKey) -> Path:
     return path
 
 
-_SOUND_CACHE: dict[SoundKey, pygame.mixer.Sound] = {}
-
-
-def _load_sound(key: SoundKey) -> pygame.mixer.Sound:
-    if key not in _SOUND_CACHE:
-        _SOUND_CACHE[key] = pygame.mixer.Sound(_sound_path(key))
-    return _SOUND_CACHE[key]
-
-
 # Long enough to be a valid chunk, far too short to be audible (~1.5ms at 44.1kHz).
 _SILENCE_FRAMES = 64
 _SILENCE_CACHE: dict[tuple[int, int, int], pygame.mixer.Sound] = {}
@@ -110,6 +102,23 @@ def _silence() -> pygame.mixer.Sound:
         _frequency, sample_bits, channels = init
         _SILENCE_CACHE[init] = pygame.mixer.Sound(buffer=bytes((abs(sample_bits) // 8) * channels * _SILENCE_FRAMES))
     return _SILENCE_CACHE[init]
+
+
+_SOUND_CACHE: dict[SoundKey, pygame.mixer.Sound] = {}
+
+
+def _load_sound(key: SoundKey) -> pygame.mixer.Sound:
+    if key not in _SOUND_CACHE:
+        try:
+            _SOUND_CACHE[key] = pygame.mixer.Sound(_sound_path(key))
+        except (FileNotFoundError, pygame.error) as exc:
+            # A clone without git-lfs leaves a ~130-byte pointer file in place of every .ogg: it
+            # exists, so _sound_path() accepts it, and pygame then rejects it as audio. Degrade
+            # that one track to silence rather than crashing on the first scene that asks for it,
+            # matching how a missing audio device is handled (ADR 0018).
+            warnings.warn(f"ignoring unusable sound asset {key.value}: {exc}", stacklevel=2)
+            _SOUND_CACHE[key] = _silence()
+    return _SOUND_CACHE[key]
 
 
 class AudioManager:
