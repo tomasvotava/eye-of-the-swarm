@@ -11,7 +11,10 @@ from eye.gui.narration import (
     _fitted_font,
     _wrapped_lines,
     draw_narration,
+    load_seen_triggers,
+    persist_seen_triggers,
 )
+from tests.persistence.doubles import FakeSaveStore
 
 # A colour the overlay never paints, so colorkeying it leaves exactly the drawn pixels. Not black:
 # the overlay's own backdrop panel is translucent black.
@@ -161,3 +164,62 @@ def test_firing_two_different_triggers_both_enqueue() -> None:
     assert triggers.queue.current == NarrationEntry(message="first", subtitle="a")
     triggers.queue.dismiss()
     assert triggers.queue.current == NarrationEntry(message="second", subtitle="b")
+
+
+def test_persisted_seen_reflects_a_fired_trigger() -> None:
+    triggers = NarrationTriggers()
+
+    triggers.fire(NarrationTrigger.FIRST_DEATH, _MESSAGE, _SUBTITLE)
+
+    assert triggers.persisted_seen == frozenset({NarrationTrigger.FIRST_DEATH})
+
+
+def test_persisted_seen_excludes_first_seed_ready() -> None:
+    triggers = NarrationTriggers()
+
+    triggers.fire(NarrationTrigger.FIRST_SEED_READY, _MESSAGE, _SUBTITLE)
+
+    assert triggers.persisted_seen == frozenset()
+
+
+def test_for_generation_pre_seeds_persisted_triggers_as_already_seen() -> None:
+    triggers = NarrationTriggers.for_generation({NarrationTrigger.FIRST_DEATH})
+
+    triggers.fire(NarrationTrigger.FIRST_DEATH, _MESSAGE, _SUBTITLE)
+
+    assert triggers.queue.is_active is False
+
+
+def test_for_generation_never_pre_seeds_first_seed_ready_even_if_passed_in() -> None:
+    triggers = NarrationTriggers.for_generation({NarrationTrigger.FIRST_SEED_READY})
+
+    triggers.fire(NarrationTrigger.FIRST_SEED_READY, _MESSAGE, _SUBTITLE)
+
+    assert triggers.queue.is_active is True
+
+
+def test_load_seen_triggers_from_an_empty_store_is_empty() -> None:
+    assert load_seen_triggers(FakeSaveStore(data=None)) == frozenset()
+
+
+def test_load_seen_triggers_from_corrupt_data_is_empty() -> None:
+    assert load_seen_triggers(FakeSaveStore(data="not json")) == frozenset()
+
+
+def test_load_seen_triggers_from_a_non_list_payload_is_empty() -> None:
+    assert load_seen_triggers(FakeSaveStore(data='{"not": "a list"}')) == frozenset()
+
+
+def test_load_seen_triggers_ignores_an_unknown_trigger_name() -> None:
+    store = FakeSaveStore(data='["FIRST_DEATH", "SOME_FUTURE_TRIGGER"]')
+
+    assert load_seen_triggers(store) == frozenset({NarrationTrigger.FIRST_DEATH})
+
+
+def test_persist_then_load_round_trips_the_seen_set() -> None:
+    store = FakeSaveStore()
+    seen = frozenset({NarrationTrigger.FIRST_DEATH, NarrationTrigger.FIRST_BATTLE})
+
+    persist_seen_triggers(store, seen)
+
+    assert load_seen_triggers(store) == seen

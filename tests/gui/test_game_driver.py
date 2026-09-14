@@ -213,7 +213,7 @@ def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
     driver.draw(pygame.Surface(surface_size))
 
 
-def test_a_fresh_generation_gets_its_own_narration_triggers() -> None:
+def test_a_fresh_generation_gets_its_own_narration_triggers_instance() -> None:
     driver = _driver()
 
     first = driver._narration
@@ -222,10 +222,43 @@ def test_a_fresh_generation_gets_its_own_narration_triggers() -> None:
     driver._game._current_generation = None  # let a second start_generation() through, mirroring _driver_with
     driver._scene = driver._start_new_generation()
 
-    # A different instance, not the same one cleared -- and the new life re-sees FIRST_EXPLORATION
-    # (fired again by for_new_generation()) rather than inheriting the old life's seen set.
     assert driver._narration is not first
-    assert NarrationTrigger.FIRST_EXPLORATION in driver._narration._seen
+
+
+def test_a_persisted_trigger_does_not_re_fire_in_a_later_generation() -> None:
+    driver = _driver()
+    driver._narration.fire(NarrationTrigger.FIRST_DEATH, "msg", "sub")
+    driver._persist()
+
+    driver._game._current_generation = None  # let a second start_generation() through, mirroring _driver_with
+    driver._scene = driver._start_new_generation()
+
+    assert NarrationTrigger.FIRST_DEATH in driver._narration._seen
+
+
+def test_first_seed_ready_still_re_fires_every_generation_even_once_persisted() -> None:
+    driver = _driver()
+    driver._narration.fire(NarrationTrigger.FIRST_SEED_READY, "msg", "sub")
+    driver._persist()
+
+    driver._game._current_generation = None  # let a second start_generation() through, mirroring _driver_with
+    driver._scene = driver._start_new_generation()
+
+    assert NarrationTrigger.FIRST_SEED_READY not in driver._narration._seen
+
+
+def test_a_persisted_trigger_survives_a_fresh_game_driver_instance() -> None:
+    save_store = FakeSaveStore()
+    narration_store = FakeSaveStore()
+    first_driver = GameDriver(
+        build_placeholder_atlas(), ScriptedEncounterRandom((EncounterKind.NOTHING,)), save_store, narration_store
+    )
+    first_driver._narration.fire(NarrationTrigger.FIRST_DEATH, "msg", "sub")
+    first_driver._persist()
+
+    second_driver = GameDriver(build_placeholder_atlas(), ScriptedEncounterRandom(()), save_store, narration_store)
+
+    assert NarrationTrigger.FIRST_DEATH in second_driver._narration._seen
 
 
 def test_the_same_narration_instance_threads_through_an_enter_combat_transition() -> None:

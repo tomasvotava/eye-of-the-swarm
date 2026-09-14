@@ -11,6 +11,7 @@ from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.menu import KEY_ACTIONS, MenuAction, MenuScene, SlotStatus, _SlotView, _status_label
 from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.persistence import save
+from eye.persistence.adapters.filesystem import FilesystemSaveStore
 from eye.persistence.codec import GameSnapshot, decode, encode
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
@@ -137,6 +138,10 @@ def test_confirm_builds_a_game_driver_bound_to_the_selected_slots_store() -> Non
 
     assert isinstance(transition, GameDriver)
     assert transition._save_store is scene._slots[1].store
+    expected_narration_store = save.narration_store_for_slot(2)
+    assert isinstance(transition._narration_store, FilesystemSaveStore)
+    assert isinstance(expected_narration_store, FilesystemSaveStore)
+    assert transition._narration_store._path == expected_narration_store._path
     assert isinstance(transition._scene, ExplorationScene)  # empty slot -> a fresh run, not the skill tree
 
 
