@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass
-from typing import Any, TypeIs
+from typing import TYPE_CHECKING, Any
 
 from eye.persistence.codec import SaveDataError
+
+if TYPE_CHECKING:
+    from typing_extensions import TypeIs
 
 SETTINGS_SCHEMA_VERSION = 1
 

@@ -9,7 +9,7 @@ from eye.session.game import Game
 from eye.skilltree.tree import Branch, SkillNode, SkillNodeId, SubBranch
 
 if TYPE_CHECKING:
-    from typing import TypeIs
+    from typing_extensions import TypeIs
 
 SCHEMA_VERSION = 1
 
