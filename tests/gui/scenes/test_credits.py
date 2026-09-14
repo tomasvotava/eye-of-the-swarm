@@ -27,14 +27,26 @@ def test_update_returns_none_without_a_dismiss_key() -> None:
     assert scene.update(0.016) is None
 
 
-@pytest.mark.parametrize("key", [pygame.K_RETURN, pygame.K_a, pygame.K_SPACE])
-def test_any_key_dismisses_back_to_the_given_scene(key: int) -> None:
+@pytest.mark.parametrize("key", [pygame.K_RETURN, pygame.K_ESCAPE])
+def test_enter_or_escape_dismisses_back_to_the_given_scene(key: int) -> None:
     back_scene = _StubScene()
     scene = CreditsScene(back_scene)
 
     _press(scene, key)
 
     assert scene.update(0.016) is back_scene
+
+
+@pytest.mark.parametrize("key", [pygame.K_a, pygame.K_SPACE, pygame.K_F11])
+def test_other_keys_leave_the_credits_up(key: int) -> None:
+    # A fullscreen toggle's synthetic keydown must not bounce the player out of the screen they
+    # just opened -- the same leniency bug TitleScene had.
+    back_scene = _StubScene()
+    scene = CreditsScene(back_scene)
+
+    _press(scene, key)
+
+    assert scene.update(0.016) is None
 
 
 def test_non_keydown_events_are_ignored() -> None:
