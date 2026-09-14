@@ -91,6 +91,7 @@ class GameDriver:
                     self._active_generation(),
                     encounter,
                     self._atlas,
+                    self._audio,
                     narration=self._narration,
                     combat_speed_multiplier=self._combat_speed_multiplier,
                 )

@@ -39,9 +39,11 @@ from eye.combat.events import (
     TurnSkipped,
 )
 from eye.combat.stats import Combatant
+from eye.exploration.encounters import Strain
 from eye.exploration.events import EnemyEncountered
 from eye.gui.animation import AnimationClip, Animator, crop_to_cover, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.audio import AudioManager
 from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
@@ -101,6 +103,9 @@ _OVERLAY_ICON_SIZE = 40
 # _draw_overlay's layout needs both label lines plus their gap to fit inside _OVERLAY_ICON_SIZE.
 _OVERLAY_LABEL_FONT_SIZE = 16
 _COMBATANT_SCALE_FACTOR = 3
+# The domain has no is_boss flag (ADR 0018). Keyed off the Strain rather than the resolved sprite
+# key, which falls back to a placeholder for unshipped art and would drop boss music with it.
+_BOSS_STRAINS = (Strain.GOLEM, Strain.PHIDIZVIK)
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _BAR_BG_COLOR: pygame.typing.ColorLike = "dimgray"
 _HP_COLOR: pygame.typing.ColorLike = "firebrick"
@@ -527,12 +532,14 @@ class CombatScene:
         generation: Generation,
         encounter: EnemyEncountered,
         atlas: SpriteAtlas,
+        audio: AudioManager,
         buff_icon_factory: Callable[[IconSource], BuffIcon] | None = None,
         narration: NarrationTriggers | None = None,
         combat_speed_multiplier: float = 1.0,
     ) -> None:
         self._generation = generation
         self._atlas = atlas
+        self._audio = audio
         # Divides BATTLE_* phase/tween/hold durations wherever a Phase is built from one directly
         # (ADR 0017) -- a higher multiplier plays faster. Animation-driven phases derive their own
         # duration from clip data instead and are unaffected.
@@ -555,6 +562,7 @@ class CombatScene:
         self._hp_bar_icon = borderless_icon(atlas, SpriteKey.ICON_HEALTH)
         self._meter_bar_icon = borderless_icon(atlas, SpriteKey.EFFECT_RESONANCE)
         self._enemy_sprite_key = _resolve_enemy_sprite_key(encounter.strain.name)
+        self._audio.start_battle_music(boss=encounter.strain in _BOSS_STRAINS)
         self._battle: Battle = generation.start_battle(encounter)
         self._pending_query: PlayerTurnNeedsAction | None = None
         self._pending_action_index: int | None = None
@@ -626,6 +634,9 @@ class CombatScene:
             self._player_animator.update(dt)
         if self._enemy_animator is not None:
             self._enemy_animator.update(dt)
+        # Same reasoning as the animators above: the cue-in-to-loop handoff (ADR 0018) must not
+        # stall just because narration is holding the battle pipeline.
+        self._audio.update(dt)
         if self._narration.queue.is_active:
             # Freezes the whole battle pipeline while narration is up -- a phase's hold timer must
             # not run out (and no new event/phase batch may start) while the overlay hides it from
@@ -992,7 +1003,7 @@ class CombatScene:
                 return self._effect_announcement_phase(event)
             case TurnSkipped() | ExtraActionTriggered():
                 return [self._announcement_phase(Announcement(text=_describe_event(event, self._battle.player)))]
-            case BattleEnded():
+            case BattleEnded(winner=winner):
                 result = self._announcement_phase(Announcement(text=_describe_event(event, self._battle.player)))
 
                 # Only the next turn ever replaces the banner (or which side it names), and there
@@ -1001,6 +1012,10 @@ class CombatScene:
                     result.on_start()
                     self._turn_banner = None
                     self._active_combatant = None
+                    # Crossfades as the "You win!"/"You lose!" banner appears, not in _conclude():
+                    # a draw and a death both still have death poses and a hold to play out after
+                    # this, so concluding is seconds too late for the result track (ADR 0018).
+                    self._audio.resolve_battle_music(won=winner is self._battle.player)
 
                 return [replace(result, on_start=on_start)]
             case MeterFilled(combatant=combatant, meter_after=meter_after):
