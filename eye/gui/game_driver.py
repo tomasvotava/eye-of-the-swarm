@@ -42,8 +42,10 @@ class GameDriver:
         rng: random.Random,
         save_store: SaveStore | None = None,
         narration_store: SaveStore | None = None,
+        combat_speed_multiplier: float = 1.0,
     ) -> None:
         self._atlas = atlas
+        self._combat_speed_multiplier = combat_speed_multiplier
         # Resolved once and held, per save.default_store()'s own contract, rather than passing
         # `save_store=None` to load_or_new()/persist() on every call.
         self._save_store = save_store if save_store is not None else save.default_store()
@@ -82,7 +84,13 @@ class GameDriver:
     def _resolve(self, transition: PlaySceneTransition) -> PlayScene:
         match transition:
             case EnterCombat(encounter=encounter):
-                return CombatScene(self._active_generation(), encounter, self._atlas, narration=self._narration)
+                return CombatScene(
+                    self._active_generation(),
+                    encounter,
+                    self._atlas,
+                    narration=self._narration,
+                    combat_speed_multiplier=self._combat_speed_multiplier,
+                )
             case BattleConcluded():
                 return self._resolve_battle_concluded()
             case Continue():

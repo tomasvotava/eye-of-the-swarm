@@ -968,6 +968,15 @@ def test_death_phase_holds_for_the_tuned_duration_and_sets_the_dead_state(tmp_pa
     assert scene._player_animator.state == CombatAnimationState.DEAD
 
 
+def test_death_phase_duration_is_divided_by_the_combat_speed_multiplier() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+
+    phases = scene._phases_for(Death(combatant=scene._battle.player))
+
+    assert phases[0].duration_seconds == BATTLE_DEATH_POSE_HOLD_SECONDS / 2.0
+
+
 def test_death_phase_defensively_snaps_hp_with_no_preceding_tween() -> None:
     # A Wilty-triggered death sets current_hp directly with no preceding damage event at all --
     # Death's on_start must not assume some earlier phase already tweened displayed.hp to match.
@@ -991,6 +1000,15 @@ def _hit_landed(scene: CombatScene) -> HitLanded:
         damage=5,
         target_hp_after=scene._battle.enemy.current_hp - 5,
     )
+
+
+def test_hp_tween_phase_duration_is_divided_by_the_combat_speed_multiplier() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+
+    phases = scene._phases_for(_hit_landed(scene))
+
+    assert phases[1].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS / 2.0
 
 
 def test_hit_landed_phase_duration_is_the_targets_clip_when_it_is_slower(tmp_path: Path) -> None:
@@ -1644,7 +1662,7 @@ def test_advance_phases_leaves_displayed_hp_strictly_between_before_and_after_mi
 
 def test_hp_tween_phase_interpolates_and_snaps_exactly_on_completion() -> None:
     displayed = DisplayedCombatantState(hp=100.0, meter=0.0)
-    phase = _hp_tween_phase(displayed, 60)
+    phase = _hp_tween_phase(displayed, 60, 1.0)
 
     phase.on_progress(0.5)
     assert displayed.hp == pytest.approx(80.0)
@@ -1864,6 +1882,15 @@ def test_meter_bar_renders_the_displayed_snapshot_not_live_combatant_state() -> 
     assert ratios[1] == pytest.approx(expected_ratio)
 
 
+def test_meter_tween_phase_duration_is_divided_by_the_combat_speed_multiplier() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+
+    phases = scene._phases_for(MeterFilled(combatant=scene._battle.player, amount=50, meter_after=50))
+
+    assert phases[0].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS / 2.0
+
+
 def test_meter_filled_and_meter_consumed_tween_the_displayed_meter_over_the_hp_tween_duration() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
@@ -1883,6 +1910,18 @@ def test_meter_filled_and_meter_consumed_tween_the_displayed_meter_over_the_hp_t
     assert consumed_phase[0].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS
     consumed_phase[0].on_complete()
     assert displayed.meter == 0.0
+
+
+def test_effect_applied_announcement_duration_is_divided_by_the_combat_speed_multiplier() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+    event = EffectApplied(
+        target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
+    )
+
+    phases = scene._phases_for(event)
+
+    assert phases[0].duration_seconds == BATTLE_ANNOUNCEMENT_HOLD_SECONDS / 2.0
 
 
 def test_effect_applied_phase_sets_an_effect_card_announcement_with_title_and_subtitle() -> None:
@@ -2047,6 +2086,19 @@ def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_card()
         assert scene._announcement == Announcement(text=_describe_event(event, scene._battle.player))
         phases[0].on_complete()
         assert scene._announcement is None
+
+
+def test_plain_announcement_phase_duration_is_divided_by_the_combat_speed_multiplier() -> None:
+    # _announcement_phase (plain text, e.g. TurnSkipped/BattleEnded) is a distinct Phase(...)
+    # literal from _effect_announcement_phase (EffectApplied/EffectExpired, already covered above)
+    # -- both need their own coverage at a non-default multiplier.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+    event = TurnSkipped(combatant=scene._battle.player)
+
+    phases = scene._phases_for(event)
+
+    assert phases[0].duration_seconds == BATTLE_ANNOUNCEMENT_HOLD_SECONDS / 2.0
 
 
 def test_announcement_phase_holds_for_the_tuned_duration_via_the_driver() -> None:

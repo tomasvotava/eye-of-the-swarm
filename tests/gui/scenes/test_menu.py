@@ -13,6 +13,7 @@ from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.persistence import save
 from eye.persistence.adapters.filesystem import FilesystemSaveStore
 from eye.persistence.codec import GameSnapshot, decode, encode
+from eye.persistence.settings import SETTINGS_SCHEMA_VERSION, SettingsSnapshot, encode_settings
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from tests.session.doubles import ScriptedEncounterRandom
@@ -143,6 +144,35 @@ def test_confirm_builds_a_game_driver_bound_to_the_selected_slots_store() -> Non
     assert isinstance(expected_narration_store, FilesystemSaveStore)
     assert transition._narration_store._path == expected_narration_store._path
     assert isinstance(transition._scene, ExplorationScene)  # empty slot -> a fresh run, not the skill tree
+
+
+def test_confirm_threads_the_saved_combat_speed_multiplier_into_the_game_driver() -> None:
+    save.settings_store().save(
+        encode_settings(SettingsSnapshot(schema_version=SETTINGS_SCHEMA_VERSION, combat_speed_multiplier=2.0))
+    )
+    scene = _scene()
+
+    _press(scene, pygame.K_RETURN)
+    transition = scene.update(0.016)
+
+    assert isinstance(transition, GameDriver)
+    assert transition._combat_speed_multiplier == 2.0
+
+
+@pytest.mark.parametrize("stored", [None, "not json", '{"schema_version": 1, "combat_speed_multiplier": "fast"}'])
+def test_confirm_falls_back_to_the_default_combat_speed_when_settings_are_unusable(stored: str | None) -> None:
+    # The assertion cannot discriminate on its own -- 1.0 is also GameDriver's own default for the
+    # parameter -- so what this pins is that _confirm() reaches a GameDriver at all on each of the
+    # three ways settings can be unreadable, rather than propagating out of load_settings().
+    if stored is not None:
+        save.settings_store().save(stored)
+    scene = _scene()
+
+    _press(scene, pygame.K_RETURN)
+    transition = scene.update(0.016)
+
+    assert isinstance(transition, GameDriver)
+    assert transition._combat_speed_multiplier == 1.0
 
 
 def test_confirm_on_a_corrupt_slot_still_builds_a_game_driver() -> None:

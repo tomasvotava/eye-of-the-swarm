@@ -350,7 +350,7 @@ def _displayed_state_from(combatant: Combatant) -> DisplayedCombatantState:
     )
 
 
-def _hp_tween_phase(displayed: DisplayedCombatantState, end_hp: int) -> Phase:
+def _hp_tween_phase(displayed: DisplayedCombatantState, end_hp: int, speed_multiplier: float) -> Phase:
     # start is captured eagerly here, not in on_start: _phases_for runs synchronously when the
     # triggering event is dequeued, by which point every earlier event's phases (including their
     # own tweens' on_complete snaps) have already fully run -- so displayed.hp is always accurate
@@ -365,10 +365,12 @@ def _hp_tween_phase(displayed: DisplayedCombatantState, end_hp: int) -> Phase:
     def on_complete() -> None:
         displayed.hp = end  # snap to the exact value; avoids float drift from interpolation
 
-    return Phase(duration_seconds=BATTLE_VALUE_TWEEN_SECONDS, on_progress=on_progress, on_complete=on_complete)
+    return Phase(
+        duration_seconds=BATTLE_VALUE_TWEEN_SECONDS / speed_multiplier, on_progress=on_progress, on_complete=on_complete
+    )
 
 
-def _meter_tween_phase(displayed: DisplayedCombatantState, end_meter: int) -> Phase:
+def _meter_tween_phase(displayed: DisplayedCombatantState, end_meter: int, speed_multiplier: float) -> Phase:
     # Same shape and duration as _hp_tween_phase -- see that function's comment for why capturing
     # start eagerly here is safe.
     start = displayed.meter
@@ -380,7 +382,9 @@ def _meter_tween_phase(displayed: DisplayedCombatantState, end_meter: int) -> Ph
     def on_complete() -> None:
         displayed.meter = end  # snap to the exact value; avoids float drift from interpolation
 
-    return Phase(duration_seconds=BATTLE_VALUE_TWEEN_SECONDS, on_progress=on_progress, on_complete=on_complete)
+    return Phase(
+        duration_seconds=BATTLE_VALUE_TWEEN_SECONDS / speed_multiplier, on_progress=on_progress, on_complete=on_complete
+    )
 
 
 def _discard_displayed_effect(displayed: DisplayedCombatantState, key: tuple[EffectCategory, EffectName]) -> None:
@@ -525,9 +529,14 @@ class CombatScene:
         atlas: SpriteAtlas,
         buff_icon_factory: Callable[[IconSource], BuffIcon] | None = None,
         narration: NarrationTriggers | None = None,
+        combat_speed_multiplier: float = 1.0,
     ) -> None:
         self._generation = generation
         self._atlas = atlas
+        # Divides BATTLE_* phase/tween/hold durations wherever a Phase is built from one directly
+        # (ADR 0017) -- a higher multiplier plays faster. Animation-driven phases derive their own
+        # duration from clip data instead and are unaffected.
+        self._combat_speed_multiplier = combat_speed_multiplier
         # FIRST_BATTLE fires in ExplorationScene, as soon as advance() reveals an EnemyEncountered
         # -- before the player has walked up to it, not once combat has already begun.
         self._narration = narration if narration is not None else NarrationTriggers()
@@ -866,7 +875,11 @@ class CombatScene:
         def on_complete() -> None:
             self._announcement = None
 
-        return Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)
+        return Phase(
+            duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS / self._combat_speed_multiplier,
+            on_start=on_start,
+            on_complete=on_complete,
+        )
 
     def _effect_announcement_phase(self, event: EffectApplied | EffectExpired) -> list[Phase]:
         # Toggles DisplayedCombatantState.active_effects/remaining_turns in the same on_start that
@@ -926,7 +939,13 @@ class CombatScene:
         def on_complete() -> None:
             self._announcement = None
 
-        return [Phase(duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS, on_start=on_start, on_complete=on_complete)]
+        return [
+            Phase(
+                duration_seconds=BATTLE_ANNOUNCEMENT_HOLD_SECONDS / self._combat_speed_multiplier,
+                on_start=on_start,
+                on_complete=on_complete,
+            )
+        ]
 
     def _phases_for(self, event: BattleEvent) -> list[Phase]:
         # ActionChosen is the one variant with nothing of its own to reveal (ADR 0013).
@@ -945,7 +964,12 @@ class CombatScene:
                     if animator is not None:
                         animator.set_state(CombatAnimationState.DEAD)
 
-                return [Phase(duration_seconds=BATTLE_DEATH_POSE_HOLD_SECONDS, on_start=on_start)]
+                return [
+                    Phase(
+                        duration_seconds=BATTLE_DEATH_POSE_HOLD_SECONDS / self._combat_speed_multiplier,
+                        on_start=on_start,
+                    )
+                ]
             case Revive(combatant=combatant, revived_hp=revived_hp):
                 animator = self._animator_for(combatant)
                 displayed = self._displayed_for(combatant)
@@ -962,7 +986,7 @@ class CombatScene:
 
                 return [
                     Phase(duration_seconds=0.0, on_start=on_start),
-                    _hp_tween_phase(self._displayed_for(combatant), revived_hp),
+                    _hp_tween_phase(self._displayed_for(combatant), revived_hp, self._combat_speed_multiplier),
                 ]
             case EffectApplied() | EffectExpired():
                 return self._effect_announcement_phase(event)
@@ -980,13 +1004,13 @@ class CombatScene:
 
                 return [replace(result, on_start=on_start)]
             case MeterFilled(combatant=combatant, meter_after=meter_after):
-                return [_meter_tween_phase(self._displayed_for(combatant), meter_after)]
+                return [_meter_tween_phase(self._displayed_for(combatant), meter_after, self._combat_speed_multiplier)]
             case MeterConsumed(combatant=combatant, meter_after=meter_after):
-                return [_meter_tween_phase(self._displayed_for(combatant), meter_after)]
+                return [_meter_tween_phase(self._displayed_for(combatant), meter_after, self._combat_speed_multiplier)]
             case HitLanded(source=source, target=target, target_hp_after=target_hp_after):
                 return [
                     self._swing_phase(source, target),
-                    _hp_tween_phase(self._displayed_for(target), target_hp_after),
+                    _hp_tween_phase(self._displayed_for(target), target_hp_after, self._combat_speed_multiplier),
                 ]
             case HitReflected(target=target, target_hp_after=target_hp_after):
                 # `target` is the attacker the damage bounces back onto, not the Spiky Skin holder
@@ -996,23 +1020,23 @@ class CombatScene:
                     self._overlay_phase(
                         target, EffectName.SPIKY_SKIN, target_hp_after, HitValence.DAMAGE, label="Reflected"
                     ),
-                    _hp_tween_phase(self._displayed_for(target), target_hp_after),
+                    _hp_tween_phase(self._displayed_for(target), target_hp_after, self._combat_speed_multiplier),
                 ]
             case SelfDamageTaken(combatant=combatant, combatant_hp_after=combatant_hp_after):
                 # No effect behind a recoil, so a NonEffectIcon and nothing in the HUD row hops.
                 return [
                     self._overlay_phase(combatant, NonEffectIcon.RECOIL, combatant_hp_after, HitValence.DAMAGE),
-                    _hp_tween_phase(self._displayed_for(combatant), combatant_hp_after),
+                    _hp_tween_phase(self._displayed_for(combatant), combatant_hp_after, self._combat_speed_multiplier),
                 ]
             case DotTicked(target=target, effect=effect, target_hp_after=target_hp_after):
                 return [
                     self._overlay_phase(target, effect, target_hp_after, HitValence.DAMAGE, hopping_effect=effect),
-                    _hp_tween_phase(self._displayed_for(target), target_hp_after),
+                    _hp_tween_phase(self._displayed_for(target), target_hp_after, self._combat_speed_multiplier),
                 ]
             case HealApplied(target=target, effect=effect, target_hp_after=target_hp_after):
                 return [
                     self._overlay_phase(target, effect, target_hp_after, HitValence.HEALING, hopping_effect=effect),
-                    _hp_tween_phase(self._displayed_for(target), target_hp_after),
+                    _hp_tween_phase(self._displayed_for(target), target_hp_after, self._combat_speed_multiplier),
                 ]
             case _:
                 assert_never(event)

@@ -28,13 +28,19 @@ _ACTIONS = (ActionDefinition(kind=ActionKind.STRUGGLE, name="Struggle"),)
 def _driver(
     kind_queue: Sequence[EncounterKind] = (EncounterKind.NOTHING, EncounterKind.NOTHING),
     save_store: FakeSaveStore | None = None,
+    combat_speed_multiplier: float = 1.0,
 ) -> GameDriver:
     # Defaults to two queued NOTHING screens rather than an empty queue: ExplorationScene's
     # for_new_generation() (ADR 0012) fires advance() once immediately, whether at construction or
     # after a later Continue -- one entry covers GameDriver.__init__()'s own throwaway generation
     # (immediately overwritten by _driver_with() below), a second covers a genuine Continue later
     # in the same test, and tests that never reach either case just leave the rest unused.
-    return GameDriver(build_placeholder_atlas(), ScriptedEncounterRandom(kind_queue), save_store or FakeSaveStore())
+    return GameDriver(
+        build_placeholder_atlas(),
+        ScriptedEncounterRandom(kind_queue),
+        save_store or FakeSaveStore(),
+        combat_speed_multiplier=combat_speed_multiplier,
+    )
 
 
 def _generation(stats: Stats = _STATS, character: Character | None = None) -> Generation:
@@ -141,6 +147,15 @@ def test_enter_combat_transition_swaps_to_a_combat_scene() -> None:
     _advance(driver)
 
     assert isinstance(driver._scene, CombatScene)
+
+
+def test_enter_combat_threads_the_combat_speed_multiplier_into_the_combat_scene() -> None:
+    driver = _driver([EncounterKind.ENEMY], combat_speed_multiplier=2.0)
+
+    _advance(driver)
+
+    assert isinstance(driver._scene, CombatScene)
+    assert driver._scene._combat_speed_multiplier == 2.0
 
 
 def test_win_returns_to_exploration_without_persisting() -> None:

@@ -131,7 +131,11 @@ class MenuScene:
     def _confirm(self) -> Scene:
         view = self._slots[self._cursor]
         return GameDriver(
-            self._atlas, self._rng, save_store=view.store, narration_store=save.narration_store_for_slot(view.number)
+            self._atlas,
+            self._rng,
+            save_store=view.store,
+            narration_store=save.narration_store_for_slot(view.number),
+            combat_speed_multiplier=save.load_settings().combat_speed_multiplier,
         )
 
     def draw(self, surface: pygame.Surface) -> None:

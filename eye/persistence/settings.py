@@ -18,6 +18,10 @@ class SettingsSnapshot:
     combat_speed_multiplier: float
 
 
+def default_settings() -> SettingsSnapshot:
+    return SettingsSnapshot(schema_version=SETTINGS_SCHEMA_VERSION, combat_speed_multiplier=1.0)
+
+
 def encode_settings(settings: SettingsSnapshot) -> str:
     payload = {
         "schema_version": SETTINGS_SCHEMA_VERSION,
@@ -40,8 +44,8 @@ def decode_settings(data: str) -> SettingsSnapshot:
         raise SaveDataError(f"unsupported schema_version: {schema_version!r}")
 
     combat_speed_multiplier = payload.get("combat_speed_multiplier")
-    if not _is_number(combat_speed_multiplier):
-        raise SaveDataError(f"combat_speed_multiplier must be a number, got {combat_speed_multiplier!r}")
+    if not _is_number(combat_speed_multiplier) or combat_speed_multiplier <= 0:
+        raise SaveDataError(f"combat_speed_multiplier must be a positive number, got {combat_speed_multiplier!r}")
 
     return SettingsSnapshot(
         schema_version=SETTINGS_SCHEMA_VERSION,

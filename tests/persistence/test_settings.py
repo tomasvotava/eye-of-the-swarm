@@ -49,3 +49,15 @@ def test_decode_accepts_an_integral_combat_speed_multiplier() -> None:
     decoded = decode_settings('{"schema_version": 1, "combat_speed_multiplier": 2}')
 
     assert decoded.combat_speed_multiplier == 2.0
+
+
+def test_decode_rejects_a_zero_combat_speed_multiplier() -> None:
+    # Threaded straight into a Phase's duration_seconds division (ADR 0017) -- zero would raise
+    # ZeroDivisionError mid-combat rather than at load time.
+    with pytest.raises(SaveDataError):
+        decode_settings('{"schema_version": 1, "combat_speed_multiplier": 0}')
+
+
+def test_decode_rejects_a_negative_combat_speed_multiplier() -> None:
+    with pytest.raises(SaveDataError):
+        decode_settings('{"schema_version": 1, "combat_speed_multiplier": -1.5}')

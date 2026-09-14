@@ -13,8 +13,7 @@ import pygame.typing
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.scene import Scene
 from eye.persistence import save
-from eye.persistence.codec import SaveDataError
-from eye.persistence.settings import SETTINGS_SCHEMA_VERSION, SettingsSnapshot, decode_settings, encode_settings
+from eye.persistence.settings import SETTINGS_SCHEMA_VERSION, SettingsSnapshot, encode_settings
 
 _TITLE_FONT_SIZE = 28
 _LABEL_FONT_SIZE = 20
@@ -45,20 +44,6 @@ KEY_ACTIONS: dict[int, SettingsAction] = {
 }
 
 
-def _default_settings() -> SettingsSnapshot:
-    return SettingsSnapshot(schema_version=SETTINGS_SCHEMA_VERSION, combat_speed_multiplier=1.0)
-
-
-def _load_settings() -> SettingsSnapshot:
-    raw = save.settings_store().load()
-    if raw is None:
-        return _default_settings()
-    try:
-        return decode_settings(raw)
-    except SaveDataError:
-        return _default_settings()
-
-
 def _closest_preset_index(multiplier: float) -> int:
     return min(range(len(_COMBAT_SPEED_PRESETS)), key=lambda index: abs(_COMBAT_SPEED_PRESETS[index] - multiplier))
 
@@ -66,7 +51,7 @@ def _closest_preset_index(multiplier: float) -> int:
 class SettingsScene:
     def __init__(self, back_scene: Scene) -> None:
         self._back_scene = back_scene
-        self._settings = _load_settings()
+        self._settings = save.load_settings()
         self._preset_index = _closest_preset_index(self._settings.combat_speed_multiplier)
         self._pending_action: SettingsAction | None = None
 
