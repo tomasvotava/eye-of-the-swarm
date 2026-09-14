@@ -27,14 +27,25 @@ def test_update_returns_none_without_a_dismiss_key() -> None:
     assert scene.update(0.016) is None
 
 
-@pytest.mark.parametrize("key", [pygame.K_RETURN, pygame.K_a, pygame.K_SPACE])
-def test_any_key_transitions_to_the_next_scene(key: int) -> None:
+def test_enter_transitions_to_the_next_scene() -> None:
+    next_scene = _StubScene()
+    scene = TitleScene(next_scene)
+
+    _press(scene, pygame.K_RETURN)
+
+    assert scene.update(0.016) is next_scene
+
+
+@pytest.mark.parametrize("key", [pygame.K_a, pygame.K_SPACE, pygame.K_ESCAPE])
+def test_other_keys_do_not_dismiss(key: int) -> None:
+    # Regression: a plain "any KEYDOWN" dismiss also fired from an OS/window-manager fullscreen
+    # toggle, skipping the title screen before the player pressed anything themselves (GOTCHAS.md).
     next_scene = _StubScene()
     scene = TitleScene(next_scene)
 
     _press(scene, key)
 
-    assert scene.update(0.016) is next_scene
+    assert scene.update(0.016) is None
 
 
 def test_non_keydown_events_are_ignored() -> None:

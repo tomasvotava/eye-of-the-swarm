@@ -262,3 +262,16 @@ site, together, in `app.py`.
 A future `TitleScene` built with some other `next_scene` (or a test asserting the title screen
 plays music on its own) needs its own `play_ambient()` call -- don't assume `TitleScene` carries
 this behavior itself.
+
+## 2026-09-14 - `TitleScene` dismissing on "any key" fires from an OS/WM fullscreen toggle too
+
+Playtesting: switching the game window to fullscreen (a window-manager shortcut, not a key the
+game defines) skipped straight past the title screen to the menu, on the very first frame.
+
+The original `handle_pygame_event` treated any `pygame.KEYDOWN` as "continue" -- SDL/pygame
+delivers a synthetic keydown for at least some OS-level window operations, and there was nothing
+distinguishing that from an actual player keypress.
+
+`TitleScene` now only dismisses on `pygame.K_RETURN`. Any future "press any key" style prompt
+should default to a specific key (or a small explicit set) rather than literally any `KEYDOWN`,
+unless it's verified the surface it's shown on never receives synthetic OS-level key events.

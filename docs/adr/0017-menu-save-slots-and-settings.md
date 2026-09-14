@@ -90,10 +90,12 @@ global settings blob, instead of one implicit file/key.
 - **`App`'s initial scene is `TitleScene(MenuScene(atlas, rng, audio))`**, replacing today's
   direct-to-`GameDriver` boot — the seam `app.py`'s docstring already reserved, with one addition
   to the original design: a `TitleScene` ahead of `MenuScene`, not `MenuScene` directly. A static
-  screen — "The Eye of the Swarm" in the `buse` font over a smaller "Press any key to continue" in
-  `ithaca` (the footer, matching every other scene's own footer font) — any `KEYDOWN` hands off to
-  the `MenuScene` it was constructed with, mirroring `CreditsScene`'s existing
-  `next_scene`/`back_scene` constructor pattern. The `EYE_DEV_ASSET_VIEWER` escape hatch is
+  screen — "The Eye of the Swarm" in the `buse` font over a smaller "Press Enter to continue" in
+  `ithaca` (the footer, matching every other scene's own footer font) — and `K_RETURN`, not any
+  `KEYDOWN`, hands off to the `MenuScene` it was constructed with, mirroring `CreditsScene`'s
+  existing `next_scene`/`back_scene` constructor pattern. "Any key" was the original design and
+  proved too lenient in playtesting: some OS/window-manager window operations (a fullscreen
+  toggle) deliver a synthetic keydown that skipped the screen outright (GOTCHAS.md). The `EYE_DEV_ASSET_VIEWER` escape hatch is
   unaffected: it still short-circuits straight to `DevAssetViewerScene`, bypassing both screens.
   Both `TitleScene` and `MenuScene` fit `App`'s existing `Scene` protocol
   (`update(dt) -> Scene | None`) without any change to `App` itself: picking a slot's action
