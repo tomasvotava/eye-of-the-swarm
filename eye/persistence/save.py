@@ -41,6 +41,10 @@ def settings_store() -> SaveStore:
     return _namespaced_store("settings")
 
 
+def narration_store_for_slot(slot: int) -> SaveStore:
+    return _namespaced_store(f"narration-{slot}")
+
+
 def _namespaced_store(namespace: str) -> SaveStore:
     # emscripten's default_save_store() ignores filesystem_path entirely -- skip computing it
     # there so platformdirs (unneeded and pygbag-hostile) never has to be a web dependency.

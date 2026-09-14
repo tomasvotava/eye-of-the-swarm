@@ -127,6 +127,17 @@ def test_settings_store_targets_the_settings_namespace() -> None:
     assert store._path == save._default_save_path("settings")
 
 
+def test_narration_store_for_slot_targets_a_namespaced_path_per_slot() -> None:
+    paths = set[Path]()
+    for slot in (1, 2, 3):
+        store = save.narration_store_for_slot(slot)
+        assert isinstance(store, FilesystemSaveStore)
+        assert store._path == save._default_save_path(f"narration-{slot}")
+        paths.add(store._path)
+
+    assert len(paths) == 3
+
+
 def test_peek_returns_none_for_an_empty_store() -> None:
     store = FakeSaveStore(data=None)
 
