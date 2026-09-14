@@ -129,7 +129,10 @@ class MenuScene:
         return None
 
     def _confirm(self) -> Scene:
-        return GameDriver(self._atlas, self._rng, save_store=self._slots[self._cursor].store)
+        view = self._slots[self._cursor]
+        return GameDriver(
+            self._atlas, self._rng, save_store=view.store, narration_store=save.narration_store_for_slot(view.number)
+        )
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
