@@ -43,6 +43,7 @@ from eye.gui.assets import (
     build_art_atlas,
     build_placeholder_atlas,
 )
+from eye.gui.audio import SoundKey
 from eye.gui.card import Card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.narration import NarrationEntry, NarrationTrigger, NarrationTriggers
@@ -115,6 +116,8 @@ from eye.gui.widgets import (
     TextBuffIcon,
 )
 from eye.session.generation import Generation
+from tests.gui.doubles import build_fake_audio_manager as _audio
+from tests.gui.doubles import build_spy_audio_manager
 from tests.session.doubles import ScriptedEncounterRandom
 
 _STATS = Stats(max_hp=20, attack=5, defense=2, meter_capacity=100, meter_fill_rate=1)
@@ -255,10 +258,115 @@ def test_construction_starts_the_battle_and_prefills_the_resonance_meter() -> No
     generation = _generation(character=character)
     encounter = _encounter(generation)
 
-    scene = CombatScene(generation, encounter, build_placeholder_atlas())
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), audio=_audio())
 
     expected = round(_STATS.meter_capacity * RESONANCE_METER_PREFILL_RATIO)
     assert scene._battle.player.current_meter == expected
+
+
+def test_construction_starts_non_boss_battle_music() -> None:
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    encounter = _encounter(generation)
+    spy = build_spy_audio_manager()
+
+    CombatScene(generation, encounter, build_placeholder_atlas(), spy.manager)
+
+    assert spy.battle_primary.played == [(spy.sounds[SoundKey.FIGHT_CUE_IN], 0, 0)]
+
+
+@pytest.mark.parametrize("strain", [Strain.GOLEM, Strain.PHIDIZVIK])
+def test_construction_starts_boss_battle_music_for_a_boss_strain(strain: Strain) -> None:
+    generation = _generation(strain_queue=[strain])
+    encounter = _encounter(generation)
+    spy = build_spy_audio_manager()
+
+    CombatScene(generation, encounter, build_placeholder_atlas(), spy.manager)
+
+    assert spy.battle_primary.played == [(spy.sounds[SoundKey.BOSS_FIGHT_CUE_IN], 0, 0)]
+
+
+def test_update_drives_the_battle_musics_cue_in_to_loop_handoff() -> None:
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    encounter = _encounter(generation)
+    spy = build_spy_audio_manager()
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), spy.manager)
+    spy.battle_primary.queued_sound = None  # simulate SDL_mixer moving the loop to "now playing"
+
+    scene.update(0.016)
+
+    assert spy.battle_primary.queue_calls[-1] == spy.sounds[SoundKey.FIGHT_LOOP]
+
+
+def test_update_drives_the_cue_in_to_loop_handoff_even_while_narration_is_active() -> None:
+    # Pins the ordering: audio.update(dt) runs above the narration-active early return, so the
+    # handoff does not stall while an overlay holds the rest of the battle pipeline.
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    encounter = _encounter(generation)
+    spy = build_spy_audio_manager()
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), spy.manager)
+    scene._narration.fire(NarrationTrigger.FIRST_DEATH, "msg", "sub")
+    assert scene._narration.queue.is_active is True
+    spy.battle_primary.queued_sound = None
+    queue_calls_before = len(spy.battle_primary.queue_calls)
+
+    scene.update(0.016)
+
+    # Checks the count grew, not just that the last entry still reads FIGHT_LOOP -- __init__'s own
+    # start_battle_music() already queues FIGHT_LOOP once, so a same-looking-but-stale last entry
+    # would pass even if update() never re-queued anything at all.
+    assert len(spy.battle_primary.queue_calls) == queue_calls_before + 1
+    assert spy.battle_primary.queue_calls[-1] == spy.sounds[SoundKey.FIGHT_LOOP]
+
+
+def test_winning_resolves_battle_music_as_won() -> None:
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=overwhelming, strain_queue=[Strain.BEATLE])
+    encounter = _encounter(generation)
+    spy = build_spy_audio_manager()
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), spy.manager)
+
+    _drive_to_transition(scene)
+
+    assert spy.battle_result.played == [(spy.sounds[SoundKey.FIGHT_WON], 0, 1000)]
+
+
+def test_losing_resolves_battle_music_as_lost() -> None:
+    fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=fragile, character=Character(current_hp=5, max_hp=5), strain_queue=[Strain.BEATLE])
+    encounter = _encounter(generation)
+    spy = build_spy_audio_manager()
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), spy.manager)
+
+    _drive_to_transition(scene)
+
+    assert spy.battle_result.played == [(spy.sounds[SoundKey.FIGHT_LOST], 0, 1000)]
+
+
+def test_battle_music_resolves_as_the_result_banner_appears_not_when_the_scene_concludes() -> None:
+    # Resolving from _conclude() instead would land a full announcement hold (plus any death
+    # pose) after "You win!" is already standing on screen.
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=overwhelming, strain_queue=[Strain.BEATLE])
+    encounter = _encounter(generation)
+    spy = build_spy_audio_manager()
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), spy.manager)
+
+    resolved_at: int | None = None
+    concluded_at: int | None = None
+    for frame in range(2000):
+        _press(scene, ACTION_KEYS[0])
+        transition = scene.update(0.016)
+        if resolved_at is None and spy.battle_result.played:
+            resolved_at = frame
+        if isinstance(transition, BattleConcluded):
+            concluded_at = frame
+            break
+
+    assert resolved_at is not None
+    assert concluded_at is not None
+    # Strictly earlier, not merely "by the time it concluded" -- resolving from _conclude() lands
+    # both on the same frame and would satisfy the two win/loss tests above unchanged.
+    assert resolved_at < concluded_at
 
 
 def test_displayed_state_from_seeds_remaining_turns_as_none_for_a_preexisting_lifespan_effect() -> None:
@@ -270,7 +378,7 @@ def test_displayed_state_from_seeds_remaining_turns_as_none_for_a_preexisting_li
     generation = _generation(character=character)
     encounter = _encounter(generation)
 
-    scene = CombatScene(generation, encounter, build_placeholder_atlas())
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), audio=_audio())
 
     key = (EffectCategory.LIFESPAN, EffectName.FIBROUS)
     assert key in scene._player_displayed.active_effects
@@ -279,7 +387,7 @@ def test_displayed_state_from_seeds_remaining_turns_as_none_for_a_preexisting_li
 
 def test_handle_pygame_event_ignores_non_keydown() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)  # advance to AWAITING_PLAYER_ACTION
 
     scene.handle_pygame_event(pygame.event.Event(pygame.KEYUP, key=ACTION_KEYS[0]))
@@ -289,7 +397,7 @@ def test_handle_pygame_event_ignores_non_keydown() -> None:
 
 def test_handle_pygame_event_ignores_a_key_when_no_action_is_pending() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     _press(scene, ACTION_KEYS[0])  # no update() yet, so no PlayerTurnNeedsAction is pending
 
@@ -298,7 +406,7 @@ def test_handle_pygame_event_ignores_a_key_when_no_action_is_pending() -> None:
 
 def test_handle_pygame_event_ignores_an_index_beyond_the_available_actions() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)  # advance to AWAITING_PLAYER_ACTION with exactly two available actions
 
     _press(scene, ACTION_KEYS[2])
@@ -308,7 +416,7 @@ def test_handle_pygame_event_ignores_an_index_beyond_the_available_actions() -> 
 
 def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)
 
     _press(scene, ACTION_KEYS[1])
@@ -318,7 +426,7 @@ def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
 
 def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)
 
     _press(scene, pygame.K_DOWN)
@@ -330,7 +438,7 @@ def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
 
 def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)
 
     _press(scene, pygame.K_UP)
@@ -340,7 +448,7 @@ def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
 
 def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)
 
     _press(scene, pygame.K_DOWN)
@@ -351,7 +459,7 @@ def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
 
 def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)  # first AWAITING_PLAYER_ACTION query, cursor at 0
     _press(scene, pygame.K_DOWN)
     assert scene._cursor_index == 1
@@ -374,7 +482,7 @@ def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
 
 def test_tick_displayed_battle_effect_durations_decrements_only_finite_battle_scoped_entries() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.remaining_turns = {
         (EffectCategory.BATTLE, EffectName.FIBROUS): 3,
         (EffectCategory.BATTLE, EffectName.ADRENALINE): None,  # until battle ends -- untouched
@@ -396,7 +504,7 @@ def test_resolve_enemy_turn_ticks_the_displayed_battle_effect_durations_by_one_p
     # _tick_displayed_battle_effect_durations must stay wired to (eye/gui/scenes/combat.py's
     # update()) to stay in sync with the domain's actual cadence.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     key = (EffectCategory.BATTLE, EffectName.FIBROUS)
     scene._player_displayed.remaining_turns[key] = 3
     scene.update(0.016)  # first AWAITING_PLAYER_ACTION query
@@ -433,7 +541,7 @@ def test_every_encounterable_strain_resolves_to_a_real_sprite_key() -> None:
 
 def test_update_resolves_automatic_phases_without_input() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     scene.update(0.016)
 
@@ -444,7 +552,7 @@ def test_win_finishes_the_battle_and_reports_a_bare_battle_concluded() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
     encounter = _encounter(generation)
-    scene = CombatScene(generation, encounter, build_placeholder_atlas())
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), audio=_audio())
 
     transition = _drive_to_transition(scene)
 
@@ -457,7 +565,7 @@ def test_loss_finishes_the_battle_and_reports_a_bare_battle_concluded() -> None:
     fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     character = Character(current_hp=5, max_hp=5)
     generation = _generation(stats=fragile, character=character)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     transition = _drive_to_transition(scene)
 
@@ -468,7 +576,7 @@ def test_loss_finishes_the_battle_and_reports_a_bare_battle_concluded() -> None:
 @pytest.mark.parametrize("surface_size", [(64, 64), (800, 600)])
 def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)  # reach AWAITING_PLAYER_ACTION so the action menu also renders
 
     scene.draw(pygame.Surface(surface_size))
@@ -476,7 +584,7 @@ def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
 
 def test_draw_anchors_the_player_left_and_the_enemy_right(monkeypatch: pytest.MonkeyPatch) -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     surface = pygame.Surface((800, 600))
     surface.fill("black")
     _keep_background_black(monkeypatch)
@@ -503,7 +611,7 @@ def test_draw_anchors_the_player_left_and_the_enemy_right(monkeypatch: pytest.Mo
 
 def test_draw_keeps_the_enemys_buff_icon_row_from_overflowing_the_surface(monkeypatch: pytest.MonkeyPatch) -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     # SpriteBuffIcon (the default factory) renders every icon at a fixed size regardless of the
     # effect's label, so these three aren't chosen for label width -- just to populate
     # DisplayedCombatantState (ADR 0013) directly rather than live Combatant.effects.
@@ -581,7 +689,7 @@ def test_each_bar_is_labelled_by_its_own_borderless_icon_scaled_into_the_gutter_
     # tmp_path helpers write 4x4, so only a 210x210 source can catch an unscaled blit.
     atlas = build_art_atlas(Path("eye/gui/sprites"))
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
     surface = pygame.Surface(_WINDOW_SIZE)
     surface.fill(_UNDRAWN)
     layout = _combatant_layout(surface, mirrored=mirrored)
@@ -607,7 +715,7 @@ def test_each_bar_is_labelled_by_its_own_borderless_icon_scaled_into_the_gutter_
 def test_the_bar_icons_stay_in_the_gutter_outboard_of_the_rest_of_the_panel(mirrored: bool) -> None:
     # An icon painted over a bar hides the fill exactly when the fill is short.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
+    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")), audio=_audio())
     combatant = scene._battle.enemy if mirrored else scene._battle.player
     displayed = scene._enemy_displayed if mirrored else scene._player_displayed
     surface = pygame.Surface(_WINDOW_SIZE)
@@ -667,7 +775,7 @@ _EVENT_TYPES_WITH_REAL_PHASES = (
 def test_phases_for_is_exhaustive_over_every_battle_event_variant() -> None:
     # No crash for any variant is the exhaustiveness check itself -- assert_never() would raise.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     for event in _ONE_OF_EACH_BATTLE_EVENT:
         scene._phases_for(event)
@@ -675,7 +783,7 @@ def test_phases_for_is_exhaustive_over_every_battle_event_variant() -> None:
 
 def test_phases_for_returns_no_phases_only_for_action_chosen() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     phase_less = [event for event in _ONE_OF_EACH_BATTLE_EVENT if scene._phases_for(event) == []]
 
@@ -684,7 +792,7 @@ def test_phases_for_returns_no_phases_only_for_action_chosen() -> None:
 
 def test_phases_for_returns_real_phases_for_every_animated_or_tweened_event() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     for event in _ONE_OF_EACH_BATTLE_EVENT:
         if isinstance(event, _EVENT_TYPES_WITH_REAL_PHASES):
@@ -694,7 +802,7 @@ def test_phases_for_returns_real_phases_for_every_animated_or_tweened_event() ->
 def test_exactly_the_overlay_events_raise_an_overlay() -> None:
     # Keeps _OVERLAY_EVENT_TYPES honest: an event that gains or loses the treatment moves there too.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     raised: set[type[object]] = set()
     for event in _ONE_OF_EACH_BATTLE_EVENT:
@@ -709,7 +817,7 @@ def test_exactly_the_overlay_events_raise_an_overlay() -> None:
 
 def test_advance_phases_blocks_a_real_duration_phase_across_calls() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     starts: list[int] = []
     completions: list[int] = []
     first = Phase(duration_seconds=0.5, on_start=lambda: starts.append(1), on_complete=lambda: completions.append(1))
@@ -737,7 +845,7 @@ def test_advance_phases_blocks_a_real_duration_phase_across_calls() -> None:
 
 def test_advance_phases_does_not_carry_a_completed_phases_leftover_time_into_the_next() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     completions: list[int] = []
     first = Phase(duration_seconds=0.5, on_complete=lambda: completions.append(1))
     second = Phase(duration_seconds=0.2, on_complete=lambda: completions.append(2))
@@ -754,7 +862,7 @@ def test_advance_phases_does_not_carry_a_completed_phases_leftover_time_into_the
 
 def test_advance_phases_cascades_zero_duration_phases_within_a_single_call() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     completions: list[int] = []
     scene._current_phases = deque(
         [
@@ -778,7 +886,7 @@ def test_update_starts_a_real_phase_exactly_once_across_two_frames() -> None:
     character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
     character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
     generation = _generation(character=character)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     starts: list[BattleEvent] = []
     scene._phases_for = lambda event: [Phase(duration_seconds=1.0, on_start=lambda: starts.append(event))]  # type: ignore[method-assign]
 
@@ -795,7 +903,7 @@ def test_update_starts_a_real_phase_exactly_once_across_two_frames() -> None:
 
 def test_update_withholds_the_next_domain_call_while_phases_are_pending() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     turn_phase_before = scene._battle.turn_phase
     scene._current_phases = deque([Phase(duration_seconds=1.0)])
 
@@ -808,7 +916,7 @@ def test_update_withholds_the_next_domain_call_while_phases_are_pending() -> Non
 
 def test_update_withholds_battle_concluded_while_phases_are_pending() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._battle.enemy.current_hp = 0  # forces is_over True without going through _conclude()
     scene._current_phases = deque([Phase(duration_seconds=1.0)])
 
@@ -819,7 +927,7 @@ def test_update_withholds_battle_concluded_while_phases_are_pending() -> None:
 
 def test_handle_pygame_event_withholds_input_while_phases_are_pending() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)  # reach AWAITING_PLAYER_ACTION with a pending query
     assert scene._pending_query is not None
     scene._current_phases = deque([Phase(duration_seconds=1.0)])
@@ -833,7 +941,7 @@ def test_log_records_every_event_unbounded_and_is_never_drawn() -> None:
     # _generation()'s default stats (not overwhelming) take the fight several rounds, producing
     # more events than any small display-oriented cap could plausibly hold.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     _drive_to_transition(scene)
 
@@ -864,7 +972,7 @@ def test_combat_scene_scales_player_and_enemy_animators_by_combatant_scale_facto
     atlas = build_art_atlas(tmp_path)
     generation = _generation(strain_queue=[Strain.BEATLE])
 
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
 
     assert scene._player_animator is not None
     assert scene._enemy_animator is not None
@@ -875,7 +983,7 @@ def test_combat_scene_scales_player_and_enemy_animators_by_combatant_scale_facto
 
 def test_combat_scene_scales_static_fallback_sprites_by_combatant_scale_factor() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     assert scene._player_animator is None
     assert scene._enemy_animator is None
 
@@ -947,7 +1055,7 @@ def test_displayed_state_is_seeded_before_battle_starts_own_events_are_revealed(
     character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
     character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
     generation = _generation(character=character)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     assert scene._battle.player.current_meter > 0  # start() already mutated live Combatant state
     assert scene._player_displayed.meter == 0  # but the seeded snapshot predates that mutation
@@ -957,7 +1065,7 @@ def test_death_phase_holds_for_the_tuned_duration_and_sets_the_dead_state(tmp_pa
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     atlas = build_art_atlas(tmp_path)
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
 
     phases = scene._phases_for(Death(combatant=scene._battle.player))
 
@@ -970,7 +1078,9 @@ def test_death_phase_holds_for_the_tuned_duration_and_sets_the_dead_state(tmp_pa
 
 def test_death_phase_duration_is_divided_by_the_combat_speed_multiplier() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0, audio=_audio()
+    )
 
     phases = scene._phases_for(Death(combatant=scene._battle.player))
 
@@ -981,7 +1091,7 @@ def test_death_phase_defensively_snaps_hp_with_no_preceding_tween() -> None:
     # A Wilty-triggered death sets current_hp directly with no preceding damage event at all --
     # Death's on_start must not assume some earlier phase already tweened displayed.hp to match.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._battle.player.current_hp = 0
     assert scene._player_displayed.hp != 0  # still the untouched construction-time snapshot
 
@@ -1004,7 +1114,9 @@ def _hit_landed(scene: CombatScene) -> HitLanded:
 
 def test_hp_tween_phase_duration_is_divided_by_the_combat_speed_multiplier() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0, audio=_audio()
+    )
 
     phases = scene._phases_for(_hit_landed(scene))
 
@@ -1016,7 +1128,7 @@ def test_hit_landed_phase_duration_is_the_targets_clip_when_it_is_slower(tmp_pat
     _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value, hit_fps=2)  # 2/2 = 1.0s
     atlas = build_art_atlas(tmp_path)
     generation = _generation(strain_queue=[Strain.BEATLE])
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
 
     phases = scene._phases_for(_hit_landed(scene))
 
@@ -1030,7 +1142,7 @@ def test_hit_landed_phase_duration_is_the_sources_clip_when_it_is_slower(tmp_pat
     _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value, hit_fps=8)  # 2/8 = 0.25s
     atlas = build_art_atlas(tmp_path)
     generation = _generation(strain_queue=[Strain.BEATLE])
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
 
     phases = scene._phases_for(_hit_landed(scene))
 
@@ -1042,7 +1154,7 @@ def test_swing_phase_drives_source_attack_and_target_hit_then_resets_both_to_idl
     _write_full_combat_sprite_set(tmp_path / SpriteKey.BEATLE.value)
     atlas = build_art_atlas(tmp_path)
     generation = _generation(strain_queue=[Strain.BEATLE])
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
     assert scene._player_animator is not None
     assert scene._enemy_animator is not None
 
@@ -1062,7 +1174,7 @@ def test_reaction_phase_drives_hit_then_resets_to_idle(tmp_path: Path) -> None:
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     atlas = build_art_atlas(tmp_path)
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
     assert scene._player_animator is not None
 
     reaction = scene._reaction_phase(scene._battle.player, HitValence.DAMAGE)
@@ -1087,7 +1199,7 @@ def test_overlay_phase_drives_the_targets_hit_state_then_resets_it_to_idle(tmp_p
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     atlas = build_art_atlas(tmp_path)
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
     assert scene._player_animator is not None
 
     overlay_phase = scene._phases_for(_dot_ticked(scene))[0]
@@ -1103,7 +1215,7 @@ def test_overlay_phase_lasts_exactly_the_targets_own_hit_clip(tmp_path: Path) ->
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value, hit_fps=2)
     atlas = build_art_atlas(tmp_path)
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
 
     phases = scene._phases_for(_dot_ticked(scene))
 
@@ -1112,7 +1224,7 @@ def test_overlay_phase_lasts_exactly_the_targets_own_hit_clip(tmp_path: Path) ->
 
 def test_overlay_phase_shows_the_effect_at_the_target_on_start_and_clears_it_on_complete() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     phases = scene._phases_for(_dot_ticked(scene))
     assert scene._overlay is None
@@ -1132,7 +1244,7 @@ def test_overlay_phase_shows_the_effect_at_the_target_on_start_and_clears_it_on_
 
 def test_dot_ticked_tweens_the_targets_displayed_hp_down_after_its_overlay() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     hp_before = scene._player_displayed.hp
     event = _dot_ticked(scene, damage=4)
 
@@ -1148,7 +1260,7 @@ def test_dot_ticked_tweens_the_targets_displayed_hp_down_after_its_overlay() -> 
 
 def test_heal_applied_tweens_the_targets_displayed_hp_up_after_its_overlay() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.hp = 5.0
     event = HealApplied(target=scene._battle.player, effect=EffectName.NOURISHED, amount=4, target_hp_after=9)
 
@@ -1181,7 +1293,9 @@ def test_draw_renders_the_overlay_icon_above_the_targets_own_sprite(mirrored: bo
         return _SpyIcon()
 
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory, audio=_audio()
+    )
     target = scene._battle.enemy if mirrored else scene._battle.player
     scene._overlay = Overlay(
         target=target, source=EffectName.TOXICITY, label="Toxicity", hp_delta=-2, valence=HitValence.DAMAGE
@@ -1215,7 +1329,7 @@ def _heal_applied(scene: CombatScene, amount: int = 2) -> HealApplied:
 
 def test_overlay_carries_the_hp_its_event_moved_signed_by_direction() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     scene._phases_for(_dot_ticked(scene, damage=3))[0].on_start()
     assert scene._overlay == Overlay(
@@ -1238,7 +1352,7 @@ def test_overlay_carries_the_hp_its_event_moved_signed_by_direction() -> None:
 
 def test_the_overlay_label_reports_the_movement_a_capped_heal_actually_makes() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     player = scene._battle.player
     scene._player_displayed.hp = float(player.base_stats.max_hp - 1)
     event = HealApplied(target=player, effect=EffectName.NOURISHED, amount=3, target_hp_after=player.base_stats.max_hp)
@@ -1252,7 +1366,7 @@ def test_the_overlay_label_reports_the_movement_a_capped_heal_actually_makes() -
 
 def test_the_overlay_label_reports_the_movement_an_overkill_tick_actually_makes() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.hp = 2.0
     event = DotTicked(target=scene._battle.player, effect=EffectName.TOXICITY, damage=5, target_hp_after=-3)
 
@@ -1265,7 +1379,7 @@ def test_the_overlay_label_reports_the_movement_an_overkill_tick_actually_makes(
 
 def test_recoil_raises_a_recoil_overlay_on_the_combatant_that_dealt_it() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     player = scene._battle.player
     event = SelfDamageTaken(combatant=player, damage=4, combatant_hp_after=player.current_hp - 4)
 
@@ -1281,7 +1395,7 @@ def test_recoil_raises_a_recoil_overlay_on_the_combatant_that_dealt_it() -> None
 def test_a_lethal_recoil_reports_the_movement_its_bar_actually_makes() -> None:
     # Recoil is subtracted with no floor, as a DoT tick is, so a lethal one goes negative.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.hp = 3.0
     event = SelfDamageTaken(combatant=scene._battle.player, damage=6, combatant_hp_after=-3)
 
@@ -1296,7 +1410,7 @@ def test_a_reflect_raises_its_overlay_on_the_attacker_and_not_on_the_spiky_skin_
     # HitReflected.source is the Spiky Skin holder; .target is the attacker taking the damage back.
     # The overlay lands on .target, who does not wear the effect -- hence "Reflected" as the label.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     reflector, attacker = scene._battle.enemy, scene._battle.player
     event = HitReflected(source=reflector, target=attacker, damage=2, target_hp_after=attacker.current_hp - 2)
 
@@ -1313,7 +1427,7 @@ def test_a_reflect_raises_its_overlay_on_the_attacker_and_not_on_the_spiky_skin_
 
 def test_a_lethal_reflect_reports_the_movement_its_bar_actually_makes() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.hp = 1.0
     event = HitReflected(source=scene._battle.enemy, target=scene._battle.player, damage=5, target_hp_after=-4)
 
@@ -1343,7 +1457,7 @@ def test_overlay_label_names_what_moved_the_bar_and_the_signed_hp(
 
 def test_the_default_icon_factory_resolves_a_source_with_no_effect_behind_it() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     assert isinstance(scene._buff_icon_factory(NonEffectIcon.RECOIL), SpriteBuffIcon)
 
@@ -1360,7 +1474,9 @@ def test_a_non_effect_overlay_icon_comes_from_the_scenes_own_factory_too() -> No
         return _SilentIcon()
 
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory, audio=_audio()
+    )
     scene._overlay = Overlay(
         target=scene._battle.player, source=NonEffectIcon.RECOIL, label="Recoil", hp_delta=-3, valence=HitValence.DAMAGE
     )
@@ -1378,7 +1494,11 @@ def test_draw_lays_the_overlay_label_beside_its_icon_vertically_centered_against
 
     generation = _generation()
     scene = CombatScene(
-        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=lambda effect: _SilentIcon()
+        generation,
+        _encounter(generation),
+        build_placeholder_atlas(),
+        buff_icon_factory=lambda effect: _SilentIcon(),
+        audio=_audio(),
     )
     scene._overlay = Overlay(
         target=scene._battle.player,
@@ -1412,7 +1532,7 @@ def test_every_overlay_block_clears_the_hud_panel_of_the_real_window(effect: Eff
     # The real art, not build_placeholder_atlas(): that is 32x32 for every key, so it would miss
     # the enemy's 64px frame, which is what leaves the overlay only a few pixels under the HUD.
     generation = _generation(strain_queue=[Strain.BEATLE])
-    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
+    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")), audio=_audio())
     target = scene._battle.enemy if mirrored else scene._battle.player
     scene._overlay = Overlay(
         target=target, source=effect, label=_label(effect), hp_delta=-99, valence=HitValence.DAMAGE
@@ -1436,7 +1556,7 @@ def test_every_overlay_block_clears_the_hud_panel_of_the_real_window(effect: Eff
 def test_every_encounterable_strain_leaves_the_overlay_block_clear_of_the_hud(strain: Strain) -> None:
     # A future strain shipped with a taller frame should fail here, not quietly eat the clearance.
     generation = _generation(strain_queue=[strain])
-    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")))
+    scene = CombatScene(generation, _encounter(generation), build_art_atlas(Path("eye/gui/sprites")), audio=_audio())
     scene._overlay = Overlay(
         target=scene._battle.enemy, source=EffectName.TOXICITY, label="Toxicity", hp_delta=-2, valence=HitValence.DAMAGE
     )
@@ -1455,7 +1575,7 @@ def test_every_encounterable_strain_leaves_the_overlay_block_clear_of_the_hud(st
 
 def test_a_dot_tick_hops_only_the_ticking_effects_icon_in_that_row() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.active_effects.update(
         {(EffectCategory.BATTLE, EffectName.TOXICITY), (EffectCategory.BATTLE, EffectName.FIBROUS)}
     )
@@ -1469,7 +1589,7 @@ def test_a_dot_tick_hops_only_the_ticking_effects_icon_in_that_row() -> None:
 
 def test_a_dot_tick_leaves_the_other_combatants_icon_of_the_same_effect_at_rest() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     for displayed in (scene._player_displayed, scene._enemy_displayed):
         displayed.active_effects.add((EffectCategory.BATTLE, EffectName.TOXICITY))
 
@@ -1482,7 +1602,7 @@ def test_a_dot_tick_leaves_the_other_combatants_icon_of_the_same_effect_at_rest(
 
 def test_a_heal_hops_the_healing_effects_icon_on_the_combatant_it_heals() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._enemy_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.NOURISHED))
 
     scene._phases_for(_heal_applied(scene))[0].on_start()
@@ -1496,7 +1616,7 @@ def test_a_reflect_leaves_the_victims_own_spiky_skin_icon_at_rest() -> None:
     # A reflect's damage is credited to the *other* side's Spiky Skin, and both can wear it at once
     # (PROJECT_BRIEF.md 5.6), so the victim's own copy did nothing here and must not hop.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     attacker = scene._battle.player
     scene._player_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.SPIKY_SKIN))
     event = HitReflected(source=scene._battle.enemy, target=attacker, damage=2, target_hp_after=attacker.current_hp - 2)
@@ -1511,7 +1631,7 @@ def test_a_reflect_leaves_the_victims_own_spiky_skin_icon_at_rest() -> None:
 
 def test_the_icon_hop_leaves_the_row_and_settles_back_within_its_own_duration() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     displayed = scene._player_displayed
     # The hop moves this combatant's own row entry, so the tick's effect has to be in it.
     displayed.active_effects.add((EffectCategory.BATTLE, EffectName.TOXICITY))
@@ -1550,7 +1670,9 @@ def test_draw_lifts_the_hopping_icon_and_leaves_its_neighbour_where_it_was() -> 
         return _SpyIcon(source)
 
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory, audio=_audio()
+    )
     scene._player_displayed.active_effects.update(
         {(EffectCategory.BATTLE, EffectName.TOXICITY), (EffectCategory.BATTLE, EffectName.FIBROUS)}
     )
@@ -1572,7 +1694,7 @@ def test_draw_lifts_the_hopping_icon_and_leaves_its_neighbour_where_it_was() -> 
 def test_draw_keeps_a_hopping_icon_flush_inside_the_mirrored_rows_right_edge() -> None:
     # The hop is purely vertical, so the mirrored side's right-edge anchoring is unaffected.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     for effect in (EffectName.RUNT, EffectName.TOXICITY):
         scene._enemy_displayed.active_effects.add((EffectCategory.BATTLE, effect))
     event = DotTicked(
@@ -1608,7 +1730,7 @@ def test_draw_keeps_a_hopping_icon_flush_inside_the_mirrored_rows_right_edge() -
 def test_a_hopping_icon_never_climbs_into_the_meter_bar_above_its_row(mirrored: bool) -> None:
     # Comparing the meter bar's own rows before and after, so the icon's peak isn't pinned down.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     target = scene._battle.enemy if mirrored else scene._battle.player
     displayed = scene._enemy_displayed if mirrored else scene._player_displayed
     displayed.active_effects.add((EffectCategory.BATTLE, EffectName.TOXICITY))
@@ -1636,7 +1758,7 @@ def test_advance_phases_leaves_displayed_hp_strictly_between_before_and_after_mi
     # never the live Combatant -- which Battle has, per its own contract, already fully resolved
     # by the time any of its events reach the GUI.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     pre_hit_hp = scene._enemy_displayed.hp
     target_hp_after = round(pre_hit_hp) - 5
     event = HitLanded(
@@ -1673,7 +1795,7 @@ def test_hp_tween_phase_interpolates_and_snaps_exactly_on_completion() -> None:
 
 def test_combat_scene_defaults_to_sprite_buff_icon_when_no_factory_is_given() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     icon = scene._buff_icon_factory(EffectName.FIBROUS)
 
@@ -1695,7 +1817,9 @@ def test_buff_icon_row_renders_the_displayed_snapshot_not_live_combatant_state()
         return TextBuffIcon(source)
 
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory, audio=_audio()
+    )
     scene._battle.player.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, 3))  # live only
 
     scene.draw(pygame.Surface((800, 600)))
@@ -1709,7 +1833,7 @@ def test_buff_icon_row_renders_the_displayed_snapshot_not_live_combatant_state()
 
 def test_draw_buff_icons_shows_the_remaining_turns_number_in_the_icons_top_right_corner() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.FIBROUS))
     scene._player_displayed.remaining_turns[(EffectCategory.BATTLE, EffectName.FIBROUS)] = 3
     surface = pygame.Surface((800, 600))
@@ -1731,7 +1855,7 @@ def test_draw_buff_icons_shows_the_remaining_turns_number_in_the_icons_top_right
 
 def test_draw_buff_icons_shows_no_number_for_an_indefinite_effect() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.active_effects.add((EffectCategory.LIFESPAN, EffectName.FIBROUS))
     scene._player_displayed.remaining_turns[(EffectCategory.LIFESPAN, EffectName.FIBROUS)] = None
     surface = pygame.Surface((800, 600))
@@ -1751,7 +1875,7 @@ def test_draw_buff_icons_shows_no_number_for_an_indefinite_effect() -> None:
 
 def test_effect_applied_phase_adds_to_the_displayed_active_effects_on_start() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     event = EffectApplied(
         target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
     )
@@ -1765,7 +1889,7 @@ def test_effect_applied_phase_adds_to_the_displayed_active_effects_on_start() ->
 
 def test_effect_applied_phase_sets_the_displayed_remaining_turns_on_start() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     event = EffectApplied(
         target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
     )
@@ -1780,7 +1904,7 @@ def test_effect_applied_phase_refreshes_remaining_turns_on_a_suppressed_reapplic
     # PROJECT_BRIEF.md §5.6's refresh-not-stack rule resets duration domain-side without an
     # announcement -- the HUD countdown must follow that silent reset too, not just active_effects.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     key = (EffectCategory.BATTLE, EffectName.RUNT)
     scene._player_displayed.active_effects.add(key)
     scene._player_displayed.remaining_turns[key] = 1
@@ -1796,7 +1920,7 @@ def test_effect_applied_phase_refreshes_remaining_turns_on_a_suppressed_reapplic
 
 def test_effect_expired_phase_discards_from_the_displayed_active_effects_on_start() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     key = (EffectCategory.BATTLE, EffectName.FIBROUS)
     scene._player_displayed.active_effects.add(key)
     event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
@@ -1808,7 +1932,7 @@ def test_effect_expired_phase_discards_from_the_displayed_active_effects_on_star
 
 def test_effect_expired_phase_discards_the_displayed_remaining_turns_on_start() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     key = (EffectCategory.BATTLE, EffectName.FIBROUS)
     scene._player_displayed.active_effects.add(key)
     scene._player_displayed.remaining_turns[key] = 1
@@ -1824,7 +1948,7 @@ def test_effect_applied_phase_is_not_suppressed_for_a_different_category_of_the_
     # already active does not suppress a genuinely new Battle-scoped Fibrous application (the
     # brief's own worked example: both apply at once and combine additively).
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.active_effects.add((EffectCategory.LIFESPAN, EffectName.FIBROUS))
     event = EffectApplied(
         target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
@@ -1845,7 +1969,7 @@ def test_effect_expired_phase_only_discards_the_battle_scoped_key() -> None:
     # HUD icon (keyed by name only, see _draw_buff_icons) stays showing for as long as any
     # category-scoped instance remains.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.active_effects = {
         (EffectCategory.LIFESPAN, EffectName.FIBROUS),
         (EffectCategory.BATTLE, EffectName.FIBROUS),
@@ -1863,7 +1987,7 @@ def test_meter_bar_renders_the_displayed_snapshot_not_live_combatant_state() -> 
     # the actual ratio _draw_bar is called with (rather than only inspecting the snapshot) is what
     # makes this catch a regression to reading live state instead.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.meter = 42  # simulates a tween mid-flight
     scene._battle.player.current_meter = 99  # already fully resolved live, per Battle's contract
     ratios: list[float] = []
@@ -1884,7 +2008,9 @@ def test_meter_bar_renders_the_displayed_snapshot_not_live_combatant_state() -> 
 
 def test_meter_tween_phase_duration_is_divided_by_the_combat_speed_multiplier() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0, audio=_audio()
+    )
 
     phases = scene._phases_for(MeterFilled(combatant=scene._battle.player, amount=50, meter_after=50))
 
@@ -1893,7 +2019,7 @@ def test_meter_tween_phase_duration_is_divided_by_the_combat_speed_multiplier() 
 
 def test_meter_filled_and_meter_consumed_tween_the_displayed_meter_over_the_hp_tween_duration() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     displayed = scene._player_displayed
     displayed.meter = 0.0
 
@@ -1914,7 +2040,9 @@ def test_meter_filled_and_meter_consumed_tween_the_displayed_meter_over_the_hp_t
 
 def test_effect_applied_announcement_duration_is_divided_by_the_combat_speed_multiplier() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0, audio=_audio()
+    )
     event = EffectApplied(
         target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
     )
@@ -1934,7 +2062,9 @@ def test_effect_applied_phase_sets_an_effect_card_announcement_with_title_and_su
         return icon
 
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory, audio=_audio()
+    )
     event = EffectApplied(
         target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3
     )
@@ -1962,7 +2092,7 @@ def test_effect_applied_phase_sets_an_effect_card_announcement_with_title_and_su
 
 def test_effect_applied_phase_subtitles_a_lifespan_effect_and_an_indefinite_battle_effect() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     lifespan_event = EffectApplied(
         target=scene._battle.player, effect=EffectName.RESONANCE, category=EffectCategory.LIFESPAN, remaining_turns=None
@@ -1986,7 +2116,7 @@ def test_effect_applied_phase_is_suppressed_when_the_effect_is_already_active_in
     # stacking -- repeatedly triggering the same debuff (e.g. Barbed Struggle every turn) must not
     # re-announce it each time, only the first time it actually becomes active in that category.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.RUNT))
     event = EffectApplied(
         target=scene._battle.player, effect=EffectName.RUNT, category=EffectCategory.BATTLE, remaining_turns=3
@@ -2005,7 +2135,9 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
         return icon
 
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory, audio=_audio()
+    )
     assert not scene._battle.is_over  # the announcing case
     event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
 
@@ -2027,7 +2159,7 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
 
 def test_effect_expiry_from_end_of_battle_cleanup_clears_the_display_without_announcing() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     key = (EffectCategory.BATTLE, EffectName.FIBROUS)
     scene._player_displayed.active_effects.add(key)
     scene._player_displayed.remaining_turns[key] = 2
@@ -2049,7 +2181,7 @@ def test_effect_expiry_from_end_of_battle_cleanup_clears_the_display_without_ann
 
 def test_describe_event_addresses_the_player_directly_on_a_win() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     event = BattleEnded(winner=scene._battle.player)
 
     assert _describe_event(event, scene._battle.player) == "You win!"
@@ -2057,7 +2189,7 @@ def test_describe_event_addresses_the_player_directly_on_a_win() -> None:
 
 def test_describe_event_addresses_the_player_directly_on_a_loss() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     event = BattleEnded(winner=scene._battle.enemy)
 
     assert _describe_event(event, scene._battle.player) == "You lose!"
@@ -2065,14 +2197,14 @@ def test_describe_event_addresses_the_player_directly_on_a_loss() -> None:
 
 def test_describe_event_keeps_the_impersonal_wording_for_a_draw() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     assert _describe_event(BattleEnded(winner=None), scene._battle.player) == "The battle ends in a draw."
 
 
 def test_turn_skipped_extra_action_and_battle_ended_announcements_have_no_card() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     events: tuple[BattleEvent, ...] = (
         TurnSkipped(combatant=scene._battle.player),
         ExtraActionTriggered(actor=scene._battle.player, extra_action_index=0),
@@ -2093,7 +2225,9 @@ def test_plain_announcement_phase_duration_is_divided_by_the_combat_speed_multip
     # literal from _effect_announcement_phase (EffectApplied/EffectExpired, already covered above)
     # -- both need their own coverage at a non-default multiplier.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0)
+    scene = CombatScene(
+        generation, _encounter(generation), build_placeholder_atlas(), combat_speed_multiplier=2.0, audio=_audio()
+    )
     event = TurnSkipped(combatant=scene._battle.player)
 
     phases = scene._phases_for(event)
@@ -2105,7 +2239,7 @@ def test_announcement_phase_holds_for_the_tuned_duration_via_the_driver() -> Non
     # Drives the real _advance_phases loop (not just calling on_start/on_complete directly), so it
     # also exercises the announcement's real duration, not only its callbacks' effects.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     event = TurnSkipped(combatant=scene._battle.player)
     scene._queue_events([event])
 
@@ -2124,7 +2258,7 @@ def test_announcement_hold_timer_is_frozen_while_narration_is_active() -> None:
     # announcement's hold could elapse -- and clear itself -- while narration was up hiding it from
     # ever being drawn (_draw_announcement's succession guard hides it, it doesn't pause it).
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     event = TurnSkipped(combatant=scene._battle.player)
     scene._queue_events([event])
     scene.update(0.0)  # the first event of a batch reveals immediately (ADR 0013)
@@ -2144,7 +2278,7 @@ def test_announcement_hold_timer_is_frozen_while_narration_is_active() -> None:
 
 def test_draw_does_not_raise_with_a_plain_announcement_set() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._announcement = Announcement(text="Test announcement")
 
     scene.draw(pygame.Surface((800, 600)))
@@ -2152,7 +2286,7 @@ def test_draw_does_not_raise_with_a_plain_announcement_set() -> None:
 
 def test_announcement_is_not_drawn_while_narration_is_active() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._announcement = Announcement(text="Test announcement")
     scene._narration.fire(NarrationTrigger.FIRST_ATTACK, "msg", "sub")
 
@@ -2168,7 +2302,7 @@ def test_announcement_is_not_drawn_while_narration_is_active() -> None:
 
 def test_draw_does_not_raise_with_an_effect_card_announcement_set() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._announcement = Announcement(
         card=AnchoredCard(
             card=Card(
@@ -2192,7 +2326,7 @@ def test_draw_anchors_the_effect_card_over_its_own_combatants_half() -> None:
             render_calls.append((pos, size))
 
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     surface = pygame.Surface((800, 600))
 
     for target, mirrored in ((scene._battle.player, False), (scene._battle.enemy, True)):
@@ -2217,7 +2351,7 @@ def test_every_effect_card_stays_inside_its_combatants_half_of_the_real_window()
     # Every label and description is measured on both sides: character count doesn't predict
     # rendered width in a proportional font, and the mirrored side anchors from a different origin.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     width, height = _WINDOW_SIZE
     halves = (
         (scene._battle.player, pygame.Rect(0, 0, width // 2, height)),
@@ -2256,7 +2390,7 @@ def test_every_effect_card_stays_inside_its_combatants_half_of_the_real_window()
 
 def test_swing_phase_focuses_the_source_as_acting_and_the_target_as_receiving() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     swing = scene._phases_for(_hit_landed(scene))[0]
     assert scene._phase_focus is None  # not set until on_start actually fires
@@ -2270,7 +2404,7 @@ def test_swing_phase_focuses_the_source_as_acting_and_the_target_as_receiving() 
 
 def test_reaction_phase_focuses_only_the_receiving_combatant() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     scene._reaction_phase(scene._battle.player, HitValence.DAMAGE).on_start()
 
@@ -2280,7 +2414,7 @@ def test_reaction_phase_focuses_only_the_receiving_combatant() -> None:
 
 def test_overlay_phase_focuses_the_target_as_receiving() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     scene._phases_for(_dot_ticked(scene))[0].on_start()
 
@@ -2289,7 +2423,7 @@ def test_overlay_phase_focuses_the_target_as_receiving() -> None:
 
 def test_focus_outlives_the_animation_phase_that_set_it_and_covers_the_trailing_hp_tween() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     hp_before = scene._enemy_displayed.hp
     event = _hit_landed(scene)
     scene._queue_events([event])
@@ -2305,7 +2439,7 @@ def test_focus_outlives_the_animation_phase_that_set_it_and_covers_the_trailing_
 
 def test_focus_clears_when_the_next_event_concerns_nobody() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     meter_filled = MeterFilled(combatant=scene._battle.player, amount=10, meter_after=10)
     scene._queue_events([_hit_landed(scene), meter_filled])
 
@@ -2319,7 +2453,7 @@ def test_focus_clears_when_the_next_event_concerns_nobody() -> None:
 def test_the_next_events_focus_is_established_by_the_same_call_that_drains_the_previous() -> None:
     # The two hits run in opposite directions, so the focus that comes back can only be the second's.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     player, enemy = scene._battle.player, scene._battle.enemy
     riposte = HitLanded(
         source=enemy,
@@ -2342,7 +2476,7 @@ def test_the_next_events_focus_is_established_by_the_same_call_that_drains_the_p
 
 def test_death_focuses_the_fallen_combatant_for_its_whole_pose() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._queue_events([Death(combatant=scene._battle.player)])
 
     scene._advance_phases(0.0)
@@ -2353,7 +2487,7 @@ def test_death_focuses_the_fallen_combatant_for_its_whole_pose() -> None:
 
 def test_revive_focus_covers_the_hp_climb_that_follows_its_state_switch() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._player_displayed.hp = 0.0
     scene._queue_events([Revive(combatant=scene._battle.player, revived_hp=10)])
 
@@ -2379,7 +2513,7 @@ def test_role_highlight_colors_do_not_collide_with_the_bars_they_tint() -> None:
 
 def test_focus_clears_once_the_reveal_queue_drains() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._queue_events([_hit_landed(scene)])
 
     scene._advance_phases(0.0)
@@ -2392,7 +2526,7 @@ def test_focus_clears_once_the_reveal_queue_drains() -> None:
 
 def test_update_advances_the_scene_clock_by_the_frames_delta() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     scene.update(0.016)
     scene.update(0.016)
@@ -2402,7 +2536,7 @@ def test_update_advances_the_scene_clock_by_the_frames_delta() -> None:
 
 def test_pulse_is_driven_by_the_scene_clock_not_the_in_flight_phases_own_elapsed_time() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     at_rest = scene._pulse_mix()
     scene._elapsed_seconds = BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS / 4
@@ -2413,7 +2547,7 @@ def test_pulse_is_driven_by_the_scene_clock_not_the_in_flight_phases_own_elapsed
 
 def test_draw_does_not_raise_while_a_swing_highlight_is_active() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._phases_for(_hit_landed(scene))[0].on_start()
     scene._elapsed_seconds = BATTLE_HIGHLIGHT_PULSE_PERIOD_SECONDS / 2  # peak of the pulse
 
@@ -2422,7 +2556,7 @@ def test_draw_does_not_raise_while_a_swing_highlight_is_active() -> None:
 
 def test_swing_phase_flashes_the_target_only_and_clears_it_when_the_swing_completes() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     swing = scene._phases_for(_hit_landed(scene))[0]
     assert scene._enemy_displayed.hit_flash is None  # not set until on_start actually fires
@@ -2437,7 +2571,7 @@ def test_swing_phase_flashes_the_target_only_and_clears_it_when_the_swing_comple
 
 def test_reaction_phase_flashes_the_flinching_combatant() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     reaction = scene._reaction_phase(scene._battle.player, HitValence.DAMAGE)
     reaction.on_start()
@@ -2450,7 +2584,7 @@ def test_reaction_phase_flashes_the_flinching_combatant() -> None:
 
 def test_overlay_phase_inherits_the_reactions_flash() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     overlay_phase = scene._phases_for(_dot_ticked(scene))[0]
     overlay_phase.on_start()
@@ -2473,7 +2607,7 @@ _FLASH_VALENCE_BY_EVENT_TYPE: Mapping[type[object], HitValence] = {
 def test_only_the_events_that_move_hp_flash_and_each_carries_its_own_valence() -> None:
     # Driven off the one-of-each list, so a new event variant has to declare whether it flashes.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     flashed: dict[type[object], HitValence] = {}
     for event in _ONE_OF_EACH_BATTLE_EVENT:
@@ -2520,7 +2654,7 @@ def test_the_damage_tint_keeps_clear_of_the_receiving_roles_highlight_hue() -> N
 
 def test_an_overlay_and_the_flash_beneath_it_read_the_same_valence() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     for event, expected in ((_dot_ticked(scene), HitValence.DAMAGE), (_heal_applied(scene), HitValence.HEALING)):
         scene._phases_for(event)[0].on_start()
@@ -2540,7 +2674,11 @@ def test_the_overlays_hp_amount_is_printed_in_its_valences_colour(valence: HitVa
 
     generation = _generation()
     scene = CombatScene(
-        generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=lambda effect: _SilentIcon()
+        generation,
+        _encounter(generation),
+        build_placeholder_atlas(),
+        buff_icon_factory=lambda effect: _SilentIcon(),
+        audio=_audio(),
     )
     scene._overlay = Overlay(
         target=scene._battle.player, source=EffectName.TOXICITY, label="Toxicity", hp_delta=-2, valence=valence
@@ -2561,7 +2699,7 @@ def test_the_overlays_hp_amount_is_printed_in_its_valences_colour(valence: HitVa
 
 def test_hit_flash_peaks_on_impact_and_decays_over_its_own_duration() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     displayed = scene._player_displayed
     assert scene._hit_flash_strength(displayed) == 0.0  # nothing lit before a hit lands
 
@@ -2619,7 +2757,7 @@ def test_drawing_a_hit_flash_leaves_the_animators_cached_frame_untouched(tmp_pat
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     atlas = build_art_atlas(tmp_path)
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
     scene._reaction_phase(scene._battle.player, HitValence.DAMAGE).on_start()
     frame = scene._current_sprite(scene._battle.player)
     pixels_before = pygame.image.tobytes(frame, "RGBA")
@@ -2634,7 +2772,7 @@ def test_drawing_a_dimmed_combatant_leaves_the_animators_cached_frame_untouched(
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     atlas = build_art_atlas(tmp_path)
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), atlas)
+    scene = CombatScene(generation, _encounter(generation), atlas, audio=_audio())
     scene._active_combatant = scene._battle.enemy  # leaves the player dimmed
     frame = scene._current_sprite(scene._battle.player)
     pixels_before = pygame.image.tobytes(frame, "RGBA")
@@ -2647,7 +2785,7 @@ def test_drawing_a_dimmed_combatant_leaves_the_animators_cached_frame_untouched(
 
 def test_draw_does_not_raise_while_a_hit_flash_is_active() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._phases_for(_hit_landed(scene))[0].on_start()
 
     scene.draw(pygame.Surface((800, 600)))
@@ -2658,7 +2796,7 @@ def test_the_turn_banner_is_absent_before_the_first_turn() -> None:
     character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
     character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
     generation = _generation(character=character)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     surface = pygame.Surface(_WINDOW_SIZE)
     surface.fill(_UNDRAWN)
     assert scene._turn_banner is None
@@ -2674,7 +2812,7 @@ def test_the_turn_banner_is_absent_before_the_first_turn() -> None:
 
 def test_the_turn_banner_names_the_player_while_the_action_menu_is_up() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     scene.update(0.016)
     assert scene._pending_query is not None
@@ -2690,7 +2828,7 @@ def test_the_turn_banner_names_the_player_while_the_action_menu_is_up() -> None:
 
 def test_the_turn_banner_names_the_enemy_during_the_enemy_turn() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)
     _press(scene, ACTION_KEYS[0])
 
@@ -2711,7 +2849,7 @@ def test_a_skipped_player_turn_still_reads_as_the_players_own() -> None:
     character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
     character.effects.apply(ActiveEffect(EffectName.VEGETATIVE, EffectCategory.LIFESPAN, None))
     generation = _generation(character=character, rng=_AlwaysRolling([EncounterKind.ENEMY]))
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     scene.update(0.016)
 
@@ -2724,7 +2862,7 @@ def test_an_extra_action_keeps_the_turn_banner_on_the_player() -> None:
     character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
     character.effects.apply(ActiveEffect(EffectName.UPROOTED, EffectCategory.LIFESPAN, None))
     generation = _generation(character=character, rng=_AlwaysRolling([EncounterKind.ENEMY]))
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     banners: list[str | None] = []
 
     for _ in range(400):
@@ -2743,7 +2881,7 @@ def test_an_extra_action_keeps_the_turn_banner_on_the_player() -> None:
 def test_the_turn_banner_is_cleared_before_the_battle_result_is_announced() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     banners_over_the_result: list[str | None] = []
 
     for _ in range(2000):
@@ -2767,7 +2905,7 @@ def test_the_turn_banner_clears_both_name_labels_at_the_real_window_size(strain:
     # Rendered width isn't predicted by character count in a proportional font, so every strain is
     # measured against the real font. Nothing sprite-derived, so the 32x32 placeholder atlas is fine.
     generation = _generation(strain_queue=[strain])
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._turn_banner = _turn_title(scene._battle.enemy)
     surface = pygame.Surface(_WINDOW_SIZE)
     surface.fill(_UNDRAWN)
@@ -2795,7 +2933,7 @@ def test_the_active_combatant_is_absent_before_the_first_turn() -> None:
     character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
     character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
     generation = _generation(character=character)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     assert scene._active_combatant is None
 
     scene.update(0.016)
@@ -2806,7 +2944,7 @@ def test_the_active_combatant_is_absent_before_the_first_turn() -> None:
 
 def test_the_active_combatant_is_the_player_while_the_action_menu_is_up() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     scene.update(0.016)
 
@@ -2816,7 +2954,7 @@ def test_the_active_combatant_is_the_player_while_the_action_menu_is_up() -> Non
 
 def test_the_active_combatant_is_the_enemy_during_the_enemy_turn() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)
     _press(scene, ACTION_KEYS[0])
 
@@ -2835,7 +2973,7 @@ def test_the_active_combatant_is_the_enemy_during_the_enemy_turn() -> None:
 def test_the_active_combatant_is_cleared_before_the_battle_result_is_announced() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     active_over_the_result: list[Combatant | None] = []
 
     for _ in range(2000):
@@ -2910,7 +3048,7 @@ def test_draw_combatant_dims_only_the_side_that_is_not_the_active_combatant() ->
     # Pixel-level, not a spy on _dimmed: the earlier version only proved the helper was *called*,
     # which stayed green even with the dim (and the hit-flash tint) dropped from the blit entirely.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     surface = pygame.Surface(_WINDOW_SIZE)
     player_layout = _combatant_layout(surface, mirrored=False)
     enemy_layout = _combatant_layout(surface, mirrored=True)
@@ -2936,7 +3074,7 @@ def test_draw_combatant_dims_only_the_side_that_is_not_the_active_combatant() ->
 
 def test_draw_combatant_dims_neither_side_before_a_turn_is_latched() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     assert scene._active_combatant is None
     surface = pygame.Surface(_WINDOW_SIZE)
     player_layout = _combatant_layout(surface, mirrored=False)
@@ -2958,7 +3096,7 @@ def test_draw_combatant_dims_neither_side_before_a_turn_is_latched() -> None:
 
 def test_draw_does_not_raise_while_a_turn_is_latched() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)
     assert scene._active_combatant is not None
 
@@ -2967,7 +3105,7 @@ def test_draw_does_not_raise_while_a_turn_is_latched() -> None:
 
 def test_draw_background_uses_the_resolved_biome_key(monkeypatch: pytest.MonkeyPatch) -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     seen_keys: list[SpriteKey] = []
 
     def _fake_crop_to_cover(surface: pygame.Surface, target_size: tuple[int, int]) -> pygame.Surface:
@@ -2997,7 +3135,7 @@ def test_construction_does_not_fire_first_battle_narration() -> None:
     # the player has walked up to it, not here once combat has already begun.
     generation = _generation()
 
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     assert NarrationTrigger.FIRST_BATTLE not in scene._narration._seen
     assert scene._narration.queue.is_active is False
@@ -3005,7 +3143,7 @@ def test_construction_does_not_fire_first_battle_narration() -> None:
 
 def test_fire_narration_for_a_player_hit_landed_fires_first_attack() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     event = HitLanded(
         source=scene._battle.player,
         target=scene._battle.enemy,
@@ -3023,7 +3161,7 @@ def test_fire_narration_for_a_player_hit_landed_fires_first_attack() -> None:
 
 def test_fire_narration_for_an_enemy_hit_landed_does_not_fire_first_attack() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     event = HitLanded(
         source=scene._battle.enemy,
         target=scene._battle.player,
@@ -3046,7 +3184,7 @@ def _give_player_a_meter_gated_action(scene: CombatScene) -> None:
 
 def test_fire_narration_for_the_players_meter_reaching_capacity_fires_first_meter_full() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     _give_player_a_meter_gated_action(scene)
     capacity = scene._battle.player.base_stats.meter_capacity
     event = MeterFilled(combatant=scene._battle.player, amount=10, meter_after=capacity)
@@ -3058,7 +3196,7 @@ def test_fire_narration_for_the_players_meter_reaching_capacity_fires_first_mete
 
 def test_fire_narration_for_the_players_meter_below_capacity_does_not_fire_first_meter_full() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     _give_player_a_meter_gated_action(scene)
     below_capacity = scene._battle.player.base_stats.meter_capacity - 1
     event = MeterFilled(combatant=scene._battle.player, amount=10, meter_after=below_capacity)
@@ -3072,7 +3210,7 @@ def test_fire_narration_for_a_full_meter_does_not_fire_without_a_meter_gated_act
     # A full meter is reachable even with no SWARM/ATTACK node purchased yet -- the tutorial
     # promising "a new action has appeared" must not fire until one actually has.
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     capacity = scene._battle.player.base_stats.meter_capacity
     event = MeterFilled(combatant=scene._battle.player, amount=10, meter_after=capacity)
 
@@ -3083,7 +3221,7 @@ def test_fire_narration_for_a_full_meter_does_not_fire_without_a_meter_gated_act
 
 def test_fire_narration_for_the_enemys_meter_filling_does_not_fire_first_meter_full() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     capacity = scene._battle.enemy.base_stats.meter_capacity
     event = MeterFilled(combatant=scene._battle.enemy, amount=10, meter_after=capacity)
 
@@ -3094,7 +3232,7 @@ def test_fire_narration_for_the_enemys_meter_filling_does_not_fire_first_meter_f
 
 def test_fire_narration_for_the_players_real_death_fires_first_death() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._battle.player.current_hp = 0
     event = Death(combatant=scene._battle.player)
 
@@ -3105,7 +3243,7 @@ def test_fire_narration_for_the_players_real_death_fires_first_death() -> None:
 
 def test_fire_narration_for_the_players_death_followed_by_a_revive_does_not_fire_first_death() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     # Battle applies a Revive's HP synchronously before this event ever reveals (GOTCHAS.md), so a
     # real revive leaves current_hp positive by the time _fire_narration_for sees the Death.
     scene._battle.player.current_hp = 1
@@ -3118,7 +3256,7 @@ def test_fire_narration_for_the_players_death_followed_by_a_revive_does_not_fire
 
 def test_fire_narration_for_the_enemys_death_does_not_fire_first_death() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._battle.enemy.current_hp = 0
     event = Death(combatant=scene._battle.enemy)
 
@@ -3130,7 +3268,7 @@ def test_fire_narration_for_the_enemys_death_does_not_fire_first_death() -> None
 def test_a_won_battle_fires_first_attack_narration_along_the_way() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     _drive_to_transition(scene)
 
@@ -3140,7 +3278,7 @@ def test_a_won_battle_fires_first_attack_narration_along_the_way() -> None:
 def test_a_lost_battle_fires_first_death_narration_along_the_way() -> None:
     fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=fragile, character=Character(current_hp=5, max_hp=5))
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
 
     _drive_to_transition(scene)
 
@@ -3154,18 +3292,22 @@ def test_a_shared_narration_instance_does_not_refire_first_battle_across_scenes(
     # Battle must be finished before the same Generation can start another.
     triggers = NarrationTriggers()
     first_generation = _generation()
-    CombatScene(first_generation, _encounter(first_generation), build_placeholder_atlas(), narration=triggers)
+    CombatScene(
+        first_generation, _encounter(first_generation), build_placeholder_atlas(), narration=triggers, audio=_audio()
+    )
     triggers.queue.dismiss()
 
     second_generation = _generation()
-    CombatScene(second_generation, _encounter(second_generation), build_placeholder_atlas(), narration=triggers)
+    CombatScene(
+        second_generation, _encounter(second_generation), build_placeholder_atlas(), narration=triggers, audio=_audio()
+    )
 
     assert triggers.queue.is_active is False
 
 
 def test_narration_dismiss_withholds_the_input_it_shares_a_keypress_with() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene.update(0.016)  # reach AWAITING_PLAYER_ACTION
     assert scene._pending_query is not None
     scene._narration.queue.enqueue("test message", "test subtitle")  # e.g. FIRST_ATTACK, mid-battle
@@ -3179,7 +3321,7 @@ def test_narration_dismiss_withholds_the_input_it_shares_a_keypress_with() -> No
 
 def test_update_withholds_battle_concluded_while_the_narration_is_still_active() -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._battle.player.current_hp = 0  # forces is_over True without going through _conclude()
     scene._narration.queue.enqueue("test message", "test subtitle")  # e.g. FIRST_DEATH, still up
 
@@ -3196,7 +3338,7 @@ def test_update_withholds_battle_concluded_while_the_narration_is_still_active()
 
 def test_draw_renders_the_active_narration_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     generation = _generation()
-    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     scene._narration.queue.enqueue("test message", "test subtitle")  # e.g. FIRST_ATTACK, mid-battle
     drawn: list[NarrationEntry] = []
     import eye.gui.scenes.combat as combat_module

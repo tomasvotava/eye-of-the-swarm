@@ -174,6 +174,16 @@ def test_enter_combat_threads_the_combat_speed_multiplier_into_the_combat_scene(
     assert driver._scene._combat_speed_multiplier == 2.0
 
 
+def test_enter_combat_threads_the_same_audio_manager_into_the_combat_scene() -> None:
+    spy = build_spy_audio_manager()
+    driver = _driver([EncounterKind.ENEMY], audio=spy.manager)
+
+    _advance(driver)
+
+    assert isinstance(driver._scene, CombatScene)
+    assert driver._scene._audio is spy.manager
+
+
 def test_win_returns_to_exploration_without_persisting() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     driver = _driver_with(_generation(stats=overwhelming))
