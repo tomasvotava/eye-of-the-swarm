@@ -22,6 +22,7 @@ from typing import assert_never
 import pygame
 
 from eye.gui.assets import SpriteAtlas
+from eye.gui.narration import NarrationTriggers
 from eye.gui.play_scene import BattleConcluded, Continue, EnterCombat, PlayScene, PlaySceneTransition
 from eye.gui.scene import Scene
 from eye.gui.scenes.combat import CombatScene
@@ -48,6 +49,9 @@ class GameDriver:
         # or a later Continue) -- staying None while the boot skill-tree screen is up, since
         # Game.start_generation() raises if called again before the one from __init__ ended.
         self._generation: Generation | None = None
+        # Reassigned (not just mutated) by _start_new_generation() -- a fresh generation re-sees
+        # every narration trigger, so it gets its own queue and seen-set, not a cleared old one.
+        self._narration = NarrationTriggers()
         self._scene: PlayScene = (
             SkillTreeScene(self._game, self._atlas, on_purchase=self._persist)
             if had_existing_save
@@ -69,7 +73,7 @@ class GameDriver:
     def _resolve(self, transition: PlaySceneTransition) -> PlayScene:
         match transition:
             case EnterCombat(encounter=encounter):
-                return CombatScene(self._active_generation(), encounter, self._atlas)
+                return CombatScene(self._active_generation(), encounter, self._atlas, narration=self._narration)
             case BattleConcluded():
                 return self._resolve_battle_concluded()
             case Continue():
@@ -80,14 +84,19 @@ class GameDriver:
     def _resolve_battle_concluded(self) -> PlayScene:
         generation = self._active_generation()
         if not generation.died:
-            return ExplorationScene.resuming_after_combat(generation, self._game, self._atlas)
+            return ExplorationScene.resuming_after_combat(
+                generation, self._game, self._atlas, narration=self._narration
+            )
         self._game.end_generation(generation)
         self._persist()
         return SkillTreeScene(self._game, self._atlas, on_purchase=self._persist)
 
     def _start_new_generation(self) -> ExplorationScene:
         self._generation = self._game.start_generation()
-        return ExplorationScene.for_new_generation(self._generation, self._game, self._atlas)
+        # A fresh life re-sees every narration trigger (PROJECT_BRIEF.md §9.8) -- a new instance,
+        # not a cleared old one, since ExplorationScene/CombatScene hold a reference to it too.
+        self._narration = NarrationTriggers()
+        return ExplorationScene.for_new_generation(self._generation, self._game, self._atlas, narration=self._narration)
 
     def _active_generation(self) -> Generation:
         # EnterCombat/BattleConcluded are only ever reported by CombatScene/ExplorationScene,

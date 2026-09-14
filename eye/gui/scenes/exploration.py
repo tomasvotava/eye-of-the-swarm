@@ -9,6 +9,7 @@ never constructs a sibling scene itself.
 
 from __future__ import annotations
 
+import math
 import random
 from collections.abc import Callable, Mapping, Sequence
 from enum import Enum, StrEnum, auto
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING, assert_never
 import pygame
 
 from eye.combat.effects import EffectName
+from eye.combat.tuning import PROXIMITY_FALLOFF_RANGE
 from eye.exploration.encounters import ResourceKind
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.animation import Animator, crop_to_cover, scale_clip, scale_sprite
@@ -24,6 +26,7 @@ from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
+from eye.gui.narration import NarrationTrigger, NarrationTriggers, draw_narration
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.props import resolve_prop_sampling
 from eye.gui.tuning import (
@@ -217,10 +220,12 @@ class ExplorationScene:
         *,
         starting_phase: _Phase,
         pending_events: Sequence[SessionEvent] = (),
+        narration: NarrationTriggers | None = None,
     ) -> None:
         self._generation = generation
         self._game = game
         self._atlas = atlas
+        self._narration = narration if narration is not None else NarrationTriggers()
         if buff_icon_factory is not None:
             self._buff_icon_factory = buff_icon_factory
         else:
@@ -281,13 +286,28 @@ class ExplorationScene:
         game: Game,
         atlas: SpriteAtlas,
         buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
+        narration: NarrationTriggers | None = None,
     ) -> ExplorationScene:
         """Joins the cycle at `AT_ENTRY` for the first screen beyond spawn. The spawn/home-turf
         position itself is never walked -- it holds no `advance()`-generated encounter, matured
         turf being safe by definition -- so this fires `advance()` once immediately rather than
         waiting for a `WALKING_TO_EXIT` arrival that will never come for this screen (ADR 0012)."""
+        narration = narration if narration is not None else NarrationTriggers()
         events = generation.advance()
-        return cls(generation, game, atlas, buff_icon_factory, starting_phase=_Phase.AT_ENTRY, pending_events=events)
+        narration.fire(
+            NarrationTrigger.FIRST_EXPLORATION,
+            "You venture out of the hive to spread your swarm's turf.",
+            "Press Space or Enter to venture further.",
+        )
+        return cls(
+            generation,
+            game,
+            atlas,
+            buff_icon_factory,
+            starting_phase=_Phase.AT_ENTRY,
+            pending_events=events,
+            narration=narration,
+        )
 
     @classmethod
     def resuming_after_combat(
@@ -296,15 +316,21 @@ class ExplorationScene:
         game: Game,
         atlas: SpriteAtlas,
         buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
+        narration: NarrationTriggers | None = None,
     ) -> ExplorationScene:
         """Joins directly at `RESOLVED`, positioned at the marker. The walk there already happened
         in the `ExplorationScene` instance that existed before the `EnterCombat` swap, and that
         screen's `advance()` already fired before combat took over, so this does not call it
         again (ADR 0012)."""
-        return cls(generation, game, atlas, buff_icon_factory, starting_phase=_Phase.RESOLVED)
+        return cls(generation, game, atlas, buff_icon_factory, starting_phase=_Phase.RESOLVED, narration=narration)
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN:
+            return
+        if self._narration.queue.is_active:
+            # Consumes this keypress like the _card gate below -- otherwise the same press both
+            # dismisses the overlay and drives a real advance/plant/card-dismiss underneath.
+            self._narration.queue.dismiss()
             return
         if self._card is not None:
             # Returning here, before any _pending_action write, is the entire reason no walk or
@@ -320,6 +346,7 @@ class ExplorationScene:
             self._player_animator.update(dt)
         if self._encounter_animator is not None:
             self._encounter_animator.update(dt)
+        self._check_narration_triggers()
         # Below the animator ticks, not above them: skipping a tick would drop a frame of
         # whichever clip is playing.
         if self._dismiss_card:
@@ -337,7 +364,10 @@ class ExplorationScene:
         if action is None:
             return None
         if action is ExplorationAction.PLANT_SEED:
-            if self._can_plant_seed():
+            # The narration check above can raise FIRST_SEED_READY on this very frame, on the same
+            # press that would otherwise plant -- withhold planting until that prompt has actually
+            # been read and dismissed, rather than have the "press P" message outlive its own action.
+            if self._can_plant_seed() and not self._narration.queue.is_active:
                 self._handle_plant_seed()
             return None
         if self._phase is _Phase.RESOLVED:
@@ -351,6 +381,21 @@ class ExplorationScene:
         # frame's worth of time (imperceptible at 60fps, but wrong on principle and awkward to
         # drive deterministically in tests).
         return self._advance_walk(dt)
+
+    def _check_narration_triggers(self) -> None:
+        # Level checks, not edge-triggered: safe to call every frame since NarrationTriggers.fire()
+        # is itself a once-per-generation no-op once seen.
+        if self._can_plant_seed():
+            self._narration.fire(NarrationTrigger.FIRST_SEED_READY, "A seed is ready to plant.", "Press P to plant it.")
+        distance = self._generation.distance_to_nearest_matured_turf
+        # inf (no turf has matured this generation yet) is excluded: "you've ventured too far" is
+        # a lie on a fresh save's first screen, where zero matured turf is the expected baseline.
+        if math.isfinite(distance) and distance >= PROXIMITY_FALLOFF_RANGE:
+            self._narration.fire(
+                NarrationTrigger.FIRST_PROXIMITY_FALLOFF,
+                "You've ventured too far from home. You are alone here.",
+                "Too far from the hive, no swarm assists you here.",
+            )
 
     def _begin_walk(self, phase: _Phase) -> None:
         # No card can be up here: handle_pygame_event returns before writing _pending_action
@@ -430,6 +475,12 @@ class ExplorationScene:
             # Twice by design: the card is the moment, the HUD line the record it leaves.
             self._last_message = _describe_screen_event(screen_event)
             self._card = self._card_for_screen_event(screen_event)
+            if isinstance(screen_event, EffectGranted):
+                self._narration.fire(
+                    NarrationTrigger.FIRST_PICKUP,
+                    "There's an obstacle in your path.",
+                    "It could help or hinder your swarm -- approach and see.",
+                )
         return None
 
     def _card_for_screen_event(self, event: _ScreenEvent) -> Card | None:
@@ -459,6 +510,7 @@ class ExplorationScene:
         self._draw_buff_icons(surface)
         self._draw_hud(surface)
         self._draw_raised_card(surface)
+        self._draw_narration(surface)
 
     def _draw_background(self, surface: pygame.Surface) -> None:
         key = resolve_biome(self._generation.distance_from_home)
@@ -577,6 +629,11 @@ class ExplorationScene:
             column_width=card_column_width(surface),
             footer=_CARD_FOOTER,
         )
+
+    def _draw_narration(self, surface: pygame.Surface) -> None:
+        entry = self._narration.queue.current
+        if entry is not None:
+            draw_narration(surface, entry, center_x=surface.get_width() // 2, column_width=card_column_width(surface))
 
     def _draw_hud(self, surface: pygame.Surface) -> None:
         font = get_font(GameFont.ITHACA, _FONT_SIZE)

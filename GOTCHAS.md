@@ -196,3 +196,20 @@ boot-scene choice and the save-decoding fallback disagree with each other.
 Fixing it means deriving `had_existing_save` from decodability (e.g. via `save.peek()`), not from
 whether `load()` returned anything — out of scope for whatever change surfaces it; file a follow-up
 rather than patching it inline.
+
+## 2026-09-14 - No matured turf means `distance_to_nearest_matured_turf` is `inf`, not "close"
+
+`FIRST_PROXIMITY_FALLOFF`/`FIRST_METER_FULL` narration cannot fire during a generation that has no
+matured turf yet -- including every brand-new save's entire first life -- and that is correct, not
+a bug to "fix" by loosening the guard back up.
+
+`ExplorationRun.distance_to_nearest_matured_turf` returns `math.inf` when `_matured_turfs` is empty
+(no turf has matured this generation). `distance_falloff_scale(inf, ...)` is `0.0`, so the player's
+meter-fill rate is genuinely scaled to zero for that whole life -- the meter can never reach
+capacity, so `FIRST_METER_FULL` never has a real occasion to fire. `FIRST_PROXIMITY_FALLOFF`
+excludes the `inf` case on purpose (`math.isfinite(distance)` in `exploration.py`) because "you've
+ventured too far from home" is a lie on turn one, before the player has taken a step -- re-including
+`inf` reintroduces that exact bug.
+
+Both triggers work as intended from generation 2 onward, once a real matured turf gives a finite
+distance to walk away from.

@@ -1,3 +1,4 @@
+import math
 import random
 from collections.abc import Sequence
 
@@ -273,3 +274,25 @@ def test_distance_from_home_threads_through_from_the_exploration_run() -> None:
     advance_flat(generation)
 
     assert generation.distance_from_home == 2
+
+
+def test_distance_to_nearest_matured_turf_threads_through_from_the_exploration_run() -> None:
+    generation = Generation(
+        character=_character(),
+        stats=Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10, recoil=0.0),
+        actions=(ActionDefinition(kind=ActionKind.STRUGGLE),),
+        rng=ScriptedEncounterRandom([EncounterKind.NOTHING] * 2),
+        starting_screen=0,
+        matured_turfs=(1,),
+    )
+
+    advance_flat(generation)
+    advance_flat(generation)
+
+    assert generation.distance_to_nearest_matured_turf == 1
+
+
+def test_distance_to_nearest_matured_turf_is_infinite_with_no_matured_turf_yet() -> None:
+    generation = _generation()
+
+    assert generation.distance_to_nearest_matured_turf == math.inf

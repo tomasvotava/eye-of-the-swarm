@@ -80,6 +80,10 @@ class Generation:
         return self._exploration.distance_from_home
 
     @property
+    def distance_to_nearest_matured_turf(self) -> float:
+        return self._exploration.distance_to_nearest_matured_turf
+
+    @property
     def active_lifespan_effects(self) -> tuple[EffectName, ...]:
         """Snapshot of the Lifespan-scoped effects the character holds, in `EffectName` order, each
         named once. A Battle-scoped effect of the same name is a separate slot (PROJECT_BRIEF.md §5.6)."""

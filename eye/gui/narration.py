@@ -3,11 +3,16 @@ scripted first-playthrough moments (PROJECT_BRIEF.md §9.8). Presentation-only -
 involvement, no rendering commitment beyond `draw_narration` below. Whoever holds the queue owns
 feeding it `dismiss()` from its own `handle_pygame_event`; this module makes no assumption about
 which input counts as "continue".
+
+NarrationTrigger/NarrationTriggers add the once-per-generation bookkeeping on top: which of the 8
+scripted moments have already been shown, so a scene can ask to fire one unconditionally and get a
+silent no-op if it already has.
 """
 
 from collections import deque
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum, auto
 
 import pygame
 import pygame.typing
@@ -58,6 +63,37 @@ class NarrationQueue:
     def dismiss(self) -> None:
         if self._entries:
             self._entries.popleft()
+
+
+class NarrationTrigger(Enum):
+    """The 8 scripted first-playthrough moments a fresh generation re-sees (PROJECT_BRIEF.md
+    §9.8) -- one member per trigger point, independent of which scene ends up firing it."""
+
+    FIRST_EXPLORATION = auto()
+    FIRST_SEED_READY = auto()
+    FIRST_PICKUP = auto()
+    FIRST_BATTLE = auto()
+    FIRST_ATTACK = auto()
+    FIRST_METER_FULL = auto()
+    FIRST_DEATH = auto()
+    FIRST_PROXIMITY_FALLOFF = auto()
+
+
+@dataclass(slots=True)
+class NarrationTriggers:
+    """Owns a `NarrationQueue` plus which `NarrationTrigger`s have already fired this generation.
+    One instance is shared by `GameDriver` across every scene reconstruction in a generation's
+    lifetime (a fresh `Generation` gets a fresh instance), so `fire()` is a no-op the second time a
+    trigger is asked for -- callers need not track "have I already shown this" themselves."""
+
+    queue: NarrationQueue = field(default_factory=NarrationQueue)
+    _seen: set[NarrationTrigger] = field(default_factory=set)
+
+    def fire(self, trigger: NarrationTrigger, message: str, subtitle: str) -> None:
+        if trigger in self._seen:
+            return
+        self._seen.add(trigger)
+        self.queue.enqueue(message, subtitle)
 
 
 def _fitted_font(texts: Sequence[str], max_font_size: int, max_width: int) -> pygame.font.Font:

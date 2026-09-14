@@ -45,6 +45,7 @@ from eye.gui.assets import (
 )
 from eye.gui.card import Card
 from eye.gui.fonts.fonts import GameFont, get_font
+from eye.gui.narration import NarrationEntry, NarrationTrigger, NarrationTriggers
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.scenes.combat import (
     _BAR_HEIGHT,
@@ -306,6 +307,7 @@ def test_handle_pygame_event_ignores_an_index_beyond_the_available_actions() -> 
 def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
 
     _press(scene, ACTION_KEYS[1])
@@ -316,6 +318,7 @@ def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
 def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
 
     _press(scene, pygame.K_DOWN)
@@ -328,6 +331,7 @@ def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
 def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
 
     _press(scene, pygame.K_UP)
@@ -338,6 +342,7 @@ def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
 def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
 
     _press(scene, pygame.K_DOWN)
@@ -349,6 +354,7 @@ def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
 def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)  # first AWAITING_PLAYER_ACTION query, cursor at 0
     _press(scene, pygame.K_DOWN)
     assert scene._cursor_index == 1
@@ -392,6 +398,7 @@ def test_resolve_enemy_turn_ticks_the_displayed_battle_effect_durations_by_one_p
     # update()) to stay in sync with the domain's actual cadence.
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     key = (EffectCategory.BATTLE, EffectName.FIBROUS)
     scene._player_displayed.remaining_turns[key] = 3
     scene.update(0.016)  # first AWAITING_PLAYER_ACTION query
@@ -2577,6 +2584,7 @@ def test_the_turn_banner_is_absent_before_the_first_turn() -> None:
 def test_the_turn_banner_names_the_player_while_the_action_menu_is_up() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
 
     scene.update(0.016)
     assert scene._pending_query is not None
@@ -2593,6 +2601,7 @@ def test_the_turn_banner_names_the_player_while_the_action_menu_is_up() -> None:
 def test_the_turn_banner_names_the_enemy_during_the_enemy_turn() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
     _press(scene, ACTION_KEYS[0])
 
@@ -2717,6 +2726,7 @@ def test_the_active_combatant_is_the_player_while_the_action_menu_is_up() -> Non
 def test_the_active_combatant_is_the_enemy_during_the_enemy_turn() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
     _press(scene, ACTION_KEYS[0])
 
@@ -2888,3 +2898,218 @@ def test_draw_background_uses_the_resolved_biome_key(monkeypatch: pytest.MonkeyP
     from eye.gui.biome import resolve_biome
 
     assert seen_keys == [resolve_biome(scene._generation.distance_from_home)]
+
+
+def test_construction_fires_first_battle_narration() -> None:
+    generation = _generation()
+
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    assert NarrationTrigger.FIRST_BATTLE in scene._narration._seen
+    assert scene._narration.queue.is_active is True
+
+
+def test_fire_narration_for_a_player_hit_landed_fires_first_attack() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    event = HitLanded(
+        source=scene._battle.player,
+        target=scene._battle.enemy,
+        action=ActionKind.STRUGGLE,
+        hit_index=0,
+        hit_count=1,
+        damage=3,
+        target_hp_after=17,
+    )
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_ATTACK in scene._narration._seen
+
+
+def test_fire_narration_for_an_enemy_hit_landed_does_not_fire_first_attack() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    event = HitLanded(
+        source=scene._battle.enemy,
+        target=scene._battle.player,
+        action=ActionKind.STRUGGLE,
+        hit_index=0,
+        hit_count=1,
+        damage=3,
+        target_hp_after=17,
+    )
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_ATTACK not in scene._narration._seen
+
+
+def _give_player_a_meter_gated_action(scene: CombatScene) -> None:
+    gated_action = ActionDefinition(kind=ActionKind.SWARM_ATTACK, name="Coordinated Strike", requires_full_meter=True)
+    scene._battle.player.available_actions = (*scene._battle.player.available_actions, gated_action)
+
+
+def test_fire_narration_for_the_players_meter_reaching_capacity_fires_first_meter_full() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    _give_player_a_meter_gated_action(scene)
+    capacity = scene._battle.player.base_stats.meter_capacity
+    event = MeterFilled(combatant=scene._battle.player, amount=10, meter_after=capacity)
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_METER_FULL in scene._narration._seen
+
+
+def test_fire_narration_for_the_players_meter_below_capacity_does_not_fire_first_meter_full() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    _give_player_a_meter_gated_action(scene)
+    below_capacity = scene._battle.player.base_stats.meter_capacity - 1
+    event = MeterFilled(combatant=scene._battle.player, amount=10, meter_after=below_capacity)
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_METER_FULL not in scene._narration._seen
+
+
+def test_fire_narration_for_a_full_meter_does_not_fire_without_a_meter_gated_action_available() -> None:
+    # A full meter is reachable even with no SWARM/ATTACK node purchased yet -- the tutorial
+    # promising "a new action has appeared" must not fire until one actually has.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    capacity = scene._battle.player.base_stats.meter_capacity
+    event = MeterFilled(combatant=scene._battle.player, amount=10, meter_after=capacity)
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_METER_FULL not in scene._narration._seen
+
+
+def test_fire_narration_for_the_enemys_meter_filling_does_not_fire_first_meter_full() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    capacity = scene._battle.enemy.base_stats.meter_capacity
+    event = MeterFilled(combatant=scene._battle.enemy, amount=10, meter_after=capacity)
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_METER_FULL not in scene._narration._seen
+
+
+def test_fire_narration_for_the_players_real_death_fires_first_death() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._battle.player.current_hp = 0
+    event = Death(combatant=scene._battle.player)
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_DEATH in scene._narration._seen
+
+
+def test_fire_narration_for_the_players_death_followed_by_a_revive_does_not_fire_first_death() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    # Battle applies a Revive's HP synchronously before this event ever reveals (GOTCHAS.md), so a
+    # real revive leaves current_hp positive by the time _fire_narration_for sees the Death.
+    scene._battle.player.current_hp = 1
+    event = Death(combatant=scene._battle.player)
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_DEATH not in scene._narration._seen
+
+
+def test_fire_narration_for_the_enemys_death_does_not_fire_first_death() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._battle.enemy.current_hp = 0
+    event = Death(combatant=scene._battle.enemy)
+
+    scene._fire_narration_for(event)
+
+    assert NarrationTrigger.FIRST_DEATH not in scene._narration._seen
+
+
+def test_a_won_battle_fires_first_attack_narration_along_the_way() -> None:
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=overwhelming)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    _drive_to_transition(scene)
+
+    assert NarrationTrigger.FIRST_ATTACK in scene._narration._seen
+
+
+def test_a_lost_battle_fires_first_death_narration_along_the_way() -> None:
+    fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=fragile, character=Character(current_hp=5, max_hp=5))
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+
+    _drive_to_transition(scene)
+
+    assert generation.died is True
+    assert NarrationTrigger.FIRST_DEATH in scene._narration._seen
+
+
+def test_a_shared_narration_instance_does_not_refire_first_battle_across_scenes() -> None:
+    # Two battles within one generation's life (as GameDriver's shared NarrationTriggers sees
+    # across successive CombatScene reconstructions), each needing its own Generation since a
+    # Battle must be finished before the same Generation can start another.
+    triggers = NarrationTriggers()
+    first_generation = _generation()
+    CombatScene(first_generation, _encounter(first_generation), build_placeholder_atlas(), narration=triggers)
+    triggers.queue.dismiss()
+
+    second_generation = _generation()
+    CombatScene(second_generation, _encounter(second_generation), build_placeholder_atlas(), narration=triggers)
+
+    assert triggers.queue.is_active is False
+
+
+def test_narration_dismiss_withholds_the_input_it_shares_a_keypress_with() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene.update(0.016)  # reach AWAITING_PLAYER_ACTION
+    assert scene._narration.queue.is_active is True  # FIRST_BATTLE, queued at construction
+    assert scene._pending_query is not None
+
+    _press(scene, ACTION_KEYS[0])
+
+    assert scene._narration.queue.is_active is False  # dismissed
+    assert scene._pending_action_index is None  # the same press did not also commit a menu action
+
+
+def test_update_withholds_battle_concluded_while_the_narration_is_still_active() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
+    scene._battle.player.current_hp = 0  # forces is_over True without going through _conclude()
+    scene._narration.queue.enqueue("test message", "test subtitle")  # e.g. FIRST_DEATH, still up
+
+    result = scene.update(0.016)
+
+    assert result is None
+    assert scene._narration.queue.is_active is True
+
+    scene._narration.queue.dismiss()
+    result = scene.update(0.016)
+
+    assert result == BattleConcluded()
+
+
+def test_draw_renders_the_active_narration_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    drawn: list[NarrationEntry] = []
+    import eye.gui.scenes.combat as combat_module
+
+    monkeypatch.setattr(
+        combat_module, "draw_narration", lambda surface, entry, *, center_x, column_width: drawn.append(entry)
+    )
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert drawn == [scene._narration.queue.current]
