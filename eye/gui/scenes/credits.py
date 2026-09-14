@@ -1,6 +1,6 @@
 """CreditsScene: a static, standalone screen naming the game's credits. It takes a `back_scene`
-rather than resolving one itself, so whatever constructs it decides how it is reached and
-dismissed.
+rather than resolving one itself, so whatever constructs it decides how it is reached and where it
+goes back to.
 """
 
 import pygame
@@ -22,7 +22,10 @@ _LINES = (
     "Jan Kloboucnik — Character Designer",
     "Remaining assets generated using Midjourney, Claude, and Mistral",
 )
-_FOOTER = "(press any key to continue)"
+_FOOTER = "Enter or Escape: back"
+# Not "any key" (GOTCHAS.md) -- an OS/window-manager fullscreen toggle can deliver a synthetic
+# keydown. Escape matches SettingsScene's own back key, the other screen reached from the menu.
+_DISMISS_KEYS = frozenset({pygame.K_RETURN, pygame.K_ESCAPE})
 
 
 class CreditsScene:
@@ -31,7 +34,7 @@ class CreditsScene:
         self._dismissed = False
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
-        if pygame_event.type == pygame.KEYDOWN:
+        if pygame_event.type == pygame.KEYDOWN and pygame_event.key in _DISMISS_KEYS:
             self._dismissed = True
 
     def update(self, dt: float) -> Scene | None:
