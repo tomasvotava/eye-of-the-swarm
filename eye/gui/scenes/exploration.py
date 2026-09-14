@@ -208,7 +208,7 @@ def _fire_narration_for_advance(narration: NarrationTriggers, events: Sequence[S
         narration.fire(
             NarrationTrigger.FIRST_PICKUP,
             "Something ahead will change you.",
-            "For good or ill -- and it stays with you until this life ends.",
+            "For good or ill - and it stays with you until this life ends.",
         )
 
 
@@ -360,17 +360,20 @@ class ExplorationScene:
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
         if pygame_event.type != pygame.KEYDOWN:
             return
+        action = KEY_ACTIONS.get(pygame_event.key)
         if self._narration.queue.is_active:
-            # Consumes this keypress like the _card gate below -- otherwise the same press both
-            # dismisses the overlay and drives a real advance/plant/card-dismiss underneath.
             self._narration.queue.dismiss()
+            # Forwarded only on the dismiss that empties the queue, and never under a card --
+            # FIRST_SEED_READY can fire on a frame where a pickup card is already up (GOTCHAS.md).
+            if not self._narration.queue.is_active and self._card is None and action is not None:
+                self._pending_action = action
             return
         if self._card is not None:
             # Returning here, before any _pending_action write, is the entire reason no walk or
-            # seed can start while a card is up. Do not add a _pending_action write above it.
+            # seed can start while a card is up. Do not add an unguarded _pending_action write
+            # above it.
             self._dismiss_card = True
             return
-        action = KEY_ACTIONS.get(pygame_event.key)
         if action is not None:
             self._pending_action = action
 
@@ -422,7 +425,7 @@ class ExplorationScene:
             self._narration.fire(
                 NarrationTrigger.FIRST_SEED_READY,
                 "A seed is ready to plant.",
-                "Press P to plant it -- it won't strengthen you, only marks this ground for whoever comes after.",
+                "Press P to plant it - it won't strengthen you, only marks this ground for whoever comes after.",
             )
         distance = self._generation.distance_to_nearest_matured_turf
         # inf (no turf has matured this generation yet) is excluded: "you've ventured too far" is
@@ -431,7 +434,7 @@ class ExplorationScene:
             self._narration.fire(
                 NarrationTrigger.FIRST_PROXIMITY_FALLOFF,
                 "You've ventured too far from home.",
-                "Alone here -- the swarm's strength doesn't reach this far.",
+                "Alone here - the swarm's strength doesn't reach this far.",
             )
 
     def _begin_walk(self, phase: _Phase) -> None:

@@ -230,3 +230,19 @@ the player can read it for as long as they like, comfortably longer than 1.5 sec
 freezing the whole phase pipeline (not just the announcement) rather than only its rendering.
 Anything with a real-time hold or auto-clear needs its own timer paused when it's not on screen,
 not just its draw call skipped -- hiding and pausing are different guarantees.
+
+## 2026-09-14 - A narration trigger can fire on the same frame a card is already up
+
+`ExplorationScene`'s fix for "the same press only dismisses narration, never the action it names"
+forwards a dismissed press's action into `_pending_action` -- but only when `self._card is None`.
+Dropping that half of the guard still passes the entire suite; nothing else catches it.
+
+`_check_narration_triggers()` runs unconditionally every `update()`, regardless of `self._card`.
+`FIRST_SEED_READY` is level-checked (`_can_plant_seed()`), not edge-triggered, so it can raise on
+the very frame a screen's own pickup card is already showing (the advance that makes the seed
+ready is also the advance that reveals the pickup). Forwarding the action there would plant the
+seed while the card still stands, bypassing the card gate entirely.
+
+Any future "dismiss-and-act" forwarding needs its own `self._card is None` check, not just "queue
+now empty" -- and needs a test that actually reaches card-up-plus-narration-active, not just one
+that dismisses narration alone.
