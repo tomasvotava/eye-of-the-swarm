@@ -213,3 +213,21 @@ ventured too far from home" is a lie on turn one, before the player has taken a 
 
 Both triggers work as intended from generation 2 onward, once a real matured turf gives a finite
 distance to walk away from.
+
+## 2026-09-14 - Hiding an announcement behind narration isn't the same as pausing it
+
+`CombatScene._draw_announcement` gained a guard to stop it drawing over an active narration
+overlay, and a real battle then lost its "You lose!" banner and an effect card entirely -- neither
+was ever seen, on any frame.
+
+`_announcement`'s lifetime is driven by a `Phase` with a real-time hold
+(`BATTLE_ANNOUNCEMENT_HOLD_SECONDS`), ticked by `_advance_phases(dt)` from `update()` on every
+frame regardless of what's being drawn. Gating the draw call alone hides the announcement without
+pausing its clock, so its hold can run out -- and its `on_complete` clear `_announcement` -- while
+narration sits on top of it, undismissed. A first-time narration entry has no timeout of its own;
+the player can read it for as long as they like, comfortably longer than 1.5 seconds.
+
+`update()` now returns before calling `_advance_phases` at all while `self._narration.queue.is_active`,
+freezing the whole phase pipeline (not just the announcement) rather than only its rendering.
+Anything with a real-time hold or auto-clear needs its own timer paused when it's not on screen,
+not just its draw call skipped -- hiding and pausing are different guarantees.
