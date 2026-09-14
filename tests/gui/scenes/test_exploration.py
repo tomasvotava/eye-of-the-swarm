@@ -262,18 +262,41 @@ def test_plant_seed_action_plants_once_the_seed_is_ready() -> None:
 
     # The very first press's own update() is what raises FIRST_SEED_READY (the trigger check runs
     # before is_seed_ready flips visible to it, one frame behind) -- that press is withheld from
-    # planting alongside it, so it takes a dismiss before a second press actually plants.
+    # planting alongside it.
     _press(scene, pygame.K_p)
     scene.update(0.016)
     assert generation.is_seed_ready is True
-    while scene._narration.queue.is_active:
-        scene._narration.queue.dismiss()
+    assert scene._narration.queue.is_active is True
 
+    # The second press both dismisses that narration and plants, in the same press.
     _press(scene, pygame.K_p)
     scene.update(0.016)
 
     assert generation.is_seed_ready is False
     assert generation.pending_seeds != ()
+
+
+def test_plant_seed_action_is_withheld_while_a_card_is_up_even_once_narration_is_dismissed() -> None:
+    # The screen whose own advance() makes the seed ready is also the one revealing a pickup, so
+    # FIRST_SEED_READY can raise (at rest -- see test_seed_ready_does_not_fire_mid_walk_...) on a
+    # frame where that pickup's card is already showing.
+    scene, generation = _scene([EncounterKind.NOTHING] * (_ADVANCES_TO_READY_SEED - 1) + [EncounterKind.EFFECT_PICKUP])
+    for _ in range(_ADVANCES_TO_READY_SEED):
+        _resolve_next_screen(scene)
+    assert generation.is_seed_ready is True
+    assert scene._card is not None
+    scene._narration.queue.dismiss()  # FIRST_PICKUP, raised alongside the card
+
+    scene.update(0.016)  # a frame at rest: raises FIRST_SEED_READY, card still up
+    assert scene._narration.queue.is_active is True
+    assert scene._card is not None
+
+    _press(scene, pygame.K_p)
+    scene.update(0.016)
+
+    assert scene._card is not None
+    assert generation.is_seed_ready is True
+    assert generation.pending_seeds == ()
 
 
 def test_plant_seed_action_is_a_no_op_mid_walk() -> None:
@@ -1426,7 +1449,7 @@ def test_seed_ready_does_not_fire_mid_walk_and_fires_once_the_screen_is_at_rest(
     assert NarrationTrigger.FIRST_SEED_READY in scene._narration._seen
     assert NarrationEntry(
         message="A seed is ready to plant.",
-        subtitle="Press P to plant it -- it won't strengthen you, only marks this ground for whoever comes after.",
+        subtitle="Press P to plant it - it won't strengthen you, only marks this ground for whoever comes after.",
     ) in _drain_narration(scene)
 
 
@@ -1437,7 +1460,7 @@ def test_effect_pickup_fires_first_pickup_narration() -> None:
 
     assert NarrationEntry(
         message="Something ahead will change you.",
-        subtitle="For good or ill -- and it stays with you until this life ends.",
+        subtitle="For good or ill - and it stays with you until this life ends.",
     ) in _drain_narration(scene)
 
 
@@ -1463,7 +1486,7 @@ def test_a_later_screens_advance_fires_its_own_encounter_narration() -> None:
 
     assert NarrationEntry(
         message="Something ahead will change you.",
-        subtitle="For good or ill -- and it stays with you until this life ends.",
+        subtitle="For good or ill - and it stays with you until this life ends.",
     ) in _drain_narration(scene)
 
 
@@ -1546,15 +1569,28 @@ def test_proximity_falloff_fires_once_walked_far_enough_past_a_matured_turf() ->
     assert NarrationTrigger.FIRST_PROXIMITY_FALLOFF in scene._narration._seen
 
 
-def test_narration_dismiss_withholds_the_advance_it_shares_a_keypress_with() -> None:
+def test_narration_dismiss_withholds_a_mid_sequence_advance_but_not_the_last() -> None:
     scene, _ = _scene([EncounterKind.NOTHING])
-    assert scene._narration.queue.is_active is True  # INTRO_LORE + FIRST_EXPLORATION, queued at construction
+    # INTRO_LORE (4 entries) + FIRST_EXPLORATION (1), queued at construction.
+    entries_queued = 5
+    assert scene._narration.queue.is_active is True
 
-    while scene._narration.queue.is_active:
+    for _ in range(entries_queued - 1):
+        # A mid-sequence dismiss (one of INTRO_LORE's own entries) only advances the narration,
+        # never the game underneath it.
         _press(scene, pygame.K_SPACE)
         scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+        assert scene._phase is _Phase.AT_ENTRY
 
-    assert scene._phase is _Phase.AT_ENTRY  # none of those presses also started the walk
+    assert scene._narration.queue.is_active is True  # one entry (FIRST_EXPLORATION) left
+
+    # The press that empties the queue also drives its own action (K_SPACE -> ADVANCE) in the same
+    # press.
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+
+    assert scene._narration.queue.is_active is False
+    assert scene._phase is _Phase.RESOLVED
 
 
 def test_draw_renders_the_active_narration_entry(monkeypatch: pytest.MonkeyPatch) -> None:
