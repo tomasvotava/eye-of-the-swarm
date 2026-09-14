@@ -1,73 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 import pygame
 import pytest
 
-from eye.gui.audio import AudioManager, SoundKey, _load_sound
+from eye.gui.audio import AudioManager, SoundKey, _default_channel, _load_sound, _SilentMixerChannel
+from tests.gui.doubles import SpyAudioManager, build_spy_audio_manager
 
-
-def _silent_sound() -> pygame.mixer.Sound:
-    return pygame.mixer.Sound(buffer=bytes(4))
-
-
-@dataclass
-class FakeMixerChannel:
-    """A `MixerChannel` double whose `queued_sound`/`busy` state is set directly by a test, rather
-    than driven by SDL_mixer's own real-time clock -- the whole reason `AudioManager` depends on
-    the `MixerChannel` Protocol instead of `pygame.mixer.Channel` (ADR 0018)."""
-
-    busy: bool = False
-    played: list[tuple[pygame.mixer.Sound, int, int]] = field(default_factory=list)
-    fadeouts: list[int] = field(default_factory=list)
-    queue_calls: list[pygame.mixer.Sound] = field(default_factory=list)
-    queued_sound: pygame.mixer.Sound | None = None
-
-    def play(self, sound: pygame.mixer.Sound, loops: int = 0, fade_ms: int = 0) -> None:
-        self.played.append((sound, loops, fade_ms))
-        self.busy = True
-        self.queued_sound = None
-
-    def queue(self, sound: pygame.mixer.Sound) -> None:
-        self.queue_calls.append(sound)
-        self.queued_sound = sound
-
-    def get_queue(self) -> pygame.mixer.Sound | None:
-        return self.queued_sound
-
-    def fadeout(self, ms: int) -> None:
-        self.fadeouts.append(ms)
-        self.busy = False
-        self.queued_sound = None
-
-    def stop(self) -> None:
-        self.busy = False
-        self.queued_sound = None
-
-
-@dataclass
-class _Rig:
-    manager: AudioManager
-    ambient: FakeMixerChannel
-    battle_primary: FakeMixerChannel
-    battle_result: FakeMixerChannel
-    sounds: dict[SoundKey, pygame.mixer.Sound]
+_Rig = SpyAudioManager
 
 
 @pytest.fixture
 def rig() -> _Rig:
-    sounds = {key: _silent_sound() for key in SoundKey}
-    ambient = FakeMixerChannel()
-    battle_primary = FakeMixerChannel()
-    battle_result = FakeMixerChannel()
-    manager = AudioManager(
-        ambient_channel=ambient,
-        battle_primary_channel=battle_primary,
-        battle_result_channel=battle_result,
-        sound_loader=sounds.__getitem__,
-    )
-    return _Rig(manager, ambient, battle_primary, battle_result, sounds)
+    return build_spy_audio_manager()
 
 
 def test_play_ambient_starts_the_track_looped(rig: _Rig) -> None:
@@ -228,3 +172,50 @@ def test_every_sound_key_resolves_to_a_shipped_file(key: SoundKey) -> None:
     # SoundKey whose value drifts from its filename would otherwise only surface as a
     # FileNotFoundError on the first frame of a battle, never at test time.
     assert isinstance(_load_sound(key), pygame.mixer.Sound)
+
+
+def test_methods_are_no_ops_when_the_mixer_is_unavailable(rig: _Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    # No audio device (a headless machine, a container, some CI/judging environments) must not
+    # crash the game -- app.py::run() still boots even if pygame.mixer.init() failed.
+    monkeypatch.setattr(pygame.mixer, "get_init", lambda: None)
+
+    def _raise_if_called(key: SoundKey) -> pygame.mixer.Sound:
+        raise AssertionError(f"_load_sound must not be called while unavailable, got {key!r}")
+
+    manager = AudioManager(
+        ambient_channel=rig.ambient,
+        battle_primary_channel=rig.battle_primary,
+        battle_result_channel=rig.battle_result,
+        sound_loader=_raise_if_called,
+    )
+
+    manager.play_ambient(SoundKey.MENU)
+    manager.start_battle_music(boss=False)
+    manager.update(0.016)
+    manager.resolve_battle_music(won=True)
+
+    assert rig.ambient.played == []
+    assert rig.battle_primary.played == []
+    assert rig.battle_result.played == []
+
+
+def test_default_channel_falls_back_to_silent_when_the_mixer_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pygame.mixer, "get_init", lambda: None)
+
+    assert isinstance(_default_channel(0), _SilentMixerChannel)
+
+
+def test_default_channel_uses_a_real_channel_when_the_mixer_is_available() -> None:
+    assert isinstance(_default_channel(0), pygame.mixer.Channel)
+
+
+def test_silent_mixer_channel_methods_are_all_safe_no_ops() -> None:
+    channel = _SilentMixerChannel()
+    sound = next(iter(build_spy_audio_manager().sounds.values()))
+
+    channel.play(sound, loops=-1, fade_ms=500)
+    channel.queue(sound)
+    channel.fadeout(500)
+    channel.stop()
+
+    assert channel.get_queue() is None

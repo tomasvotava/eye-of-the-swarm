@@ -23,6 +23,7 @@ from typing import assert_never
 import pygame
 
 from eye.gui.assets import SpriteAtlas
+from eye.gui.audio import AudioManager, SoundKey
 from eye.gui.narration import NarrationTriggers, load_seen_triggers, persist_seen_triggers
 from eye.gui.play_scene import BattleConcluded, Continue, EnterCombat, PlayScene, PlaySceneTransition
 from eye.gui.scene import Scene
@@ -40,11 +41,13 @@ class GameDriver:
         self,
         atlas: SpriteAtlas,
         rng: random.Random,
+        audio: AudioManager,
         save_store: SaveStore | None = None,
         narration_store: SaveStore | None = None,
         combat_speed_multiplier: float = 1.0,
     ) -> None:
         self._atlas = atlas
+        self._audio = audio
         self._combat_speed_multiplier = combat_speed_multiplier
         # Resolved once and held, per save.default_store()'s own contract, rather than passing
         # `save_store=None` to load_or_new()/persist() on every call.
@@ -102,10 +105,14 @@ class GameDriver:
         generation = self._active_generation()
         if not generation.died:
             return ExplorationScene.resuming_after_combat(
-                generation, self._game, self._atlas, narration=self._narration
+                generation, self._game, self._atlas, self._audio, narration=self._narration
             )
         self._game.end_generation(generation)
         self._persist()
+        # SkillTreeScene has no audio of its own -- without this, the result track from the fight
+        # that just ended (~10.7s for a loss) finishes fading and the whole between-generations
+        # spend screen plays in silence.
+        self._audio.play_ambient(SoundKey.MENU)
         return SkillTreeScene(self._game, self._atlas, on_purchase=self._persist)
 
     def _start_new_generation(self) -> ExplorationScene:
@@ -114,7 +121,9 @@ class GameDriver:
         # already-shown first-playthrough beats -- a new instance, not a cleared old one, since
         # ExplorationScene/CombatScene hold a reference to it too.
         self._narration = NarrationTriggers.for_generation(self._narration_seen)
-        return ExplorationScene.for_new_generation(self._generation, self._game, self._atlas, narration=self._narration)
+        return ExplorationScene.for_new_generation(
+            self._generation, self._game, self._atlas, self._audio, narration=self._narration
+        )
 
     def _active_generation(self) -> Generation:
         # EnterCombat/BattleConcluded are only ever reported by CombatScene/ExplorationScene,

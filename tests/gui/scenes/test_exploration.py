@@ -19,6 +19,7 @@ from eye.gui.assets import (
     build_art_atlas,
     build_placeholder_atlas,
 )
+from eye.gui.audio import SoundKey
 from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width
 from eye.gui.fonts.fonts import GameFont, get_font
@@ -59,6 +60,8 @@ from eye.gui.widgets import EFFECT_DESCRIPTIONS, SpriteBuffIcon, SpriteIcon, bor
 from eye.session.events import SessionEvent
 from eye.session.game import Game
 from eye.session.generation import Generation
+from tests.gui.doubles import build_fake_audio_manager as _audio
+from tests.gui.doubles import build_spy_audio_manager
 from tests.session.doubles import ScriptedEncounterRandom
 
 _ADVANCES_TO_READY_SEED = int(SEED_GROWTH_THRESHOLD // SEED_GROWTH_RATE_CAP)
@@ -69,7 +72,7 @@ def _scene(
 ) -> tuple[ExplorationScene, Generation]:
     game = Game(ScriptedEncounterRandom(kind_queue, resource_queue=resource_queue))
     generation = game.start_generation()
-    return ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas()), generation
+    return ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=_audio()), generation
 
 
 def _write_player_clips(assets_dir: Path, frame_count: int = 2, fps: float = 8) -> None:
@@ -91,7 +94,7 @@ def _scene_with_real_player_art(tmp_path: Path, kind_queue: Sequence[EncounterKi
     _write_player_clips(tmp_path)
     game = Game(ScriptedEncounterRandom(kind_queue))
     generation = game.start_generation()
-    return ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    return ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
 
 
 def _write_static_sprite(tmp_path: Path, key: SpriteKey, size: int) -> None:
@@ -160,7 +163,7 @@ def test_for_new_generation_calls_advance_once_and_starts_at_entry(monkeypatch: 
 
     monkeypatch.setattr(generation, "advance", counting_advance)
 
-    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=_audio())
 
     assert len(calls) == 1
     assert scene._phase is _Phase.AT_ENTRY
@@ -172,10 +175,30 @@ def test_resuming_after_combat_does_not_advance_and_starts_resolved(monkeypatch:
     calls: list[None] = []
     monkeypatch.setattr(generation, "advance", lambda: calls.append(None))
 
-    scene = ExplorationScene.resuming_after_combat(generation, game, build_placeholder_atlas())
+    scene = ExplorationScene.resuming_after_combat(generation, game, build_placeholder_atlas(), audio=_audio())
 
     assert calls == []
     assert scene._phase is _Phase.RESOLVED
+
+
+def test_for_new_generation_plays_exploration_ambient_music() -> None:
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
+    generation = game.start_generation()
+    spy = build_spy_audio_manager()
+
+    ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=spy.manager)
+
+    assert spy.ambient.played == [(spy.sounds[SoundKey.EXPLORATION], -1, 0)]
+
+
+def test_resuming_after_combat_plays_exploration_ambient_music() -> None:
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
+    generation = game.start_generation()
+    spy = build_spy_audio_manager()
+
+    ExplorationScene.resuming_after_combat(generation, game, build_placeholder_atlas(), audio=spy.manager)
+
+    assert spy.ambient.played == [(spy.sounds[SoundKey.EXPLORATION], -1, 0)]
 
 
 def test_advance_fires_exactly_once_per_screen_at_the_right_moments(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,7 +213,7 @@ def test_advance_fires_exactly_once_per_screen_at_the_right_moments(monkeypatch:
 
     monkeypatch.setattr(generation, "advance", counting_advance)
 
-    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=_audio())
     assert len(calls) == 1  # fired once at construction, for the first screen
     _drain_narration(scene)  # INTRO_LORE + FIRST_EXPLORATION, queued at construction
 
@@ -410,7 +433,7 @@ def test_encounter_static_sprite_is_scaled_by_the_pickup_factor(tmp_path: Path) 
     game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP]))
     generation = game.start_generation()
 
-    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
 
     assert scene._encounter_animator is None  # pickup markers never carry animation data
     assert scene._encounter_static_sprite is not None
@@ -423,7 +446,7 @@ def test_encounter_static_sprite_is_scaled_by_the_enemy_factor(tmp_path: Path) -
     game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
     generation = game.start_generation()
 
-    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
 
     assert scene._encounter_animator is None  # no idle.json written -- static art only
     assert scene._encounter_static_sprite is not None
@@ -436,7 +459,7 @@ def test_encounter_static_sprite_is_rebuilt_on_arrival_at_the_next_screen(tmp_pa
     _write_static_sprite(tmp_path, SpriteKey.RESOURCE_PICKUP, size=40)
     game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP, EncounterKind.RESOURCE_PICKUP]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
     first_size = round(20 * ENCOUNTER_PICKUP_SCALE_FACTOR)
     assert scene._encounter_static_sprite is not None
     assert scene._encounter_static_sprite.get_size() == (first_size, first_size)
@@ -453,7 +476,7 @@ def test_draw_blits_the_scaled_encounter_sprite_centered_on_the_marker(tmp_path:
     _write_static_sprite(tmp_path, SpriteKey.EFFECT_PICKUP, size=20)
     game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
     assert scene._encounter_static_sprite is not None
 
     # Large enough that the player's own placeholder sprite, drawn near the left edge, can't
@@ -490,7 +513,7 @@ def test_encounter_animator_is_built_for_a_strain_with_animation_data(tmp_path: 
     game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
     generation = game.start_generation()
 
-    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
 
     assert scene._encounter_animator is not None
     frame_size = round(4 * ENCOUNTER_ENEMY_SCALE_FACTOR)
@@ -502,7 +525,7 @@ def test_encounter_animator_is_rebuilt_to_none_when_the_next_screen_has_no_anima
     _write_idle_clip(tmp_path, SpriteKey.GOLEM)
     game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY, EncounterKind.NOTHING], strain_queue=[Strain.GOLEM]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
     assert scene._encounter_animator is not None
 
     _resolve_next_screen(scene)  # reveals screen 1 (RESOLVED); animator is still screen 1's Strain
@@ -516,7 +539,7 @@ def test_updating_advances_the_encounter_animation_frame(tmp_path: Path) -> None
     _write_idle_clip(tmp_path, SpriteKey.GOLEM)  # 2 frames at 8fps
     game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
     assert scene._encounter_animator is not None
     first_frame = scene._encounter_animator.current_frame()
 
@@ -530,7 +553,7 @@ def test_draw_blits_the_encounter_animator_frame_when_available(tmp_path: Path) 
     _write_idle_clip(tmp_path, SpriteKey.GOLEM)
     game = Game(ScriptedEncounterRandom([EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.for_new_generation(generation, game, build_art_atlas(tmp_path), audio=_audio())
     assert scene._encounter_animator is not None
 
     surface = pygame.Surface(_WINDOW_SIZE)
@@ -635,7 +658,7 @@ def test_resuming_after_combat_starts_the_player_animator_idle(tmp_path: Path) -
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
     generation = game.start_generation()
 
-    scene = ExplorationScene.resuming_after_combat(generation, game, build_art_atlas(tmp_path))
+    scene = ExplorationScene.resuming_after_combat(generation, game, build_art_atlas(tmp_path), audio=_audio())
 
     assert scene._phase is _Phase.RESOLVED
     assert scene._player_animator is not None
@@ -697,7 +720,11 @@ def _scene_with_spy_icons(
     game = Game(ScriptedEncounterRandom(kind_queue))
     generation = game.start_generation()
     scene = ExplorationScene.for_new_generation(
-        generation, game, build_placeholder_atlas(), buff_icon_factory=lambda effect: _SpyBuffIcon(effect, calls)
+        generation,
+        game,
+        build_placeholder_atlas(),
+        buff_icon_factory=lambda effect: _SpyBuffIcon(effect, calls),
+        audio=_audio(),
     )
     return scene, generation, calls
 
@@ -754,7 +781,11 @@ def test_resuming_after_combat_uses_the_given_buff_icon_factory() -> None:
     generation.advance()  # the pickup this scene is resuming next to
 
     scene = ExplorationScene.resuming_after_combat(
-        generation, game, build_placeholder_atlas(), buff_icon_factory=lambda effect: _SpyBuffIcon(effect, calls)
+        generation,
+        game,
+        build_placeholder_atlas(),
+        buff_icon_factory=lambda effect: _SpyBuffIcon(effect, calls),
+        audio=_audio(),
     )
     scene.draw(pygame.Surface((800, 600)))
 
@@ -764,7 +795,7 @@ def test_resuming_after_combat_uses_the_given_buff_icon_factory() -> None:
 def test_draw_with_active_effects_and_the_default_icons_does_not_raise() -> None:
     game = Game(ScriptedEncounterRandom([EncounterKind.EFFECT_PICKUP]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=_audio())
     _resolve_next_screen(scene)
     assert generation.active_lifespan_effects
 
@@ -1205,7 +1236,7 @@ def test_the_spores_counter_draws_the_borderless_icon_scaled_into_the_top_rows_b
     atlas = _art_atlas()
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, atlas)
+    scene = ExplorationScene.for_new_generation(generation, game, atlas, audio=_audio())
     surface = pygame.Surface(_WINDOW_SIZE)
     surface.fill(_UNDRAWN)
 
@@ -1234,7 +1265,7 @@ def _worst_case_top_row_scene() -> ExplorationScene:
         matured_turf_positions=(1,),
     )
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, _art_atlas())
+    scene = ExplorationScene.for_new_generation(generation, game, _art_atlas(), audio=_audio())
     for _ in range(_MAX_ADVANCES_TO_READY_SEED):
         if scene._can_plant_seed():
             break
@@ -1274,7 +1305,7 @@ def test_the_spores_counter_falls_back_to_the_bordered_sprite_for_a_variant_less
     assert atlas.has_variant_set(SpriteKey.ICON_SPORES) is False
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, atlas)
+    scene = ExplorationScene.for_new_generation(generation, game, atlas, audio=_audio())
     surface = pygame.Surface(_WINDOW_SIZE)
     surface.fill(_UNDRAWN)
 
@@ -1356,7 +1387,7 @@ def test_draw_props_samples_the_resolved_pools_the_correct_number_of_times(
 ) -> None:
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, _art_atlas())
+    scene = ExplorationScene.for_new_generation(generation, game, _art_atlas(), audio=_audio())
     choice_calls = 0
     original_choice = scene._prop_rng.choice
 
@@ -1412,7 +1443,9 @@ def test_intro_lore_does_not_refire_for_a_later_generation_on_the_same_save() ->
     narration = NarrationTriggers.for_generation(save_seen)
 
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), narration=narration)
+    scene = ExplorationScene.for_new_generation(
+        generation, game, build_placeholder_atlas(), narration=narration, audio=_audio()
+    )
 
     entries = _drain_narration(scene)
     assert len(entries) == 1  # just FIRST_EXPLORATION -- INTRO_LORE was already seen on this save
@@ -1422,11 +1455,13 @@ def test_resuming_after_combat_does_not_refire_an_already_seen_trigger() -> None
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
     generation = game.start_generation()
     triggers = NarrationTriggers()
-    ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), narration=triggers)
+    ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), narration=triggers, audio=_audio())
     while triggers.queue.is_active:  # the player already saw and cleared everything queued
         triggers.queue.dismiss()
 
-    scene = ExplorationScene.resuming_after_combat(generation, game, build_placeholder_atlas(), narration=triggers)
+    scene = ExplorationScene.resuming_after_combat(
+        generation, game, build_placeholder_atlas(), narration=triggers, audio=_audio()
+    )
 
     assert scene._narration.queue.is_active is False
 
@@ -1548,7 +1583,7 @@ def test_proximity_falloff_does_not_fire_when_no_turf_has_matured_yet() -> None:
 def test_proximity_falloff_does_not_fire_within_range_of_a_matured_turf() -> None:
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]), matured_turf_positions=(0,))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=_audio())
 
     scene.update(0.016)
 
@@ -1560,7 +1595,7 @@ def test_proximity_falloff_fires_once_walked_far_enough_past_a_matured_turf() ->
     screens_to_walk = int(PROXIMITY_FALLOFF_RANGE)
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING] * screens_to_walk), matured_turf_positions=(0,))
     generation = game.start_generation()
-    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=_audio())
 
     for _ in range(screens_to_walk):
         _resolve_next_screen(scene)

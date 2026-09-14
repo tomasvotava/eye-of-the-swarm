@@ -87,7 +87,7 @@ global settings blob, instead of one implicit file/key.
     "no defensive validation/dispel-style mechanics" posture elsewhere. If wanted later, it's a
     small additive follow-up (a confirm dialog before calling `store.save()` on a fresh `Game`),
     not a redesign.
-- **`App`'s initial scene is `TitleScene(MenuScene(atlas, rng))`**, replacing today's
+- **`App`'s initial scene is `TitleScene(MenuScene(atlas, rng, audio))`**, replacing today's
   direct-to-`GameDriver` boot — the seam `app.py`'s docstring already reserved, with one addition
   to the original design: a `TitleScene` ahead of `MenuScene`, not `MenuScene` directly. A static
   screen — "The Eye of the Swarm" in the `buse` font over a smaller "Press any key to continue" in
@@ -98,7 +98,7 @@ global settings blob, instead of one implicit file/key.
   Both `TitleScene` and `MenuScene` fit `App`'s existing `Scene` protocol
   (`update(dt) -> Scene | None`) without any change to `App` itself: picking a slot's action
   constructs and returns a
-  `GameDriver(atlas, rng, save_store=store_for_slot(n), combat_speed_multiplier=settings.combat_speed_multiplier)`
+  `GameDriver(atlas, rng, audio, save_store=store_for_slot(n), combat_speed_multiplier=settings.combat_speed_multiplier)`
   the same way any other scene transition already works.
 - **`GameDriver` and `CombatScene` both gain a `combat_speed_multiplier: float = 1.0` constructor
   parameter.** `GameDriver` threads it into every `CombatScene(...)` it constructs. `CombatScene`

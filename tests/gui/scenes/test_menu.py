@@ -6,6 +6,7 @@ import pytest
 
 from eye.exploration.encounters import EncounterKind
 from eye.gui.assets import build_placeholder_atlas
+from eye.gui.audio import SoundKey
 from eye.gui.game_driver import GameDriver
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.menu import KEY_ACTIONS, MenuAction, MenuScene, SlotStatus, _SlotView, _status_label
@@ -16,6 +17,7 @@ from eye.persistence.codec import GameSnapshot, decode, encode
 from eye.persistence.settings import SETTINGS_SCHEMA_VERSION, SettingsSnapshot, encode_settings
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
+from tests.gui.doubles import build_fake_audio_manager, build_spy_audio_manager
 from tests.session.doubles import ScriptedEncounterRandom
 
 
@@ -41,7 +43,9 @@ def _scene() -> MenuScene:
     # A confirmed New Game action drives GameDriver into ExplorationScene.for_new_generation(),
     # which immediately calls advance() -- queue a NOTHING screen so it doesn't underflow
     # ScriptedEncounterRandom's scripted queue, matching test_game_driver.py's own convention.
-    return MenuScene(build_placeholder_atlas(), ScriptedEncounterRandom((EncounterKind.NOTHING,)))
+    return MenuScene(
+        build_placeholder_atlas(), ScriptedEncounterRandom((EncounterKind.NOTHING,)), build_fake_audio_manager()
+    )
 
 
 def _press(scene: MenuScene, key: int) -> None:
@@ -53,6 +57,25 @@ def test_key_actions_maps_the_expected_controls() -> None:
     assert KEY_ACTIONS[pygame.K_DOWN] is MenuAction.MOVE_DOWN
     assert KEY_ACTIONS[pygame.K_RETURN] is MenuAction.CONFIRM
     assert KEY_ACTIONS[pygame.K_SPACE] is MenuAction.CONFIRM
+
+
+def test_construction_plays_menu_ambient_music() -> None:
+    spy = build_spy_audio_manager()
+
+    MenuScene(build_placeholder_atlas(), ScriptedEncounterRandom((EncounterKind.NOTHING,)), spy.manager)
+
+    assert spy.ambient.played == [(spy.sounds[SoundKey.MENU], -1, 0)]
+
+
+def test_confirm_threads_the_same_audio_manager_into_the_game_driver() -> None:
+    audio = build_fake_audio_manager()
+    scene = MenuScene(build_placeholder_atlas(), ScriptedEncounterRandom((EncounterKind.NOTHING,)), audio)
+
+    _press(scene, pygame.K_RETURN)
+    transition = scene.update(0.016)
+
+    assert isinstance(transition, GameDriver)
+    assert transition._audio is audio
 
 
 def test_slots_are_empty_when_no_save_data_exists() -> None:

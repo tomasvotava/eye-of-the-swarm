@@ -246,3 +246,19 @@ seed while the card still stands, bypassing the card gate entirely.
 Any future "dismiss-and-act" forwarding needs its own `self._card is None` check, not just "queue
 now empty" -- and needs a test that actually reaches card-up-plus-narration-active, not just one
 that dismisses narration alone.
+
+## 2026-09-14 - `TitleScene` has music only because of what constructs it, not anything it does
+
+`app.py::_initial_scene()` builds `TitleScene(MenuScene(atlas, rng, audio))` -- `TitleScene` itself
+takes no `audio` parameter and never calls `play_ambient()`. The title screen has `MENU` playing
+anyway, because `MenuScene.__init__` (which runs first, as the inner constructor call) already
+started it before `TitleScene` exists.
+
+`TitleScene.__init__(next_scene: Scene)` accepts any `Scene` -- reading `title.py` alone gives no
+indication that its music depends on `next_scene` already having primed the ambient channel. The
+invariant holds only because `TitleScene`/`MenuScene` have exactly one production construction
+site, together, in `app.py`.
+
+A future `TitleScene` built with some other `next_scene` (or a test asserting the title screen
+plays music on its own) needs its own `play_ambient()` call -- don't assume `TitleScene` carries
+this behavior itself.

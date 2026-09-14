@@ -8,6 +8,7 @@ from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.stats import Stats
 from eye.exploration.encounters import EncounterKind
 from eye.gui.assets import build_placeholder_atlas
+from eye.gui.audio import AudioManager, SoundKey
 from eye.gui.game_driver import GameDriver
 from eye.gui.narration import NarrationTrigger
 from eye.gui.scenes.combat import ACTION_KEYS, CombatScene
@@ -18,6 +19,7 @@ from eye.persistence.codec import decode, encode
 from eye.session.game import Game
 from eye.session.generation import Generation
 from eye.skilltree.catalog import CATALOG
+from tests.gui.doubles import build_fake_audio_manager, build_spy_audio_manager
 from tests.persistence.doubles import FakeSaveStore
 from tests.session.doubles import ScriptedEncounterRandom
 
@@ -29,16 +31,20 @@ def _driver(
     kind_queue: Sequence[EncounterKind] = (EncounterKind.NOTHING, EncounterKind.NOTHING),
     save_store: FakeSaveStore | None = None,
     combat_speed_multiplier: float = 1.0,
+    audio: AudioManager | None = None,
 ) -> GameDriver:
     # Defaults to two queued NOTHING screens rather than an empty queue: ExplorationScene's
     # for_new_generation() (ADR 0012) fires advance() once immediately, whether at construction or
     # after a later Continue -- one entry covers GameDriver.__init__()'s own throwaway generation
     # (immediately overwritten by _driver_with() below), a second covers a genuine Continue later
     # in the same test, and tests that never reach either case just leave the rest unused.
+    # save_store always defaults to a FakeSaveStore, never GameDriver's own real-filesystem
+    # fallback -- omitting it here would read/write the developer's actual save directory.
     return GameDriver(
         build_placeholder_atlas(),
         ScriptedEncounterRandom(kind_queue),
-        save_store or FakeSaveStore(),
+        audio if audio is not None else build_fake_audio_manager(),
+        save_store=save_store or FakeSaveStore(),
         combat_speed_multiplier=combat_speed_multiplier,
     )
 
@@ -54,14 +60,16 @@ def _generation(stats: Stats = _STATS, character: Character | None = None) -> Ge
     )
 
 
-def _driver_with(generation: Generation, save_store: FakeSaveStore | None = None) -> GameDriver:
+def _driver_with(
+    generation: Generation, save_store: FakeSaveStore | None = None, audio: AudioManager | None = None
+) -> GameDriver:
     # Bypasses GameDriver's own Game.start_generation() the same way test_combat.py's
     # _game_owning() bypasses it -- so a test can pin exact combat stats -- and wires ownership by
     # hand the same way start_generation() would have.
-    driver = _driver(save_store=save_store)
+    driver = _driver(save_store=save_store, audio=audio)
     driver._game._current_generation = generation
     driver._generation = generation
-    driver._scene = ExplorationScene.for_new_generation(generation, driver._game, driver._atlas)
+    driver._scene = ExplorationScene.for_new_generation(generation, driver._game, driver._atlas, driver._audio)
     return driver
 
 
@@ -98,6 +106,14 @@ def test_construction_starts_a_fresh_generation_in_an_exploration_scene_for_a_br
 
     assert isinstance(driver._scene, ExplorationScene)
     assert driver._scene._generation.died is False
+
+
+def test_construction_plays_exploration_ambient_music_for_a_brand_new_game() -> None:
+    spy = build_spy_audio_manager()
+
+    _driver(audio=spy.manager)
+
+    assert spy.ambient.played == [(spy.sounds[SoundKey.EXPLORATION], -1, 0)]
 
 
 def test_construction_boots_into_the_skill_tree_when_a_save_already_exists() -> None:
@@ -169,6 +185,19 @@ def test_win_returns_to_exploration_without_persisting() -> None:
 
     assert isinstance(driver._scene, ExplorationScene)
     assert driver._save_store.load() is None  # a win alone produces no SeedsMatured/SporesAwarded
+
+
+def test_loss_plays_menu_ambient_music_since_the_skill_tree_has_none_of_its_own() -> None:
+    fragile = Stats(max_hp=5, attack=0, defense=0, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    generation = _generation(stats=fragile, character=Character(current_hp=5, max_hp=5))
+    spy = build_spy_audio_manager()
+    driver = _driver_with(generation, audio=spy.manager)
+
+    _advance(driver)
+    _drive_battle_to_conclusion(driver)
+
+    assert isinstance(driver._scene, SkillTreeScene)
+    assert spy.ambient.played[-1] == (spy.sounds[SoundKey.MENU], -1, 0)
 
 
 def test_loss_ends_the_generation_persists_and_returns_a_skill_tree_scene() -> None:
@@ -268,12 +297,22 @@ def test_a_persisted_trigger_survives_a_fresh_game_driver_instance() -> None:
     save_store = FakeSaveStore()
     narration_store = FakeSaveStore()
     first_driver = GameDriver(
-        build_placeholder_atlas(), ScriptedEncounterRandom((EncounterKind.NOTHING,)), save_store, narration_store
+        build_placeholder_atlas(),
+        ScriptedEncounterRandom((EncounterKind.NOTHING,)),
+        build_fake_audio_manager(),
+        save_store=save_store,
+        narration_store=narration_store,
     )
     first_driver._narration.fire(NarrationTrigger.FIRST_DEATH, "msg", "sub")
     first_driver._persist()
 
-    second_driver = GameDriver(build_placeholder_atlas(), ScriptedEncounterRandom(()), save_store, narration_store)
+    second_driver = GameDriver(
+        build_placeholder_atlas(),
+        ScriptedEncounterRandom(()),
+        build_fake_audio_manager(),
+        save_store=save_store,
+        narration_store=narration_store,
+    )
 
     assert NarrationTrigger.FIRST_DEATH in second_driver._narration._seen
 

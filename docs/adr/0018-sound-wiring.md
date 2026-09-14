@@ -36,20 +36,23 @@ sub-issues' implementation PRs).
   real mutable per-battle state (which track is cueing vs. looping, whether a crossfade is in
   flight); this codebase always wraps state like that in an owned object (`Battle`,
   `ExplorationRun`, `NarrationTriggers`), never a module global. One instance is built in
-  `app.py::run()` and passed down through `TitleScene`/`MenuScene`/`GameDriver`/
-  `ExplorationScene`/`CombatScene`, the same way `atlas` already is.
+  `app.py::run()` and passed down through `MenuScene`/`GameDriver`/`ExplorationScene`/
+  `CombatScene`, the same way `atlas` already is. `TitleScene` takes no `audio` of its own --
+  see the `TitleScene`/`MenuScene` wiring bullet below for why.
 - **Channel access goes through a small `MixerChannel` `Protocol`**, not `pygame.mixer.Channel`
   directly:
   ```python
   class MixerChannel(Protocol):
-      def play(self, sound: pygame.mixer.Sound, loops: int = 0, fade_ms: int = 0) -> None: ...
+      def play(self, sound: pygame.mixer.Sound, loops: int = 0, *, fade_ms: int = 0) -> None: ...
       def queue(self, sound: pygame.mixer.Sound) -> None: ...
       def get_queue(self) -> pygame.mixer.Sound | None: ...
       def fadeout(self, ms: int) -> None: ...
       def stop(self) -> None: ...
   ```
   `pygame.mixer.Channel` already satisfies this structurally — the real adapter is just
-  `pygame.mixer.Channel(i)` passed straight into `AudioManager.__init__`, no wrapper class needed.
+  `pygame.mixer.Channel(i)` passed straight into `AudioManager.__init__`, no wrapper class needed. `fade_ms` is keyword-only because `Channel.play`'s real signature is
+  `(sound, loops, maxtime, fade_ms)` — a positional `fade_ms` here would bind to `maxtime` and the
+  Protocol would not be satisfied at all.
   This is the same mock-at-the-infrastructure-boundary posture as `SaveStore` (ADR 0005): a test
   double (`FakeMixerChannel` — a `busy`/`queued_sound` state plus call recording) drives
   `AudioManager`'s state machine deterministically, without real audio decoding or real-time waits.
@@ -104,7 +107,7 @@ sub-issues' implementation PRs).
 - **Win/lose is read off the `BattleEnded` event itself**: `won=winner is self._battle.player`, so
   a loss *and* a draw (`winner is None`) both map to `fight_lost`. See the `CombatScene` wiring
   point below for *when* it fires — the event's reveal, not the scene's conclusion.
-- **Wiring points** (implementation detail for the follow-up PRs below, not this ADR's own PR —
+- **Wiring points** (split across the two follow-up sub-issues below, not this ADR's own PR —
   only `eye/gui/audio.py` and its tests land here):
   - `app.py::run()` calls `pygame.mixer.init()` alongside `pygame.init()`, builds one
     `AudioManager`.
@@ -154,6 +157,14 @@ sub-issues' implementation PRs).
   existing `SDL_VIDEODRIVER=dummy` headless-display fixture gains a matching
   `SDL_AUDIODRIVER=dummy` + `pygame.mixer.init()`, so `AudioManager` (via `FakeMixerChannel`, not
   the real dummy-driver channel — see above) is exercisable in CI the same way video already is.
+- **No audio device is a supported configuration, not an error.** A headless machine, a container
+  and some CI/judging environments have none, and `pygame.mixer.init()` raises there. `run()`
+  suppresses that `pygame.error` and boots anyway; `AudioManager` latches
+  `_available = pygame.mixer.get_init() is not None` at construction and every public method
+  returns early on it, so no `Sound` is ever constructed (which would raise in turn) and the game
+  simply plays silently. `_default_channel()` returns a `_SilentMixerChannel` rather than
+  `pygame.mixer.Channel(i)` for the same reason — constructing a real channel raises with a dead
+  mixer, so the fallback has to happen before `_available` is ever consulted.
 - Ambient and battle music are governed by two entirely separate mechanisms (`loops=-1` for
   ambient, an explicit polled state machine for battle) rather than one shared abstraction — a
   deliberate asymmetry, not an oversight: ambient never needs a cue-in or a crossfade, and forcing
