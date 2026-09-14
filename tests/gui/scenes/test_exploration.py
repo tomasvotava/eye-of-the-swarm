@@ -331,7 +331,7 @@ def test_can_plant_seed_reflects_phase_not_just_seed_readiness() -> None:
 
 def test_advance_action_returns_an_enter_combat_transition_on_encounter() -> None:
     scene, _ = _scene([EncounterKind.ENEMY])
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # FIRST_EXPLORATION + FIRST_BATTLE, both fired by advance() at construction
 
     _press(scene, pygame.K_SPACE)
     transition = scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
@@ -342,7 +342,7 @@ def test_advance_action_returns_an_enter_combat_transition_on_encounter() -> Non
 
 def test_enter_combat_is_withheld_until_the_walk_to_the_encounter_completes() -> None:
     scene, _ = _scene([EncounterKind.ENEMY])
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # FIRST_EXPLORATION + FIRST_BATTLE, both fired by advance() at construction
 
     _press(scene, pygame.K_SPACE)
     assert scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2) is None  # still walking
@@ -750,7 +750,7 @@ def test_draw_with_active_effects_and_the_default_icons_does_not_raise() -> None
 
 def test_buff_icon_row_withholds_a_newly_granted_effect_until_the_walk_resolves() -> None:
     scene, generation, calls = _scene_with_spy_icons([EncounterKind.EFFECT_PICKUP])
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # FIRST_EXPLORATION + FIRST_PICKUP, both fired by advance() at construction
     # advance() already granted the effect while the player is still walking to it (ADR 0012).
     granted = generation.active_lifespan_effects
     assert granted
@@ -781,6 +781,7 @@ def test_buff_icon_row_withholds_an_effect_granted_by_a_later_screens_advance() 
     scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads: advance() applies the pickup
     granted = generation.active_lifespan_effects
     assert granted
+    _drain_narration(scene)  # FIRST_PICKUP, fired by this screen's own advance()
     scene.draw(surface)  # AT_ENTRY, the pickup not reached yet
     assert calls == []
 
@@ -804,7 +805,7 @@ def _granted_effect(generation: Generation) -> EffectName:
 
 def test_effect_pickup_raises_the_card_only_once_the_walk_reaches_the_marker() -> None:
     scene, generation, _ = _scene_with_spy_icons([EncounterKind.EFFECT_PICKUP])
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # FIRST_EXPLORATION + FIRST_PICKUP, both fired by advance() at construction
     # The reveal point: advance() applied the pickup back when the screen loaded (ADR 0012).
     granted = _granted_effect(generation)
 
@@ -834,6 +835,7 @@ def test_effect_pickup_on_a_later_screen_raises_the_card_at_its_own_marker() -> 
     _press(scene, pygame.K_SPACE)
     scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads: advance() applies the pickup
     granted = _granted_effect(generation)
+    _drain_narration(scene)  # FIRST_PICKUP, fired by this screen's own advance()
     assert scene._card is None  # AT_ENTRY, the pickup not reached yet
 
     _press(scene, pygame.K_SPACE)
@@ -1402,23 +1404,68 @@ def test_seed_ready_does_not_fire_mid_walk_and_fires_once_the_screen_is_at_rest(
 
 
 def test_effect_pickup_fires_first_pickup_narration() -> None:
+    # advance() reveals the pickup at construction (ADR 0012) -- FIRST_PICKUP fires there too, as
+    # soon as the screen loads, not once the walk reaches the marker.
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
-    _drain_narration(scene)
-
-    _resolve_next_screen(scene)
 
     assert NarrationEntry(
         message="There's an obstacle in your path.",
-        subtitle="It could help or hinder your swarm -- approach and see.",
+        subtitle="It could help or hinder your swarm. Approach and see.",
     ) in _drain_narration(scene)
+
+
+def test_enemy_encounter_fires_first_battle_narration() -> None:
+    # advance() reveals the encounter at construction (ADR 0012) -- FIRST_BATTLE fires there too,
+    # as soon as the screen loads, before the player has walked up to it.
+    scene, _ = _scene([EncounterKind.ENEMY])
+
+    assert NarrationEntry(
+        message="A hostile strain blocks your path.",
+        subtitle="Ready your swarm. A fight is close.",
+    ) in _drain_narration(scene)
+
+
+def test_a_later_screens_advance_fires_its_own_encounter_narration() -> None:
+    # Exercises _arrive_at_exit's own _fire_narration_for_advance call -- the steady-state path for
+    # every screen after the first, distinct from for_new_generation's construction-time call.
+    scene, _ = _scene([EncounterKind.NOTHING, EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)  # screen 1, empty
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads: advance() reveals the pickup
+
+    assert NarrationEntry(
+        message="There's an obstacle in your path.",
+        subtitle="It could help or hinder your swarm. Approach and see.",
+    ) in _drain_narration(scene)
+
+
+def test_card_is_not_drawn_while_narration_is_active() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
+    _drain_narration(scene)  # FIRST_EXPLORATION + FIRST_PICKUP, both fired by advance() at construction
+    _resolve_next_screen(scene)  # arrives at the pickup and raises its Card
+    assert scene._card is not None
+
+    scene._narration.fire(NarrationTrigger.FIRST_DEATH, "msg", "sub")  # some other trigger, still active
+    surface = pygame.Surface((800, 600))
+    surface.fill(_UNDRAWN)
+    scene._draw_raised_card(surface)
+    surface.set_colorkey(_UNDRAWN)
+
+    assert surface.get_bounding_rect().size == (0, 0)
 
 
 def test_narration_dismiss_does_not_also_dismiss_the_pickup_card_underneath() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
-    _drain_narration(scene)  # FIRST_EXPLORATION, from construction
+    _drain_narration(scene)  # FIRST_EXPLORATION + FIRST_PICKUP, both fired by advance() at construction
 
-    _resolve_next_screen(scene)  # arrives at the pickup: raises its Card and fires FIRST_PICKUP
+    _resolve_next_screen(scene)  # arrives at the pickup and raises its Card
     assert scene._card is not None
+    assert scene._narration.queue.is_active is False  # already dismissed well before the walk got here
+
+    # Some other trigger (e.g. FIRST_PROXIMITY_FALLOFF, checked every frame independently of the
+    # pickup) becoming active while the card is up must not let a dismiss also clear the card.
+    scene._narration.fire(NarrationTrigger.FIRST_DEATH, "msg", "sub")
     assert scene._narration.queue.is_active is True
 
     _press(scene, pygame.K_SPACE)

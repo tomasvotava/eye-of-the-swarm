@@ -63,11 +63,13 @@ def _advance(driver: GameDriver) -> None:
     # Drives a full screen-walk lap (ADR 0012): ExplorationScene.for_new_generation() already
     # joins at AT_ENTRY with the screen's encounter pending, so one ADVANCE press plus a walk to
     # the marker is enough to reveal it -- the EnterCombat/HUD-message outcome every caller here
-    # is actually after. Dismisses FIRST_EXPLORATION (queued at construction) first -- otherwise
-    # the ADVANCE press below would just dismiss it instead of walking.
+    # is actually after. Dismisses whatever narration advance() already queued at construction
+    # first (FIRST_EXPLORATION, plus FIRST_BATTLE/FIRST_PICKUP if this screen has one) -- otherwise
+    # the ADVANCE press below would just dismiss narration instead of walking.
     scene = driver._scene
     assert isinstance(scene, ExplorationScene)
-    scene._narration.queue.dismiss()
+    while scene._narration.queue.is_active:
+        scene._narration.queue.dismiss()
     driver.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
     driver.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
 

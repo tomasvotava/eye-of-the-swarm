@@ -528,12 +528,9 @@ class CombatScene:
     ) -> None:
         self._generation = generation
         self._atlas = atlas
+        # FIRST_BATTLE fires in ExplorationScene, as soon as advance() reveals an EnemyEncountered
+        # -- before the player has walked up to it, not once combat has already begun.
         self._narration = narration if narration is not None else NarrationTriggers()
-        self._narration.fire(
-            NarrationTrigger.FIRST_BATTLE,
-            "A hostile strain blocks your path.",
-            "Choose an action with 1-9, or Up/Down and Enter.",
-        )
         if buff_icon_factory is not None:
             self._buff_icon_factory = buff_icon_factory
         else:
@@ -620,6 +617,13 @@ class CombatScene:
             self._player_animator.update(dt)
         if self._enemy_animator is not None:
             self._enemy_animator.update(dt)
+        if self._narration.queue.is_active:
+            # Freezes the whole battle pipeline while narration is up -- a phase's hold timer must
+            # not run out (and no new event/phase batch may start) while the overlay hides it from
+            # ever being drawn. Narration can only *become* active from inside _advance_phases
+            # (_start_next_event -> _fire_narration_for), so this never blocks the call that fires
+            # a trigger in the first place, only every call after.
+            return None
         self._advance_phases(dt)
         if self._current_phases or self._pending_events:
             # Gating invariant (ADR 0013): the next domain call and the BattleConcluded
@@ -1216,7 +1220,8 @@ class CombatScene:
     def _draw_announcement(
         self, surface: pygame.Surface, player_layout: CombatantLayout, enemy_layout: CombatantLayout
     ) -> None:
-        if self._announcement is None:
+        # Held back while narration is up (drawn after this in draw()) so the two never overlap.
+        if self._announcement is None or self._narration.queue.is_active:
             return
         anchored = self._announcement.card
         if anchored is None:

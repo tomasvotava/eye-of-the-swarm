@@ -181,6 +181,27 @@ def _resolve_encounter_sprite_key(events: Sequence[SessionEvent]) -> SpriteKey |
     return None
 
 
+def _fire_narration_for_advance(narration: NarrationTriggers, events: Sequence[SessionEvent]) -> None:
+    """The heads-up for whatever `generation.advance()` just produced, fired as soon as the screen
+    loads rather than once the player's sprite has walked up and revealed it -- ADR 0012 only
+    defers the visual reveal, not the outcome itself, so the warning can arrive before the danger
+    does."""
+    if any(isinstance(event, EnemyEncountered) for event in events):
+        # No control hint here: this fires well before the combat menu exists to describe, on the
+        # walk up to the encounter, not once the player is looking at it.
+        narration.fire(
+            NarrationTrigger.FIRST_BATTLE,
+            "A hostile strain blocks your path.",
+            "Ready your swarm. A fight is close.",
+        )
+    if any(isinstance(event, EffectGranted) for event in events):
+        narration.fire(
+            NarrationTrigger.FIRST_PICKUP,
+            "There's an obstacle in your path.",
+            "It could help or hinder your swarm. Approach and see.",
+        )
+
+
 _PICKUP_MARKER_KEYS = (SpriteKey.EFFECT_PICKUP, SpriteKey.RESOURCE_PICKUP)
 
 
@@ -299,6 +320,7 @@ class ExplorationScene:
             "You venture out of the hive to spread your swarm's turf.",
             "Press Space or Enter to venture further.",
         )
+        _fire_narration_for_advance(narration, events)
         return cls(
             generation,
             game,
@@ -438,6 +460,7 @@ class ExplorationScene:
 
     def _arrive_at_exit(self) -> None:
         self._pending_events = self._generation.advance()
+        _fire_narration_for_advance(self._narration, self._pending_events)
         self._rebuild_encounter_visuals()
         self._props_dirty = True
         self._set_phase(_Phase.AT_ENTRY)
@@ -475,12 +498,6 @@ class ExplorationScene:
             # Twice by design: the card is the moment, the HUD line the record it leaves.
             self._last_message = _describe_screen_event(screen_event)
             self._card = self._card_for_screen_event(screen_event)
-            if isinstance(screen_event, EffectGranted):
-                self._narration.fire(
-                    NarrationTrigger.FIRST_PICKUP,
-                    "There's an obstacle in your path.",
-                    "It could help or hinder your swarm -- approach and see.",
-                )
         return None
 
     def _card_for_screen_event(self, event: _ScreenEvent) -> Card | None:
@@ -620,7 +637,9 @@ class ExplorationScene:
 
     def _draw_raised_card(self, surface: pygame.Surface) -> None:
         # Centred, unlike CombatScene's: out here there is only one character to point at.
-        if self._card is None:
+        # Held back while narration is up (drawn after this in draw()) so the two never overlap --
+        # the card becomes visible the frame narration is dismissed, not before.
+        if self._card is None or self._narration.queue.is_active:
             return
         draw_card(
             surface,

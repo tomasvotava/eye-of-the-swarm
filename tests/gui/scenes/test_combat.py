@@ -241,6 +241,8 @@ def _drive_to_transition(scene: CombatScene, max_frames: int = 2000) -> PlayScen
 
 def _drive_to_next_player_query(scene: CombatScene, max_frames: int = 400) -> None:
     for _ in range(max_frames):
+        while scene._narration.queue.is_active:
+            scene._narration.queue.dismiss()
         scene.update(0.016)
         if scene._pending_query is not None:
             return
@@ -307,7 +309,6 @@ def test_handle_pygame_event_ignores_an_index_beyond_the_available_actions() -> 
 def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
 
     _press(scene, ACTION_KEYS[1])
@@ -318,7 +319,6 @@ def test_handle_pygame_event_accepts_a_valid_action_index() -> None:
 def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
 
     _press(scene, pygame.K_DOWN)
@@ -331,7 +331,6 @@ def test_handle_pygame_event_moves_the_cursor_down_and_wraps() -> None:
 def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
 
     _press(scene, pygame.K_UP)
@@ -342,7 +341,6 @@ def test_handle_pygame_event_moves_the_cursor_up_and_wraps() -> None:
 def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
 
     _press(scene, pygame.K_DOWN)
@@ -354,7 +352,6 @@ def test_handle_pygame_event_enter_selects_the_cursor_position() -> None:
 def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)  # first AWAITING_PLAYER_ACTION query, cursor at 0
     _press(scene, pygame.K_DOWN)
     assert scene._cursor_index == 1
@@ -364,6 +361,8 @@ def test_advance_query_resets_the_cursor_for_a_new_pending_query() -> None:
     # SelfDamageTaken real duration, so several update() calls are needed before the next query
     # can appear.
     for _ in range(200):
+        while scene._narration.queue.is_active:  # e.g. FIRST_ATTACK, on the player's first hit
+            scene._narration.queue.dismiss()
         scene.update(0.016)
         if scene._pending_query is not None:
             break
@@ -398,13 +397,14 @@ def test_resolve_enemy_turn_ticks_the_displayed_battle_effect_durations_by_one_p
     # update()) to stay in sync with the domain's actual cadence.
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     key = (EffectCategory.BATTLE, EffectName.FIBROUS)
     scene._player_displayed.remaining_turns[key] = 3
     scene.update(0.016)  # first AWAITING_PLAYER_ACTION query
     _press(scene, ACTION_KEYS[0])
 
     for _ in range(200):
+        while scene._narration.queue.is_active:  # e.g. FIRST_ATTACK, on the player's first hit
+            scene._narration.queue.dismiss()
         scene.update(0.016)
         if scene._pending_query is not None:
             break
@@ -2067,12 +2067,51 @@ def test_announcement_phase_holds_for_the_tuned_duration_via_the_driver() -> Non
     assert scene._announcement is None
 
 
+def test_announcement_hold_timer_is_frozen_while_narration_is_active() -> None:
+    # Regression: update() previously ran the phase pipeline unconditionally, so a timed
+    # announcement's hold could elapse -- and clear itself -- while narration was up hiding it from
+    # ever being drawn (_draw_announcement's succession guard hides it, it doesn't pause it).
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    event = TurnSkipped(combatant=scene._battle.player)
+    scene._queue_events([event])
+    scene.update(0.0)  # the first event of a batch reveals immediately (ADR 0013)
+    assert scene._announcement == Announcement(text=_describe_event(event, scene._battle.player))
+
+    scene._narration.fire(NarrationTrigger.FIRST_ATTACK, "msg", "sub")
+    for _ in range(200):
+        scene.update(0.016)  # comfortably more real time than the hold needs, if it were ticking
+
+    assert scene._announcement is not None  # still holding: narration froze the timer
+
+    scene._narration.queue.dismiss()
+    scene.update(BATTLE_ANNOUNCEMENT_HOLD_SECONDS)
+
+    assert scene._announcement is None  # resumes and completes once narration clears
+
+
 def test_draw_does_not_raise_with_a_plain_announcement_set() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene._announcement = Announcement(text="Test announcement")
 
     scene.draw(pygame.Surface((800, 600)))
+
+
+def test_announcement_is_not_drawn_while_narration_is_active() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._announcement = Announcement(text="Test announcement")
+    scene._narration.fire(NarrationTrigger.FIRST_ATTACK, "msg", "sub")
+
+    surface = pygame.Surface((800, 600))
+    surface.fill(_UNDRAWN)
+    scene._draw_announcement(
+        surface, _combatant_layout(surface, mirrored=False), _combatant_layout(surface, mirrored=True)
+    )
+    surface.set_colorkey(_UNDRAWN)
+
+    assert surface.get_bounding_rect().size == (0, 0)
 
 
 def test_draw_does_not_raise_with_an_effect_card_announcement_set() -> None:
@@ -2584,7 +2623,6 @@ def test_the_turn_banner_is_absent_before_the_first_turn() -> None:
 def test_the_turn_banner_names_the_player_while_the_action_menu_is_up() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
 
     scene.update(0.016)
     assert scene._pending_query is not None
@@ -2601,11 +2639,12 @@ def test_the_turn_banner_names_the_player_while_the_action_menu_is_up() -> None:
 def test_the_turn_banner_names_the_enemy_during_the_enemy_turn() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
     _press(scene, ACTION_KEYS[0])
 
     for _ in range(400):
+        while scene._narration.queue.is_active:  # e.g. FIRST_ATTACK, on the player's first hit
+            scene._narration.queue.dismiss()
         scene.update(0.016)
         if scene._turn_banner != "Your turn":
             break
@@ -2726,11 +2765,12 @@ def test_the_active_combatant_is_the_player_while_the_action_menu_is_up() -> Non
 def test_the_active_combatant_is_the_enemy_during_the_enemy_turn() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene.update(0.016)
     _press(scene, ACTION_KEYS[0])
 
     for _ in range(400):
+        while scene._narration.queue.is_active:  # e.g. FIRST_ATTACK, on the player's first hit
+            scene._narration.queue.dismiss()
         scene.update(0.016)
         if scene._active_combatant is not scene._battle.player:
             break
@@ -2900,13 +2940,15 @@ def test_draw_background_uses_the_resolved_biome_key(monkeypatch: pytest.MonkeyP
     assert seen_keys == [resolve_biome(scene._generation.distance_from_home)]
 
 
-def test_construction_fires_first_battle_narration() -> None:
+def test_construction_does_not_fire_first_battle_narration() -> None:
+    # FIRST_BATTLE fires in ExplorationScene, as soon as advance() reveals the encounter -- before
+    # the player has walked up to it, not here once combat has already begun.
     generation = _generation()
 
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
 
-    assert NarrationTrigger.FIRST_BATTLE in scene._narration._seen
-    assert scene._narration.queue.is_active is True
+    assert NarrationTrigger.FIRST_BATTLE not in scene._narration._seen
+    assert scene._narration.queue.is_active is False
 
 
 def test_fire_narration_for_a_player_hit_landed_fires_first_attack() -> None:
@@ -3073,8 +3115,9 @@ def test_narration_dismiss_withholds_the_input_it_shares_a_keypress_with() -> No
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
     scene.update(0.016)  # reach AWAITING_PLAYER_ACTION
-    assert scene._narration.queue.is_active is True  # FIRST_BATTLE, queued at construction
     assert scene._pending_query is not None
+    scene._narration.queue.enqueue("test message", "test subtitle")  # e.g. FIRST_ATTACK, mid-battle
+    assert scene._narration.queue.is_active is True
 
     _press(scene, ACTION_KEYS[0])
 
@@ -3085,7 +3128,6 @@ def test_narration_dismiss_withholds_the_input_it_shares_a_keypress_with() -> No
 def test_update_withholds_battle_concluded_while_the_narration_is_still_active() -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
-    scene._narration.queue.dismiss()  # FIRST_BATTLE, queued at construction
     scene._battle.player.current_hp = 0  # forces is_over True without going through _conclude()
     scene._narration.queue.enqueue("test message", "test subtitle")  # e.g. FIRST_DEATH, still up
 
@@ -3103,6 +3145,7 @@ def test_update_withholds_battle_concluded_while_the_narration_is_still_active()
 def test_draw_renders_the_active_narration_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas())
+    scene._narration.queue.enqueue("test message", "test subtitle")  # e.g. FIRST_ATTACK, mid-battle
     drawn: list[NarrationEntry] = []
     import eye.gui.scenes.combat as combat_module
 
