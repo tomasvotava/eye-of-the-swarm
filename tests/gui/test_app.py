@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import random
+from pathlib import Path
+
+import platformdirs
 import pygame
 import pytest
 
-from eye.exploration.encounters import EncounterKind
 from eye.gui.app import _DEV_ASSET_VIEWER_ENV_VAR, App, _dev_asset_viewer_requested, _initial_scene
-from eye.gui.game_driver import GameDriver
 from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
-from tests.persistence.doubles import FakeSaveStore
-from tests.session.doubles import ScriptedEncounterRandom
+from eye.gui.scenes.menu import MenuScene
+from eye.gui.scenes.title import TitleScene
+
+
+@pytest.fixture(autouse=True)
+def _isolated_save_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Redirects save.store_for_slot()'s underlying paths under tmp_path -- MenuScene (built inside
+    # _initial_scene(), ADR 0017) resolves its own stores internally, so tests must isolate the
+    # real filesystem adapter, the same paths a developer's own save data would otherwise occupy.
+    monkeypatch.setattr(platformdirs, "user_data_dir", lambda _app_name: str(tmp_path))
 
 
 class _StubScene:
@@ -34,17 +44,22 @@ def _app(initial_scene: Scene | None = None) -> App:
     return App(pygame.Surface((64, 48)), pygame.Clock(), initial_scene or _StubScene())
 
 
-def test_initial_scene_returns_a_game_driver_by_default() -> None:
-    # A brand-new game immediately fires advance() for its first screen via for_new_generation()
-    # (ADR 0012), so the queue needs at least one entry even though this test doesn't otherwise
-    # care what that screen holds.
-    scene = _initial_scene(FakeSaveStore(), ScriptedEncounterRandom([EncounterKind.NOTHING]), dev_asset_viewer=False)
+def test_initial_scene_returns_a_title_scene_by_default() -> None:
+    scene = _initial_scene(random.Random(), dev_asset_viewer=False)
 
-    assert isinstance(scene, GameDriver)
+    assert isinstance(scene, TitleScene)
+
+
+def test_title_scene_transitions_to_a_menu_scene_on_keydown() -> None:
+    scene = _initial_scene(random.Random(), dev_asset_viewer=False)
+
+    scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
+
+    assert isinstance(scene.update(0.016), MenuScene)
 
 
 def test_initial_scene_returns_the_dev_asset_viewer_when_requested() -> None:
-    scene = _initial_scene(FakeSaveStore(), ScriptedEncounterRandom(()), dev_asset_viewer=True)
+    scene = _initial_scene(random.Random(), dev_asset_viewer=True)
 
     assert isinstance(scene, DevAssetViewerScene)
 

@@ -87,11 +87,17 @@ global settings blob, instead of one implicit file/key.
     "no defensive validation/dispel-style mechanics" posture elsewhere. If wanted later, it's a
     small additive follow-up (a confirm dialog before calling `store.save()` on a fresh `Game`),
     not a redesign.
-- **`MenuScene` becomes `App`'s initial scene**, replacing today's direct-to-`GameDriver` boot —
-  exactly the seam `app.py`'s docstring already reserved. The `EYE_DEV_ASSET_VIEWER` escape hatch
-  is unaffected: it still short-circuits straight to `DevAssetViewerScene`, bypassing the menu
-  entirely. `MenuScene` fits `App`'s existing `Scene` protocol (`update(dt) -> Scene | None`)
-  without any change to `App` itself: picking a slot's action constructs and returns a
+- **`App`'s initial scene is `TitleScene(MenuScene(atlas, rng))`**, replacing today's
+  direct-to-`GameDriver` boot — the seam `app.py`'s docstring already reserved, with one addition
+  to the original design: a `TitleScene` ahead of `MenuScene`, not `MenuScene` directly. A static
+  screen — "The Eye of the Swarm" in the `buse` font over a smaller "Press any key to continue" in
+  `ithaca` (the footer, matching every other scene's own footer font) — any `KEYDOWN` hands off to
+  the `MenuScene` it was constructed with, mirroring `CreditsScene`'s existing
+  `next_scene`/`back_scene` constructor pattern. The `EYE_DEV_ASSET_VIEWER` escape hatch is
+  unaffected: it still short-circuits straight to `DevAssetViewerScene`, bypassing both screens.
+  Both `TitleScene` and `MenuScene` fit `App`'s existing `Scene` protocol
+  (`update(dt) -> Scene | None`) without any change to `App` itself: picking a slot's action
+  constructs and returns a
   `GameDriver(atlas, rng, save_store=store_for_slot(n), combat_speed_multiplier=settings.combat_speed_multiplier)`
   the same way any other scene transition already works.
 - **`GameDriver` and `CombatScene` both gain a `combat_speed_multiplier: float = 1.0` constructor
@@ -111,10 +117,11 @@ global settings blob, instead of one implicit file/key.
 ## Consequences
 
 - `eye/persistence`'s public surface grows by one parameter (`namespace` on
-  `default_save_store`) and three functions (`store_for_slot`, `settings_store`, `peek`) — no
-  change to the `SaveStore` Protocol or either adapter, so ADR 0005 stands as written; this ADR
-  only revises how a `SaveStore` gets picked, not what one is.
-  `LocalStorageSaveStore`/`FilesystemSaveStore` gain no new constructor parameters.
+  `default_save_store`) and five functions (`store_for_slot`, `settings_store`,
+  `narration_store_for_slot`, `peek`, `load_settings`) — no change to the `SaveStore` Protocol or
+  either adapter, so ADR 0005 stands as written; this ADR only revises how a `SaveStore` gets
+  picked, not what one is. `LocalStorageSaveStore`/`FilesystemSaveStore` gain no new constructor
+  parameters.
 - Save files/keys move from one implicit location to three (`save-1`/`save-2`/`save-3`) plus
   `settings` — a save written before this Epic (single implicit slot) has no automatic migration
   path into slot 1. Given the jam timeline and that no external save data exists in the wild yet,
@@ -125,3 +132,7 @@ global settings blob, instead of one implicit file/key.
 - `CombatScene`'s phase-duration math now depends on an injected multiplier rather than reading
   `eye/gui/tuning.py` constants as fixed values directly — any future per-phase-kind speed tuning
   builds on this seam rather than re-threading a new parameter.
+- `GameDriver` reads the multiplier once, at construction (from `MenuScene._confirm()`) — a
+  setting changed mid-game (once Settings is reachable outside the pre-game menu) would not affect
+  the `GameDriver`/`CombatScene` already running. Acceptable today since Settings is only reached
+  before a `GameDriver` exists; revisit if that ever changes.

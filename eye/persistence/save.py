@@ -6,6 +6,7 @@ from pathlib import Path
 from eye.persistence.codec import GameSnapshot, SaveDataError, decode, encode
 from eye.persistence.port import SaveStore
 from eye.persistence.select import default_save_store
+from eye.persistence.settings import SettingsSnapshot, decode_settings, default_settings
 from eye.session.game import Game
 from eye.skilltree.catalog import CATALOG
 from eye.skilltree.state import SkillTree
@@ -51,6 +52,20 @@ def _namespaced_store(namespace: str) -> SaveStore:
     if sys.platform == "emscripten":
         return default_save_store(namespace)
     return default_save_store(namespace, _default_save_path(namespace))
+
+
+def load_settings() -> SettingsSnapshot:
+    """The player's saved settings, or `default_settings()` on a first boot or corrupt data --
+    same undecodable-data-starts-fresh posture as `load_or_new()`, since a broken settings blob is
+    even lower stakes than a broken save (nothing but preferences is lost).
+    """
+    raw = settings_store().load()
+    if raw is None:
+        return default_settings()
+    try:
+        return decode_settings(raw)
+    except SaveDataError:
+        return default_settings()
 
 
 def peek(save_store: SaveStore) -> GameSnapshot | None:

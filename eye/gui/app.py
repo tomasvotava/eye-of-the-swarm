@@ -3,9 +3,9 @@ current-`Scene` reference, swapped from each frame's `update()` return value, an
 in a `while running: ... await asyncio.sleep(0)` loop so the same code runs unmodified under
 pygbag's cooperative scheduler. `App` itself takes an already-built initial `Scene` and knows
 nothing about what any scene is or does -- `Game`, `Generation`, and `eye.persistence` are all
-`GameDriver`'s concern (ADR 0010), not this module's class. `run()` is where the two top-level
-screens this Epic ships (`DevAssetViewerScene`, `GameDriver`) actually get chosen; a future
-splash/menu epic adds screens here without touching `App`.
+`GameDriver`'s concern (ADR 0010), not this module's class. `run()` is where the top-level screens
+get chosen: `TitleScene` -> `MenuScene` -> `GameDriver` for the normal path (ADR 0017), or straight
+to `DevAssetViewerScene` behind the dev-only escape hatch.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from pathlib import Path
 import pygame
 
 from eye.gui.assets import build_art_atlas
-from eye.gui.game_driver import GameDriver
 from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
-from eye.persistence.port import SaveStore
+from eye.gui.scenes.menu import MenuScene
+from eye.gui.scenes.title import TitleScene
 
 _WINDOW_SIZE = (640, 480)
 _MAX_FPS = 60
@@ -74,22 +74,21 @@ class App:
         return self._clock.tick(_MAX_FPS) / 1000
 
 
-def _initial_scene(save_store: SaveStore | None, rng: random.Random, dev_asset_viewer: bool) -> Scene:
+def _initial_scene(rng: random.Random, dev_asset_viewer: bool) -> Scene:
     atlas = build_art_atlas(_SPRITES_DIR)
     if dev_asset_viewer:
         return DevAssetViewerScene(atlas)
-    return GameDriver(atlas, rng, save_store)
+    return TitleScene(MenuScene(atlas, rng))
 
 
-async def run(save_store: SaveStore | None = None, rng: random.Random | None = None) -> None:
+async def run() -> None:
     pygame.init()
     screen = pygame.display.set_mode(_WINDOW_SIZE, flags=pygame.SCALED)
     pygame.display.set_caption(_TITLE)
     clock = pygame.Clock()
 
     scene = _initial_scene(
-        save_store,
-        rng if rng is not None else random.Random(),  # noqa: S311 -- game RNG, not cryptographic
+        random.Random(),  # noqa: S311 -- game RNG, not cryptographic
         dev_asset_viewer=_dev_asset_viewer_requested(),
     )
     app = App(screen, clock, scene)
