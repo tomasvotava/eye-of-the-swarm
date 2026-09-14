@@ -342,6 +342,21 @@ def test_losing_resolves_battle_music_as_lost() -> None:
     assert spy.battle_result.played == [(spy.sounds[SoundKey.FIGHT_LOST], 0, 1000)]
 
 
+def test_a_draw_resolves_battle_music_as_lost() -> None:
+    # A draw is not a win (ADR 0018), and it is the one outcome no full-battle test above can set
+    # up reliably -- driven straight off the event instead, the same way the scene builds its
+    # phases. Without this, `won=winner is not self._battle.enemy` plays the fanfare on a draw and
+    # every other audio test stays green.
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    encounter = _encounter(generation)
+    spy = build_spy_audio_manager()
+    scene = CombatScene(generation, encounter, build_placeholder_atlas(), spy.manager)
+
+    scene._phases_for(BattleEnded(winner=None))[0].on_start()
+
+    assert spy.battle_result.played == [(spy.sounds[SoundKey.FIGHT_LOST], 0, 1000)]
+
+
 def test_battle_music_resolves_as_the_result_banner_appears_not_when_the_scene_concludes() -> None:
     # Resolving from _conclude() instead would land a full announcement hold (plus any death
     # pose) after "You win!" is already standing on screen.

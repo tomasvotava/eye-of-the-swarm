@@ -275,3 +275,29 @@ distinguishing that from an actual player keypress.
 `TitleScene` now only dismisses on `pygame.K_RETURN`. Any future "press any key" style prompt
 should default to a specific key (or a small explicit set) rather than literally any `KEYDOWN`,
 unless it's verified the surface it's shown on never receives synthetic OS-level key events.
+
+## 2026-09-14 - `Channel.fadeout()`/`stop()` *promote* a queued sound instead of dropping it
+
+Playtesting: after a fight ended, the combat loop kept playing over the exploration music --
+`fight_won` faded in as designed, but the loop it was supposed to be replacing came back at full
+volume and ran for another full iteration (13.1s) alongside the ambient track.
+
+`AudioManager` keeps the next loop iteration queued on the battle-primary channel at all times
+(ADR 0018 -- that is what makes the loop gapless). `resolve_battle_music()` called
+`fadeout(1000)` on that channel assuming the fade would take the queued sound with it. It does
+not. Measured on pygame-ce 2.5.8 / SDL 2.32.10: the fade runs to completion, and *then* pygame's
+channel-finished handling starts whatever is queued -- at full volume, ignoring the fade entirely.
+
+`stop()` behaves the same way and is worse for being non-obvious: one `stop()` halts the playing
+sound and promotes the queued one, leaving `get_busy()` still `True`; it takes a second `stop()`
+to actually silence the channel.
+
+pygame exposes no unqueue. The remedy is to displace the pending sound by queueing something
+inaudible over it (`_silence()`, a few frames of zeros in the mixer's own format) *before* the
+`fadeout()`/`stop()` call -- `queue()` replaces whatever was already pending.
+
+Any future code that stops or fades a channel this module has queued a sound on has to do the
+same. The unit tests cannot catch this on their own: `FakeMixerChannel` has no notion of SDL
+promoting a queued sound, which is why `tests/gui/test_audio.py` keeps one real-channel test
+(`test_battle_primary_channel_falls_silent_after_the_crossfade_on_real_channels`) with a real
+wall-clock wait.
