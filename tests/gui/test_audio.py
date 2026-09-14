@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pygame
 import pytest
 
+from eye.gui import audio as audio_module
 from eye.gui.audio import (
     _BATTLE_PRIMARY_CHANNEL_ID,
     AudioManager,
@@ -212,9 +214,36 @@ def test_battle_primary_channel_falls_silent_after_the_crossfade_on_real_channel
 @pytest.mark.parametrize("key", list(SoundKey))
 def test_every_sound_key_resolves_to_a_shipped_file(key: SoundKey) -> None:
     # Exercises the real eye/gui/sound/<key>.ogg loader -- every test above injects a fake, so a
-    # SoundKey whose value drifts from its filename would otherwise only surface as a
-    # FileNotFoundError on the first frame of a battle, never at test time.
-    assert isinstance(_load_sound(key), pygame.mixer.Sound)
+    # SoundKey whose value drifts from its filename would otherwise only surface on the first
+    # frame of a battle, never at test time. Asserts real audio came back rather than just a
+    # Sound: _load_sound() degrades an unreadable asset to silence, which is a Sound too.
+    assert _load_sound(key).get_length() > 1.0
+
+
+def test_an_unreadable_sound_asset_degrades_to_silence_instead_of_crashing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # What a clone without git-lfs hands us: the .ogg path exists, but holds a pointer file.
+    monkeypatch.setattr(audio_module, "_SOUND_ASSETS_DIR", tmp_path)
+    monkeypatch.setattr(audio_module, "_SOUND_CACHE", {})
+    (tmp_path / f"{SoundKey.MENU.value}.ogg").write_text("version https://git-lfs.github.com/spec/v1\n")
+
+    with pytest.warns(UserWarning, match="ignoring unusable sound asset menu"):
+        loaded = _load_sound(SoundKey.MENU)
+
+    assert loaded is _silence()
+
+
+def test_a_missing_sound_file_degrades_to_silence_instead_of_crashing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(audio_module, "_SOUND_ASSETS_DIR", tmp_path)
+    monkeypatch.setattr(audio_module, "_SOUND_CACHE", {})
+
+    with pytest.warns(UserWarning, match="ignoring unusable sound asset menu"):
+        loaded = _load_sound(SoundKey.MENU)
+
+    assert loaded is _silence()
 
 
 def test_methods_are_no_ops_when_the_mixer_is_unavailable(rig: _Rig, monkeypatch: pytest.MonkeyPatch) -> None:
