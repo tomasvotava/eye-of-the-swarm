@@ -51,10 +51,10 @@ def test_initial_scene_returns_a_title_scene_by_default() -> None:
     assert isinstance(scene, TitleScene)
 
 
-def test_title_scene_transitions_to_a_menu_scene_on_keydown() -> None:
+def test_title_scene_transitions_to_a_menu_scene_on_enter() -> None:
     scene = _initial_scene(random.Random(), build_fake_audio_manager(), dev_asset_viewer=False)
 
-    scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
+    scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN))
 
     assert isinstance(scene.update(0.016), MenuScene)
 

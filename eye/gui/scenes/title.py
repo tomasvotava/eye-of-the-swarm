@@ -1,5 +1,5 @@
 """TitleScene: the game's very first screen, before `MenuScene` (ADR 0017 amendment) -- just the
-game's name and a "press any key" prompt. Takes `next_scene` rather than resolving one itself,
+game's name and a "press Enter" prompt. Takes `next_scene` rather than resolving one itself,
 mirroring `CreditsScene`'s constructor pattern -- whatever constructs it decides what it hands off
 to.
 """
@@ -17,7 +17,7 @@ _TITLE_CENTER_Y_FRACTION = 0.45
 _FOOTER_BOTTOM_MARGIN = 24
 
 _TITLE = "The Eye of the Swarm"
-_FOOTER = "Press any key to continue"
+_FOOTER = "Press Enter to continue"
 
 
 class TitleScene:
@@ -26,7 +26,9 @@ class TitleScene:
         self._dismissed = False
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
-        if pygame_event.type == pygame.KEYDOWN:
+        # Not "any key" (GOTCHAS.md) -- an OS/window-manager fullscreen toggle can deliver a
+        # synthetic keydown, dismissing the title screen before the player ever meant to.
+        if pygame_event.type == pygame.KEYDOWN and pygame_event.key == pygame.K_RETURN:
             self._dismissed = True
 
     def update(self, dt: float) -> Scene | None:
