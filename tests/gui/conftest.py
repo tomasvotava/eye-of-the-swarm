@@ -8,7 +8,9 @@ import pytest
 def _headless_pygame_display() -> Iterator[None]:
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+        monkeypatch.setenv("SDL_AUDIODRIVER", "dummy")
         pygame.display.init()
         pygame.display.set_mode((1, 1))
         pygame.font.init()
+        pygame.mixer.init()
         yield
