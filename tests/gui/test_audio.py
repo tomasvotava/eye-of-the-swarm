@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import time
+
 import pygame
 import pytest
 
-from eye.gui.audio import AudioManager, SoundKey, _default_channel, _load_sound, _SilentMixerChannel
+from eye.gui.audio import (
+    _BATTLE_PRIMARY_CHANNEL_ID,
+    AudioManager,
+    SoundKey,
+    _default_channel,
+    _load_sound,
+    _silence,
+    _SilentMixerChannel,
+)
 from tests.gui.doubles import SpyAudioManager, build_spy_audio_manager
 
 _Rig = SpyAudioManager
@@ -160,10 +170,43 @@ def test_resolve_battle_music_stops_the_cue_in_loop_handoff(rig: _Rig) -> None:
     rig.manager.start_battle_music(boss=False)
 
     rig.manager.resolve_battle_music(won=True)
+    queue_calls_after_resolve = len(rig.battle_primary.queue_calls)
     rig.battle_primary.queued_sound = None
     rig.manager.update(0.016)
 
-    assert len(rig.battle_primary.queue_calls) == 1  # only the initial queue -- no re-queue after resolve
+    assert len(rig.battle_primary.queue_calls) == queue_calls_after_resolve
+
+
+def test_resolve_battle_music_displaces_the_pending_loop_before_fading_out(rig: _Rig) -> None:
+    # fadeout() promotes a pending queued sound instead of dropping it (GOTCHAS.md), so leaving the
+    # loop queued restarts it at full volume under the result track. Queueing over it is the fix,
+    # and it has to land before the fadeout() call, not after.
+    rig.manager.start_battle_music(boss=False)
+    assert rig.battle_primary.queue_calls[-1] == rig.sounds[SoundKey.FIGHT_LOOP]
+
+    rig.manager.resolve_battle_music(won=True)
+
+    assert rig.battle_primary.queue_calls[-1] != rig.sounds[SoundKey.FIGHT_LOOP]
+    assert rig.battle_primary.queue_calls[-1].get_length() < 0.01  # inaudible, not another track
+    assert rig.battle_primary.fadeouts == [1000]
+    # What the fade actually promotes, which is the whole bug: silence, never the loop again.
+    assert rig.sounds[SoundKey.FIGHT_LOOP] not in rig.battle_primary.promoted
+
+
+def test_battle_primary_channel_falls_silent_after_the_crossfade_on_real_channels() -> None:
+    # The one test driven by real pygame channels rather than FakeMixerChannel: a fake cannot model
+    # SDL_mixer promoting a queued sound when the channel it is waiting on stops, which is exactly
+    # the behavior that let the combat loop play on over exploration music after a fight.
+    manager = AudioManager()
+    manager.start_battle_music(boss=False)
+    manager.update(0.016)
+
+    manager.resolve_battle_music(won=True)
+    # Outlasts _BATTLE_RESULT_CROSSFADE_MILLISECONDS: the promotion happens at the *end* of the
+    # fade, so a shorter wait passes even against the unfixed code.
+    time.sleep(1.5)
+
+    assert pygame.mixer.Channel(_BATTLE_PRIMARY_CHANNEL_ID).get_busy() is False
 
 
 @pytest.mark.parametrize("key", list(SoundKey))
@@ -207,6 +250,24 @@ def test_default_channel_falls_back_to_silent_when_the_mixer_is_unavailable(monk
 
 def test_default_channel_uses_a_real_channel_when_the_mixer_is_available() -> None:
     assert isinstance(_default_channel(0), pygame.mixer.Channel)
+
+
+def test_silence_is_inaudibly_short_and_matches_the_mixers_own_format() -> None:
+    silence = _silence()
+
+    assert silence.get_length() < 0.01
+    assert silence.get_raw() == bytes(len(silence.get_raw()))  # every sample is zero
+
+
+def test_silence_is_cached_rather_than_rebuilt_per_call() -> None:
+    assert _silence() is _silence()
+
+
+def test_silence_refuses_to_build_without_an_initialized_mixer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pygame.mixer, "get_init", lambda: None)
+
+    with pytest.raises(RuntimeError, match="initialized mixer"):
+        _silence()
 
 
 def test_silent_mixer_channel_methods_are_all_safe_no_ops() -> None:

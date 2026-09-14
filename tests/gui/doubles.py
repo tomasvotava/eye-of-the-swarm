@@ -22,6 +22,8 @@ class FakeMixerChannel:
     fadeouts: list[int] = field(default_factory=list)
     queue_calls: list[pygame.mixer.Sound] = field(default_factory=list)
     queued_sound: pygame.mixer.Sound | None = None
+    # What a stop()/fadeout() promoted off the queue instead of dropping -- see _end_current_sound.
+    promoted: list[pygame.mixer.Sound] = field(default_factory=list)
 
     def play(self, sound: pygame.mixer.Sound, loops: int = 0, fade_ms: int = 0) -> None:
         self.played.append((sound, loops, fade_ms))
@@ -37,12 +39,22 @@ class FakeMixerChannel:
 
     def fadeout(self, ms: int) -> None:
         self.fadeouts.append(ms)
-        self.busy = False
-        self.queued_sound = None
+        self._end_current_sound()
 
     def stop(self) -> None:
-        self.busy = False
+        self._end_current_sound()
+
+    def _end_current_sound(self) -> None:
+        # SDL_mixer promotes a queued sound when the channel it waits on ends, whether that end came
+        # from stop() or from a fade running out -- it does not drop it (GOTCHAS.md). Modelling this
+        # matters: a fake that cleared the queue here is exactly what let the combat loop resuming
+        # under the result track past the whole suite.
+        if self.queued_sound is None:
+            self.busy = False
+            return
+        self.promoted.append(self.queued_sound)
         self.queued_sound = None
+        self.busy = True
 
 
 def silent_sound(key: SoundKey) -> pygame.mixer.Sound:

@@ -93,6 +93,25 @@ def _load_sound(key: SoundKey) -> pygame.mixer.Sound:
     return _SOUND_CACHE[key]
 
 
+# Long enough to be a valid chunk, far too short to be audible (~1.5ms at 44.1kHz).
+_SILENCE_FRAMES = 64
+_SILENCE_CACHE: dict[tuple[int, int, int], pygame.mixer.Sound] = {}
+
+
+def _silence() -> pygame.mixer.Sound:
+    """A few frames of digital silence in the mixer's own output format, used only to displace a
+    pending queued sound (`AudioManager.resolve_battle_music`). Callers must have already checked
+    the mixer is initialized.
+    """
+    init = pygame.mixer.get_init()
+    if init is None:
+        raise RuntimeError("_silence() requires an initialized mixer -- guard on AudioManager._available")
+    if init not in _SILENCE_CACHE:
+        _frequency, sample_bits, channels = init
+        _SILENCE_CACHE[init] = pygame.mixer.Sound(buffer=bytes((abs(sample_bits) // 8) * channels * _SILENCE_FRAMES))
+    return _SILENCE_CACHE[init]
+
+
 class AudioManager:
     """Owns three fixed channels: ambient (looping title/menu/exploration music), and a
     battle-primary/battle-result pair for the cue-in-then-loop-then-crossfade-to-result sequence a
@@ -179,13 +198,17 @@ class AudioManager:
 
     def resolve_battle_music(self, *, won: bool) -> None:
         """Fades the battle-primary channel out while fading `fight_won`/`fight_lost` in on the
-        battle-result channel, so the two overlap during the crossfade. `fadeout()` also drops
-        anything queued on the channel (undocumented pygame-ce behavior, not just an assumption),
-        so a trailing `update()` re-queueing the loop one more time first is not a race with this.
+        battle-result channel, so the two overlap during the crossfade.
+
+        Queueing silence first is what actually ends the loop: `fadeout()` does *not* drop a
+        pending queued sound, it promotes it once the fade completes, restarting the combat loop at
+        full volume underneath the result track (GOTCHAS.md). pygame has no unqueue, so displacing
+        the pending sound with an inaudible one is the only way to empty the slot.
         """
         if not self._available:
             return
+        self._battle_active = False
+        self._battle_primary_channel.queue(_silence())
         self._battle_primary_channel.fadeout(_BATTLE_RESULT_CROSSFADE_MILLISECONDS)
         result_key = SoundKey.FIGHT_WON if won else SoundKey.FIGHT_LOST
         self._battle_result_channel.play(self._load_sound(result_key), fade_ms=_BATTLE_RESULT_CROSSFADE_MILLISECONDS)
-        self._battle_active = False

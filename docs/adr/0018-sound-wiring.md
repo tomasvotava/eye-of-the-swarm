@@ -92,8 +92,12 @@ sub-issues' implementation PRs).
     `battle_primary_channel.fadeout(ms)` and `battle_result_channel.play(fight_won_or_lost,
     fade_ms=ms)` in the same call — native SDL_mixer fades (`pygame.mixer.Channel.fadeout`/
     `Channel.play(..., fade_ms=...)`), no manual volume-ramp polling needed for the crossfade
-    itself. `fadeout()` also drops anything queued on the channel (confirmed against pygame-ce
-    directly; undocumented), so a trailing `update()` re-queue racing this is not a concern.
+    itself. It must first queue a few frames of silence over the loop iteration `update()` has
+    left pending, because `fadeout()` does *not* drop a queued sound — measured against pygame-ce
+    2.5.8, it runs the fade to completion and *then* promotes whatever is queued, at full volume,
+    which is audibly the combat loop refusing to end (`stop()` does the same; GOTCHAS.md). pygame
+    exposes no unqueue, and `queue()` replaces whatever is already pending, so displacing it with
+    an inaudible sound is the only lever available.
 - **Boss detection reads `encounter.strain` directly** (`EnemyEncountered.strain`, already a
   `CombatScene` constructor argument): `encounter.strain in (Strain.GOLEM, Strain.PHIDIZVIK)`.
   Confirmed as the domain's two rare/deep-exploration Strains via `eye/exploration/tuning.py`'s
