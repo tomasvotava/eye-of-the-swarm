@@ -93,7 +93,7 @@ _RESOURCE_SPRITE_KEYS: Mapping[ResourceKind, SpriteKey] = {
 # than instruction-plus-hint like the rest of the narration set.
 _INTRO_LORE: tuple[tuple[str, str], ...] = (
     ("You are not the first to wear this shape.", ""),
-    ("Every generation before you walked out, fought, and fell -- and gave what it found to the swarm.", ""),
+    ("Every generation before you walked out, fought, and fell - and gave what it found to the swarm.", ""),
     ("Their spores became your strength. Their planted ground became your home.", ""),
     ("Now it's your turn. Walk out. Bring back what you can.", ""),
 )

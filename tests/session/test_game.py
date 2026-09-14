@@ -81,7 +81,9 @@ def test_end_generation_awards_spores_and_leaves_matured_turf_positions_unchange
 def test_end_generation_folds_a_planted_seed_into_matured_turf_positions() -> None:
     advances_to_ready = int(SEED_GROWTH_THRESHOLD // SEED_GROWTH_RATE_CAP)
     kind_queue = [EncounterKind.NOTHING] * advances_to_ready + [EncounterKind.ENEMY, EncounterKind.ENEMY]
-    game = _game(kind_queue=kind_queue)
+    # Flea then Golem guarantees death by the second fight (see the spore-award test below) --
+    # deterministic, rather than depending on which Strain an unscripted roll happens to draw.
+    game = _game(kind_queue=kind_queue, strain_queue=[Strain.FLEA, Strain.GOLEM])
     generation = game.start_generation()
 
     for _ in range(advances_to_ready):
@@ -97,7 +99,7 @@ def test_end_generation_folds_a_planted_seed_into_matured_turf_positions() -> No
 
 
 def test_end_generation_raises_if_called_twice_on_the_same_generation() -> None:
-    game = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY])
+    game = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY], strain_queue=[Strain.FLEA, Strain.GOLEM])
     generation = game.start_generation()
     while not generation.died:
         advance_flat(generation)
@@ -108,7 +110,7 @@ def test_end_generation_raises_if_called_twice_on_the_same_generation() -> None:
 
 
 def test_end_generation_raises_for_a_generation_started_by_a_different_game() -> None:
-    owner = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY])
+    owner = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY], strain_queue=[Strain.FLEA, Strain.GOLEM])
     generation = owner.start_generation()
     while not generation.died:
         advance_flat(generation)
@@ -138,7 +140,7 @@ def test_start_generation_raises_while_a_generation_is_already_in_progress() -> 
 
 
 def test_start_generation_is_allowed_again_after_end_generation() -> None:
-    game = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY])
+    game = _game(kind_queue=[EncounterKind.ENEMY, EncounterKind.ENEMY], strain_queue=[Strain.FLEA, Strain.GOLEM])
     first = game.start_generation()
     while not first.died:
         advance_flat(first)

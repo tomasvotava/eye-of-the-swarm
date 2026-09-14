@@ -53,7 +53,7 @@ class ExplorationRun:
         self._current_screen += 1
         events.append(self._grow_seed(seed_growth_rate(self.distance_to_nearest_seed) * self._seed_growth_multiplier))
 
-        encounter = self._generator.generate()
+        encounter = self._generator.generate(self.distance_from_home)
         match encounter:
             case EnemyEncounter(strain=strain):
                 events.append(EnemyEncountered(strain=strain, biome=_CURRENT_BIOME))

@@ -13,6 +13,11 @@ from eye.exploration.tuning import (
     RESOURCE_HEAL_MAGNITUDE,
     RESOURCE_SEED_GROWTH_MAGNITUDE,
     RESOURCE_SPORES_MAGNITUDE,
+    STRAIN_MIN_DISTANCE_BEATLE,
+    STRAIN_MIN_DISTANCE_FLEA,
+    STRAIN_MIN_DISTANCE_GOLEM,
+    STRAIN_MIN_DISTANCE_PHIDIZVIK,
+    STRAIN_MIN_DISTANCE_TUMBLEWEED,
 )
 
 
@@ -32,16 +37,21 @@ class Strain(Enum):
     TUMBLEWEED = auto()
 
 
-# The Strains EncounterGenerator actually spawns -- excludes BRAMBLE, which stays in the Strain
-# enum/BESTIARY purely so existing fixtures/tests keep a stub archetype with no sprite art to
-# exercise against.
-ENCOUNTERABLE_STRAINS: tuple[Strain, ...] = (
-    Strain.BEATLE,
-    Strain.FLEA,
-    Strain.GOLEM,
-    Strain.PHIDIZVIK,
-    Strain.TUMBLEWEED,
-)
+# The distance_from_home (screens walked this generation, eye/exploration/run.py) below which a
+# Strain never spawns -- keeps GOLEM/PHIDIZVIK, sized for deep exploration, out of a life's opening
+# screens. Also doubles as the Strains EncounterGenerator actually spawns (ENCOUNTERABLE_STRAINS,
+# below) -- one table, so the two can't drift out of sync with each other.
+STRAIN_MIN_DISTANCE: dict[Strain, int] = {
+    Strain.BEATLE: STRAIN_MIN_DISTANCE_BEATLE,
+    Strain.FLEA: STRAIN_MIN_DISTANCE_FLEA,
+    Strain.GOLEM: STRAIN_MIN_DISTANCE_GOLEM,
+    Strain.PHIDIZVIK: STRAIN_MIN_DISTANCE_PHIDIZVIK,
+    Strain.TUMBLEWEED: STRAIN_MIN_DISTANCE_TUMBLEWEED,
+}
+
+# Excludes BRAMBLE, which stays in the Strain enum/BESTIARY purely so existing fixtures/tests keep
+# a stub archetype with no sprite art to exercise against.
+ENCOUNTERABLE_STRAINS: tuple[Strain, ...] = tuple(STRAIN_MIN_DISTANCE)
 
 
 class Biome(Enum):
@@ -98,13 +108,16 @@ class EncounterGenerator:
     def __init__(self, rng: random.Random) -> None:
         self._rng = rng
 
-    def generate(self) -> Encounter:
+    def generate(self, distance_from_home: int) -> Encounter:
         kinds = list(_ENCOUNTER_KIND_WEIGHTS)
         weights = [_ENCOUNTER_KIND_WEIGHTS[kind] for kind in kinds]
         kind = self._rng.choices(kinds, weights=weights, k=1)[0]
         match kind:
             case EncounterKind.ENEMY:
-                return EnemyEncounter(strain=self._rng.choice(ENCOUNTERABLE_STRAINS))
+                available = tuple(
+                    strain for strain in ENCOUNTERABLE_STRAINS if STRAIN_MIN_DISTANCE[strain] <= distance_from_home
+                )
+                return EnemyEncounter(strain=self._rng.choice(available))
             case EncounterKind.EFFECT_PICKUP:
                 name = self._rng.choice(list(EffectName))
                 return EffectPickupEncounter(effect=ActiveEffect(name, EffectCategory.LIFESPAN, remaining_turns=None))
