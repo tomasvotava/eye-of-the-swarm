@@ -8,8 +8,10 @@ from eye.exploration.encounters import EncounterKind
 from eye.gui.assets import build_placeholder_atlas
 from eye.gui.audio import SoundKey
 from eye.gui.game_driver import GameDriver
+from eye.gui.scenes.credits import CreditsScene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.menu import KEY_ACTIONS, MenuAction, MenuScene, SlotStatus, _SlotView, _status_label
+from eye.gui.scenes.settings import SettingsScene
 from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.persistence import save
 from eye.persistence.adapters.filesystem import FilesystemSaveStore
@@ -57,6 +59,28 @@ def test_key_actions_maps_the_expected_controls() -> None:
     assert KEY_ACTIONS[pygame.K_DOWN] is MenuAction.MOVE_DOWN
     assert KEY_ACTIONS[pygame.K_RETURN] is MenuAction.CONFIRM
     assert KEY_ACTIONS[pygame.K_SPACE] is MenuAction.CONFIRM
+    assert KEY_ACTIONS[pygame.K_s] is MenuAction.OPEN_SETTINGS
+    assert KEY_ACTIONS[pygame.K_c] is MenuAction.OPEN_CREDITS
+
+
+def test_settings_key_opens_a_settings_scene_that_returns_to_this_menu() -> None:
+    scene = _scene()
+
+    _press(scene, pygame.K_s)
+    next_scene = scene.update(0.016)
+
+    assert isinstance(next_scene, SettingsScene)
+    assert next_scene._back_scene is scene
+
+
+def test_credits_key_opens_a_credits_scene_that_returns_to_this_menu() -> None:
+    scene = _scene()
+
+    _press(scene, pygame.K_c)
+    next_scene = scene.update(0.016)
+
+    assert isinstance(next_scene, CreditsScene)
+    assert next_scene._back_scene is scene
 
 
 def test_construction_plays_menu_ambient_music() -> None:

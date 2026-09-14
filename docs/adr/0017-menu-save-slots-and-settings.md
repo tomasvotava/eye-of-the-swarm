@@ -102,6 +102,11 @@ global settings blob, instead of one implicit file/key.
   constructs and returns a
   `GameDriver(atlas, rng, audio, save_store=store_for_slot(n), combat_speed_multiplier=settings.combat_speed_multiplier)`
   the same way any other scene transition already works.
+- **`MenuScene` gains two more actions, `OPEN_SETTINGS`/`OPEN_CREDITS`** (`K_s`/`K_c`), returning
+  `SettingsScene(self)`/`CreditsScene(self)` — both scenes already existed (#260/#255) and already
+  took a `back_scene` for exactly this handoff, but nothing wired `MenuScene` to either until this
+  addition. Returning `self` rather than a fresh `MenuScene` means the slot cursor position (and
+  the slot views themselves) survive a round trip through Settings or Credits unchanged.
 - **`GameDriver` and `CombatScene` both gain a `combat_speed_multiplier: float = 1.0` constructor
   parameter.** `GameDriver` threads it into every `CombatScene(...)` it constructs. `CombatScene`
   divides its `eye/gui/tuning.py` `BATTLE_*` phase/tween/hold durations by it when building
@@ -114,7 +119,7 @@ global settings blob, instead of one implicit file/key.
   the window boots at the saved scale; the Settings scene calls `pygame.display.set_mode()` again
   directly on change (pygame's display state is already a process-global singleton touched only in
   `run()` — no new plumbing through `App` needed). Manual window resizing by the OS/user is not
-  tracked or reconciled, matching Tom's own low-priority note.
+  tracked or reconciled -- explicitly out of scope for this stretch item.
 
 ## Consequences
 
