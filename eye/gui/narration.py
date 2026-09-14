@@ -12,6 +12,8 @@ checkpoints it already persists the rest of the save); FIRST_SEED_READY is a sta
 instead, deliberately excluded so it re-shows every generation.
 """
 
+from __future__ import annotations
+
 import json
 from collections import deque
 from collections.abc import Iterable, Sequence
