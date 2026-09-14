@@ -2,7 +2,16 @@ import pygame
 import pygame.typing
 import pytest
 
-from eye.gui.narration import _GAP, NarrationEntry, NarrationQueue, _fitted_font, _wrapped_lines, draw_narration
+from eye.gui.narration import (
+    _GAP,
+    NarrationEntry,
+    NarrationQueue,
+    NarrationTrigger,
+    NarrationTriggers,
+    _fitted_font,
+    _wrapped_lines,
+    draw_narration,
+)
 
 # A colour the overlay never paints, so colorkeying it leaves exactly the drawn pixels. Not black:
 # the overlay's own backdrop panel is translucent black.
@@ -122,3 +131,33 @@ def test_wrapped_lines_breaks_text_to_fit_the_width_without_dropping_words() -> 
 def test_an_entry_with_a_blank_message_is_rejected() -> None:
     with pytest.raises(ValueError, match="must not be blank"):
         NarrationEntry(message="   ", subtitle="a subtitle")
+
+
+def test_firing_a_trigger_enqueues_it_on_the_owned_queue() -> None:
+    triggers = NarrationTriggers()
+
+    triggers.fire(NarrationTrigger.FIRST_EXPLORATION, _MESSAGE, _SUBTITLE)
+
+    assert triggers.queue.current == NarrationEntry(message=_MESSAGE, subtitle=_SUBTITLE)
+
+
+def test_firing_the_same_trigger_twice_enqueues_only_once() -> None:
+    triggers = NarrationTriggers()
+
+    triggers.fire(NarrationTrigger.FIRST_DEATH, "first", "a")
+    triggers.fire(NarrationTrigger.FIRST_DEATH, "second", "b")
+
+    assert triggers.queue.current == NarrationEntry(message="first", subtitle="a")
+    triggers.queue.dismiss()
+    assert triggers.queue.is_active is False
+
+
+def test_firing_two_different_triggers_both_enqueue() -> None:
+    triggers = NarrationTriggers()
+
+    triggers.fire(NarrationTrigger.FIRST_EXPLORATION, "first", "a")
+    triggers.fire(NarrationTrigger.FIRST_BATTLE, "second", "b")
+
+    assert triggers.queue.current == NarrationEntry(message="first", subtitle="a")
+    triggers.queue.dismiss()
+    assert triggers.queue.current == NarrationEntry(message="second", subtitle="b")

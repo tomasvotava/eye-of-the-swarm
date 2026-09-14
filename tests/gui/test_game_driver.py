@@ -9,6 +9,7 @@ from eye.combat.stats import Stats
 from eye.exploration.encounters import EncounterKind
 from eye.gui.assets import build_placeholder_atlas
 from eye.gui.game_driver import GameDriver
+from eye.gui.narration import NarrationTrigger
 from eye.gui.scenes.combat import ACTION_KEYS, CombatScene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.skilltree import _ROWS, SkillTreeScene
@@ -62,7 +63,11 @@ def _advance(driver: GameDriver) -> None:
     # Drives a full screen-walk lap (ADR 0012): ExplorationScene.for_new_generation() already
     # joins at AT_ENTRY with the screen's encounter pending, so one ADVANCE press plus a walk to
     # the marker is enough to reveal it -- the EnterCombat/HUD-message outcome every caller here
-    # is actually after.
+    # is actually after. Dismisses FIRST_EXPLORATION (queued at construction) first -- otherwise
+    # the ADVANCE press below would just dismiss it instead of walking.
+    scene = driver._scene
+    assert isinstance(scene, ExplorationScene)
+    scene._narration.queue.dismiss()
     driver.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
     driver.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
 
@@ -206,3 +211,40 @@ def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
     driver = _driver()
 
     driver.draw(pygame.Surface(surface_size))
+
+
+def test_a_fresh_generation_gets_its_own_narration_triggers() -> None:
+    driver = _driver()
+
+    first = driver._narration
+    driver.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))  # dismiss FIRST_EXPLORATION
+    driver.update(0.016)
+    driver._game._current_generation = None  # let a second start_generation() through, mirroring _driver_with
+    driver._scene = driver._start_new_generation()
+
+    # A different instance, not the same one cleared -- and the new life re-sees FIRST_EXPLORATION
+    # (fired again by for_new_generation()) rather than inheriting the old life's seen set.
+    assert driver._narration is not first
+    assert NarrationTrigger.FIRST_EXPLORATION in driver._narration._seen
+
+
+def test_the_same_narration_instance_threads_through_an_enter_combat_transition() -> None:
+    driver = _driver([EncounterKind.ENEMY])
+    before = driver._narration
+
+    _advance(driver)
+
+    assert isinstance(driver._scene, CombatScene)
+    assert driver._scene._narration is before
+
+
+def test_the_same_narration_instance_threads_back_into_exploration_after_combat() -> None:
+    overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
+    driver = _driver_with(_generation(stats=overwhelming))
+    before = driver._narration
+
+    _advance(driver)
+    _drive_battle_to_conclusion(driver)
+
+    assert isinstance(driver._scene, ExplorationScene)
+    assert driver._scene._narration is before

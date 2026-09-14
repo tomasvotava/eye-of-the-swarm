@@ -45,6 +45,7 @@ from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
+from eye.gui.narration import NarrationTrigger, NarrationTriggers, draw_narration
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
 from eye.gui.tuning import (
     BATTLE_ACTING_HIGHLIGHT_COLOR,
@@ -523,9 +524,16 @@ class CombatScene:
         encounter: EnemyEncountered,
         atlas: SpriteAtlas,
         buff_icon_factory: Callable[[IconSource], BuffIcon] | None = None,
+        narration: NarrationTriggers | None = None,
     ) -> None:
         self._generation = generation
         self._atlas = atlas
+        self._narration = narration if narration is not None else NarrationTriggers()
+        self._narration.fire(
+            NarrationTrigger.FIRST_BATTLE,
+            "A hostile strain blocks your path.",
+            "Choose an action with 1-9, or Up/Down and Enter.",
+        )
         if buff_icon_factory is not None:
             self._buff_icon_factory = buff_icon_factory
         else:
@@ -580,7 +588,14 @@ class CombatScene:
         return self._player_displayed if combatant is self._battle.player else self._enemy_displayed
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
-        if pygame_event.type != pygame.KEYDOWN or self._pending_query is None:
+        if pygame_event.type != pygame.KEYDOWN:
+            return
+        if self._narration.queue.is_active:
+            # Consumes this keypress -- see ExplorationScene.handle_pygame_event's identical gate;
+            # otherwise the same press both dismisses the overlay and commits a menu action.
+            self._narration.queue.dismiss()
+            return
+        if self._pending_query is None:
             return
         if self._current_phases or self._pending_events:
             return  # menu interactivity withheld while a reveal is still playing (ADR 0013)
@@ -611,6 +626,10 @@ class CombatScene:
             # transition are both withheld until everything already returned has been revealed.
             return None
         if self._battle.is_over:
+            if self._narration.queue.is_active:
+                # Holds the transition so a trailing entry (FIRST_DEATH on a loss, or a late
+                # FIRST_ATTACK/FIRST_METER_FULL on a win) isn't cut off mid-read by the scene swap.
+                return None
             return self._conclude()
         turn_phase = self._battle.turn_phase
         if turn_phase is TurnPhase.AWAITING_QUERY:
@@ -671,7 +690,44 @@ class CombatScene:
     def _start_next_event(self) -> None:
         event = self._pending_events.popleft()
         self._log.append(_describe_event(event, self._battle.player))
+        self._fire_narration_for(event)
         self._current_phases = deque(self._phases_for(event))
+
+    def _fire_narration_for(self, event: BattleEvent) -> None:
+        # Player-initiated only (eye.combat.events' own source/target naming) -- an enemy's
+        # HitLanded, MeterFilled or Death says nothing about a mechanic the player has personally
+        # met yet.
+        match event:
+            case HitLanded(source=source) if source is self._battle.player:
+                self._narration.fire(
+                    NarrationTrigger.FIRST_ATTACK,
+                    "You lash out at the enemy.",
+                    "Striking costs you health too.",
+                )
+            case MeterFilled(combatant=combatant, meter_after=meter_after) if (
+                combatant is self._battle.player
+                and meter_after >= combatant.base_stats.meter_capacity
+                and any(action.requires_full_meter for action in combatant.available_actions)
+            ):
+                # The requires_full_meter check: a full meter is reachable (if slowly) even with
+                # no meter-gated action purchased yet (SWARM/ATTACK tier-2, eye/skilltree/catalog.py)
+                # -- without it this fires and promises a menu entry the player doesn't have.
+                self._narration.fire(
+                    NarrationTrigger.FIRST_METER_FULL,
+                    "Your swarm is ready to help.",
+                    "A new action has appeared: call on it.",
+                )
+            case Death(combatant=combatant) if combatant is self._battle.player and combatant.current_hp <= 0:
+                # Excludes an Adrenaline-style revive: Battle emits Revive right after Death and
+                # applies it synchronously, so a revived player's current_hp is already positive
+                # by the time this reveals.
+                self._narration.fire(
+                    NarrationTrigger.FIRST_DEATH,
+                    "You fall, but your swarm remembers.",
+                    "Spores gathered this life carry into the skill tree.",
+                )
+            case _:
+                pass
 
     def _advance_phases(self, dt: float) -> None:
         while True:
@@ -967,6 +1023,12 @@ class CombatScene:
         self._draw_menu(surface)
         self._draw_overlay(surface, player_layout, enemy_layout)
         self._draw_announcement(surface, player_layout, enemy_layout)
+        self._draw_narration(surface)
+
+    def _draw_narration(self, surface: pygame.Surface) -> None:
+        entry = self._narration.queue.current
+        if entry is not None:
+            draw_narration(surface, entry, center_x=surface.get_width() // 2, column_width=card_column_width(surface))
 
     def _draw_background(self, surface: pygame.Surface) -> None:
         # Keyed off distance_from_home, not encounter.biome (ADR 0016) -- the domain's Biome enum

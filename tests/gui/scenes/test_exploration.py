@@ -1,4 +1,5 @@
 import json
+import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -6,6 +7,7 @@ import pygame
 import pytest
 
 from eye.combat.effects import EffectName
+from eye.combat.tuning import PROXIMITY_FALLOFF_RANGE
 from eye.exploration.encounters import _RESOURCE_MAGNITUDES, Biome, EncounterKind, ResourceKind, Strain
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
@@ -20,6 +22,7 @@ from eye.gui.assets import (
 from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width
 from eye.gui.fonts.fonts import GameFont, get_font
+from eye.gui.narration import NarrationEntry, NarrationTrigger, NarrationTriggers
 from eye.gui.play_scene import EnterCombat, PlaySceneTransition
 from eye.gui.scenes.exploration import (
     _BUFF_ICON_SIZE,
@@ -120,10 +123,21 @@ def _resolve_next_screen(scene: ExplorationScene) -> PlaySceneTransition | None:
     between screens) through to the next `RESOLVED`/`EnterCombat` reveal -- one full screen's
     worth of walking. `for_new_generation()` already fires `advance()` for the first screen and
     joins at `AT_ENTRY`, so only the second half-lap is needed there; every screen after starts
-    the full `RESOLVED -> WALKING_TO_EXIT -> AT_ENTRY -> WALKING_TO_ENCOUNTER` cycle."""
+    the full `RESOLVED -> WALKING_TO_EXIT -> AT_ENTRY -> WALKING_TO_ENCOUNTER` cycle.
+
+    Dismisses any narration active ahead of each press below (e.g. FIRST_EXPLORATION queued at
+    construction, or FIRST_SEED_READY/FIRST_PROXIMITY_FALLOFF raised by the first half-lap's own
+    update() call) -- otherwise that press would just dismiss it instead of walking."""
+
+    def _dismiss_any_narration() -> None:
+        while scene._narration.queue.is_active:
+            scene._narration.queue.dismiss()
+
     if scene._phase is _Phase.RESOLVED:
+        _dismiss_any_narration()
         _press(scene, pygame.K_SPACE)
         assert scene.update(WALK_TO_EXIT_DURATION_SECONDS) is None
+    _dismiss_any_narration()
     _press(scene, pygame.K_SPACE)
     return scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
 
@@ -178,6 +192,7 @@ def test_advance_fires_exactly_once_per_screen_at_the_right_moments(monkeypatch:
 
     scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
     assert len(calls) == 1  # fired once at construction, for the first screen
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
 
     _press(scene, pygame.K_SPACE)
     assert scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS) is None  # reveal only, no new advance()
@@ -245,6 +260,15 @@ def test_plant_seed_action_plants_once_the_seed_is_ready() -> None:
     assert generation.is_seed_ready is True
     assert scene._phase is _Phase.RESOLVED
 
+    # The very first press's own update() is what raises FIRST_SEED_READY (the trigger check runs
+    # before is_seed_ready flips visible to it, one frame behind) -- that press is withheld from
+    # planting alongside it, so it takes a dismiss before a second press actually plants.
+    _press(scene, pygame.K_p)
+    scene.update(0.016)
+    assert generation.is_seed_ready is True
+    while scene._narration.queue.is_active:
+        scene._narration.queue.dismiss()
+
     _press(scene, pygame.K_p)
     scene.update(0.016)
 
@@ -307,6 +331,7 @@ def test_can_plant_seed_reflects_phase_not_just_seed_readiness() -> None:
 
 def test_advance_action_returns_an_enter_combat_transition_on_encounter() -> None:
     scene, _ = _scene([EncounterKind.ENEMY])
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
 
     _press(scene, pygame.K_SPACE)
     transition = scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
@@ -317,6 +342,7 @@ def test_advance_action_returns_an_enter_combat_transition_on_encounter() -> Non
 
 def test_enter_combat_is_withheld_until_the_walk_to_the_encounter_completes() -> None:
     scene, _ = _scene([EncounterKind.ENEMY])
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
 
     _press(scene, pygame.K_SPACE)
     assert scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2) is None  # still walking
@@ -545,6 +571,7 @@ def test_player_animation_state_is_idle_at_entry_and_walk_during_the_walk_to_the
     tmp_path: Path,
 ) -> None:
     scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING])
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
     phase_at_entry = scene._phase
     assert phase_at_entry is _Phase.AT_ENTRY
     animator = scene._player_animator
@@ -723,6 +750,7 @@ def test_draw_with_active_effects_and_the_default_icons_does_not_raise() -> None
 
 def test_buff_icon_row_withholds_a_newly_granted_effect_until_the_walk_resolves() -> None:
     scene, generation, calls = _scene_with_spy_icons([EncounterKind.EFFECT_PICKUP])
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
     # advance() already granted the effect while the player is still walking to it (ADR 0012).
     granted = generation.active_lifespan_effects
     assert granted
@@ -776,6 +804,7 @@ def _granted_effect(generation: Generation) -> EffectName:
 
 def test_effect_pickup_raises_the_card_only_once_the_walk_reaches_the_marker() -> None:
     scene, generation, _ = _scene_with_spy_icons([EncounterKind.EFFECT_PICKUP])
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
     # The reveal point: advance() applied the pickup back when the screen loaded (ADR 0012).
     granted = _granted_effect(generation)
 
@@ -845,6 +874,7 @@ def test_advancing_with_the_card_up_dismisses_it_without_starting_the_walk() -> 
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
     _resolve_next_screen(scene)
     assert scene._card is not None
+    scene._narration.queue.dismiss()  # FIRST_PICKUP, raised alongside the card
 
     _press(scene, pygame.K_SPACE)
     assert scene.update(WALK_TO_EXIT_DURATION_SECONDS) is None
@@ -859,6 +889,7 @@ def test_the_frame_that_dismisses_the_card_still_advances_the_player_animation(t
     scene = _scene_with_real_player_art(tmp_path, [EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
     _resolve_next_screen(scene)
     assert scene._card is not None
+    scene._narration.queue.dismiss()  # FIRST_PICKUP, raised alongside the card
     assert scene._player_animator is not None
     before = scene._player_animator.current_frame()
 
@@ -875,6 +906,7 @@ def test_a_key_bound_to_no_action_dismisses_the_card_too() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
     _resolve_next_screen(scene)
     assert scene._card is not None
+    scene._narration.queue.dismiss()  # FIRST_PICKUP, raised alongside the card
 
     _press(scene, pygame.K_q)
     assert scene.update(WALK_TO_EXIT_DURATION_SECONDS) is None
@@ -889,6 +921,7 @@ def test_the_plant_key_dismisses_the_card_without_planting() -> None:
         _resolve_next_screen(scene)
     assert generation.is_seed_ready is True
     assert scene._card is not None
+    scene._narration.queue.dismiss()  # FIRST_PICKUP, raised alongside the card
 
     _press(scene, pygame.K_p)
     scene.update(0.016)
@@ -901,6 +934,7 @@ def test_the_plant_key_dismisses_the_card_without_planting() -> None:
 def test_a_second_press_advances_once_the_card_has_been_dismissed() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP, EncounterKind.NOTHING])
     _resolve_next_screen(scene)
+    scene._narration.queue.dismiss()  # FIRST_PICKUP, raised alongside the card
 
     _press(scene, pygame.K_SPACE)
     scene.update(0.016)
@@ -997,6 +1031,7 @@ def test_resource_descriptions_covers_every_resource_kind() -> None:
 def test_resource_pickup_raises_the_card_only_once_the_walk_reaches_the_marker() -> None:
     # The reveal point: advance() applied the pickup back when the screen loaded (ADR 0012).
     scene, _ = _scene([EncounterKind.RESOURCE_PICKUP], resource_queue=[ResourceKind.SPORES])
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
 
     assert scene._card is None  # AT_ENTRY, the pickup not reached yet
 
@@ -1106,6 +1141,7 @@ def _assert_counter_reads(scene: ExplorationScene, total: int) -> None:
 def test_the_spores_counter_shows_the_running_total_and_follows_it_as_spores_arrive() -> None:
     award = _RESOURCE_MAGNITUDES[ResourceKind.SPORES]
     scene, generation = _scene([EncounterKind.RESOURCE_PICKUP] * 2, [ResourceKind.SPORES] * 2)
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
     _assert_counter_reads(scene, 0)
 
     _press(scene, pygame.K_SPACE)
@@ -1126,6 +1162,7 @@ def test_the_spores_counter_shows_the_running_total_and_follows_it_as_spores_arr
 def test_the_spores_counter_withholds_a_spore_pickup_until_the_walk_reaches_it() -> None:
     # advance() credits the pickup when its screen loads, so the drawn total is a snapshot.
     scene, generation = _scene([EncounterKind.RESOURCE_PICKUP], [ResourceKind.SPORES])
+    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
     assert generation.spores_gained == _RESOURCE_MAGNITUDES[ResourceKind.SPORES]  # already credited
 
     _press(scene, pygame.K_SPACE)
@@ -1311,3 +1348,150 @@ def test_draw_props_samples_the_resolved_pools_the_correct_number_of_times(
 
     expected_total = sum(count for _, count in resolve_prop_sampling(generation.distance_from_home))
     assert choice_calls == expected_total
+
+
+def _drain_narration(scene: ExplorationScene) -> list[NarrationEntry]:
+    """Dismisses every currently queued entry and returns them in order -- FIRST_EXPLORATION queues
+    at construction, so a screen's own trigger can land behind it rather than at the front."""
+    entries: list[NarrationEntry] = []
+    while scene._narration.queue.is_active:
+        current = scene._narration.queue.current
+        assert current is not None
+        entries.append(current)
+        scene._narration.queue.dismiss()
+    return entries
+
+
+def test_for_new_generation_fires_first_exploration_narration() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+
+    assert scene._narration.queue.is_active is True
+
+
+def test_resuming_after_combat_does_not_refire_an_already_seen_trigger() -> None:
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
+    generation = game.start_generation()
+    triggers = NarrationTriggers()
+    ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), narration=triggers)
+    triggers.queue.dismiss()  # the player already saw and cleared it
+
+    scene = ExplorationScene.resuming_after_combat(generation, game, build_placeholder_atlas(), narration=triggers)
+
+    assert scene._narration.queue.is_active is False
+
+
+def test_seed_ready_does_not_fire_mid_walk_and_fires_once_the_screen_is_at_rest() -> None:
+    scene, generation = _scene([EncounterKind.NOTHING] * _ADVANCES_TO_READY_SEED)
+    assert generation.is_seed_ready is False
+
+    for _ in range(_ADVANCES_TO_READY_SEED):
+        _resolve_next_screen(scene)
+
+    assert generation.is_seed_ready is True
+    assert scene._phase is _Phase.RESOLVED
+    # The seed became ready while arriving at this screen (AT_ENTRY), not while at rest -- the
+    # mid-walk check that saw it must not have fired.
+    assert NarrationTrigger.FIRST_SEED_READY not in scene._narration._seen
+
+    scene.update(0.016)  # a frame at rest, seed still ready
+
+    assert NarrationTrigger.FIRST_SEED_READY in scene._narration._seen
+    assert NarrationEntry(message="A seed is ready to plant.", subtitle="Press P to plant it.") in _drain_narration(
+        scene
+    )
+
+
+def test_effect_pickup_fires_first_pickup_narration() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
+    _drain_narration(scene)
+
+    _resolve_next_screen(scene)
+
+    assert NarrationEntry(
+        message="There's an obstacle in your path.",
+        subtitle="It could help or hinder your swarm -- approach and see.",
+    ) in _drain_narration(scene)
+
+
+def test_narration_dismiss_does_not_also_dismiss_the_pickup_card_underneath() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
+    _drain_narration(scene)  # FIRST_EXPLORATION, from construction
+
+    _resolve_next_screen(scene)  # arrives at the pickup: raises its Card and fires FIRST_PICKUP
+    assert scene._card is not None
+    assert scene._narration.queue.is_active is True
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(0.016)
+
+    assert scene._narration.queue.is_active is False  # dismissed
+    assert scene._card is not None  # the card underneath is still up to read
+
+
+def test_resource_pickup_does_not_fire_the_buff_debuff_pickup_narration() -> None:
+    scene, _ = _scene([EncounterKind.RESOURCE_PICKUP], resource_queue=[ResourceKind.SPORES])
+    _drain_narration(scene)
+
+    _resolve_next_screen(scene)
+
+    assert NarrationTrigger.FIRST_PICKUP not in scene._narration._seen
+
+
+def test_proximity_falloff_does_not_fire_when_no_turf_has_matured_yet() -> None:
+    # inf (no matured turf this generation) trivially satisfies ">= PROXIMITY_FALLOFF_RANGE", but
+    # nothing has actually been "ventured" on a fresh save's first screen -- must not fire.
+    scene, generation = _scene([EncounterKind.NOTHING])
+
+    scene.update(0.016)
+
+    assert generation.distance_to_nearest_matured_turf == math.inf
+    assert NarrationTrigger.FIRST_PROXIMITY_FALLOFF not in scene._narration._seen
+
+
+def test_proximity_falloff_does_not_fire_within_range_of_a_matured_turf() -> None:
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]), matured_turf_positions=(0,))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
+
+    scene.update(0.016)
+
+    assert generation.distance_to_nearest_matured_turf < PROXIMITY_FALLOFF_RANGE
+    assert NarrationTrigger.FIRST_PROXIMITY_FALLOFF not in scene._narration._seen
+
+
+def test_proximity_falloff_fires_once_walked_far_enough_past_a_matured_turf() -> None:
+    screens_to_walk = int(PROXIMITY_FALLOFF_RANGE)
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING] * screens_to_walk), matured_turf_positions=(0,))
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
+
+    for _ in range(screens_to_walk):
+        _resolve_next_screen(scene)
+
+    assert generation.distance_to_nearest_matured_turf >= PROXIMITY_FALLOFF_RANGE
+    assert NarrationTrigger.FIRST_PROXIMITY_FALLOFF in scene._narration._seen
+
+
+def test_narration_dismiss_withholds_the_advance_it_shares_a_keypress_with() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    assert scene._narration.queue.is_active is True  # FIRST_EXPLORATION, queued at construction
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+
+    assert scene._narration.queue.is_active is False  # dismissed
+    assert scene._phase is _Phase.AT_ENTRY  # the same press did not also start the walk
+
+
+def test_draw_renders_the_active_narration_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    drawn: list[NarrationEntry] = []
+    import eye.gui.scenes.exploration as exploration_module
+
+    monkeypatch.setattr(
+        exploration_module, "draw_narration", lambda surface, entry, *, center_x, column_width: drawn.append(entry)
+    )
+
+    scene.draw(pygame.Surface((800, 600)))
+
+    assert drawn == [scene._narration.queue.current]
