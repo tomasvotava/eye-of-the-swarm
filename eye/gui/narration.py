@@ -4,9 +4,9 @@ involvement, no rendering commitment beyond `draw_narration` below. Whoever hold
 feeding it `dismiss()` from its own `handle_pygame_event`; this module makes no assumption about
 which input counts as "continue".
 
-NarrationTrigger/NarrationTriggers add the bookkeeping on top: which of the 8 scripted moments
+NarrationTrigger/NarrationTriggers add the bookkeeping on top: which of the 9 scripted moments
 have already been shown, so a scene can ask to fire one unconditionally and get a silent no-op if
-it already has. 7 of the 8 are first-playthrough beats, remembered for a save file forever via
+it already has. 8 of the 9 are first-playthrough beats, remembered for a save file forever via
 `load_seen_triggers`/`persist_seen_triggers` (GameDriver owns calling these, at the same
 checkpoints it already persists the rest of the save); FIRST_SEED_READY is a standing reminder
 instead, deliberately excluded so it re-shows every generation.
@@ -71,11 +71,12 @@ class NarrationQueue:
 
 
 class NarrationTrigger(Enum):
-    """The 8 scripted moments a scene can narrate (PROJECT_BRIEF.md §9.8) -- one member per
+    """The 9 scripted moments a scene can narrate (PROJECT_BRIEF.md §9.8) -- one member per
     trigger point, independent of which scene ends up firing it. FIRST_SEED_READY is a per-life
-    reminder; the other 7 are first-playthrough beats, shown once for a save file's whole
+    reminder; the other 8 are first-playthrough beats, shown once for a save file's whole
     lifetime (see `_PERSISTED_TRIGGERS`)."""
 
+    INTRO_LORE = auto()
     FIRST_EXPLORATION = auto()
     FIRST_SEED_READY = auto()
     FIRST_PICKUP = auto()
@@ -110,10 +111,17 @@ class NarrationTriggers:
         return cls(_seen=set(persisted_seen) & _PERSISTED_TRIGGERS)
 
     def fire(self, trigger: NarrationTrigger, message: str, subtitle: str) -> None:
+        self.fire_sequence(trigger, [(message, subtitle)])
+
+    def fire_sequence(self, trigger: NarrationTrigger, entries: Sequence[tuple[str, str]]) -> None:
+        """Like `fire`, but queues several entries at once behind a single once-per-trigger gate --
+        for a multi-line beat (e.g. INTRO_LORE) that should read as one sequence, not several
+        independently-gated triggers."""
         if trigger in self._seen:
             return
         self._seen.add(trigger)
-        self.queue.enqueue(message, subtitle)
+        for message, subtitle in entries:
+            self.queue.enqueue(message, subtitle)
 
     @property
     def persisted_seen(self) -> frozenset[NarrationTrigger]:

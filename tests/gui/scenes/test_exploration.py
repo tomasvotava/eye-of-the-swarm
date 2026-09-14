@@ -192,7 +192,7 @@ def test_advance_fires_exactly_once_per_screen_at_the_right_moments(monkeypatch:
 
     scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas())
     assert len(calls) == 1  # fired once at construction, for the first screen
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # INTRO_LORE + FIRST_EXPLORATION, queued at construction
 
     _press(scene, pygame.K_SPACE)
     assert scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS) is None  # reveal only, no new advance()
@@ -571,7 +571,7 @@ def test_player_animation_state_is_idle_at_entry_and_walk_during_the_walk_to_the
     tmp_path: Path,
 ) -> None:
     scene = _scene_with_real_player_art(tmp_path, [EncounterKind.NOTHING])
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # INTRO_LORE + FIRST_EXPLORATION, queued at construction
     phase_at_entry = scene._phase
     assert phase_at_entry is _Phase.AT_ENTRY
     animator = scene._player_animator
@@ -1033,7 +1033,7 @@ def test_resource_descriptions_covers_every_resource_kind() -> None:
 def test_resource_pickup_raises_the_card_only_once_the_walk_reaches_the_marker() -> None:
     # The reveal point: advance() applied the pickup back when the screen loaded (ADR 0012).
     scene, _ = _scene([EncounterKind.RESOURCE_PICKUP], resource_queue=[ResourceKind.SPORES])
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # INTRO_LORE + FIRST_EXPLORATION, queued at construction
 
     assert scene._card is None  # AT_ENTRY, the pickup not reached yet
 
@@ -1143,7 +1143,7 @@ def _assert_counter_reads(scene: ExplorationScene, total: int) -> None:
 def test_the_spores_counter_shows_the_running_total_and_follows_it_as_spores_arrive() -> None:
     award = _RESOURCE_MAGNITUDES[ResourceKind.SPORES]
     scene, generation = _scene([EncounterKind.RESOURCE_PICKUP] * 2, [ResourceKind.SPORES] * 2)
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # INTRO_LORE + FIRST_EXPLORATION, queued at construction
     _assert_counter_reads(scene, 0)
 
     _press(scene, pygame.K_SPACE)
@@ -1164,7 +1164,7 @@ def test_the_spores_counter_shows_the_running_total_and_follows_it_as_spores_arr
 def test_the_spores_counter_withholds_a_spore_pickup_until_the_walk_reaches_it() -> None:
     # advance() credits the pickup when its screen loads, so the drawn total is a snapshot.
     scene, generation = _scene([EncounterKind.RESOURCE_PICKUP], [ResourceKind.SPORES])
-    scene._narration.queue.dismiss()  # FIRST_EXPLORATION, queued at construction
+    _drain_narration(scene)  # INTRO_LORE + FIRST_EXPLORATION, queued at construction
     assert generation.spores_gained == _RESOURCE_MAGNITUDES[ResourceKind.SPORES]  # already credited
 
     _press(scene, pygame.K_SPACE)
@@ -1370,12 +1370,38 @@ def test_for_new_generation_fires_first_exploration_narration() -> None:
     assert scene._narration.queue.is_active is True
 
 
+def test_for_new_generation_fires_intro_lore_ahead_of_first_exploration_on_a_fresh_save() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+
+    entries = _drain_narration(scene)
+
+    assert entries[-1] == NarrationEntry(
+        message="You venture out of the hive to spread your swarm's turf.",
+        subtitle="Press Space or Enter to venture further.",
+    )
+    assert len(entries) > 1  # the lore beats precede it
+    assert NarrationTrigger.INTRO_LORE in scene._narration._seen
+
+
+def test_intro_lore_does_not_refire_for_a_later_generation_on_the_same_save() -> None:
+    game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
+    save_seen = frozenset({NarrationTrigger.INTRO_LORE})
+    narration = NarrationTriggers.for_generation(save_seen)
+
+    generation = game.start_generation()
+    scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), narration=narration)
+
+    entries = _drain_narration(scene)
+    assert len(entries) == 1  # just FIRST_EXPLORATION -- INTRO_LORE was already seen on this save
+
+
 def test_resuming_after_combat_does_not_refire_an_already_seen_trigger() -> None:
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]))
     generation = game.start_generation()
     triggers = NarrationTriggers()
     ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), narration=triggers)
-    triggers.queue.dismiss()  # the player already saw and cleared it
+    while triggers.queue.is_active:  # the player already saw and cleared everything queued
+        triggers.queue.dismiss()
 
     scene = ExplorationScene.resuming_after_combat(generation, game, build_placeholder_atlas(), narration=triggers)
 
@@ -1398,9 +1424,10 @@ def test_seed_ready_does_not_fire_mid_walk_and_fires_once_the_screen_is_at_rest(
     scene.update(0.016)  # a frame at rest, seed still ready
 
     assert NarrationTrigger.FIRST_SEED_READY in scene._narration._seen
-    assert NarrationEntry(message="A seed is ready to plant.", subtitle="Press P to plant it.") in _drain_narration(
-        scene
-    )
+    assert NarrationEntry(
+        message="A seed is ready to plant.",
+        subtitle="Press P to plant it -- it won't strengthen you, only marks this ground for whoever comes after.",
+    ) in _drain_narration(scene)
 
 
 def test_effect_pickup_fires_first_pickup_narration() -> None:
@@ -1409,8 +1436,8 @@ def test_effect_pickup_fires_first_pickup_narration() -> None:
     scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
 
     assert NarrationEntry(
-        message="There's an obstacle in your path.",
-        subtitle="It could help or hinder your swarm. Approach and see.",
+        message="Something ahead will change you.",
+        subtitle="For good or ill -- and it stays with you until this life ends.",
     ) in _drain_narration(scene)
 
 
@@ -1435,8 +1462,8 @@ def test_a_later_screens_advance_fires_its_own_encounter_narration() -> None:
     scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # screen 2 loads: advance() reveals the pickup
 
     assert NarrationEntry(
-        message="There's an obstacle in your path.",
-        subtitle="It could help or hinder your swarm. Approach and see.",
+        message="Something ahead will change you.",
+        subtitle="For good or ill -- and it stays with you until this life ends.",
     ) in _drain_narration(scene)
 
 
@@ -1521,13 +1548,13 @@ def test_proximity_falloff_fires_once_walked_far_enough_past_a_matured_turf() ->
 
 def test_narration_dismiss_withholds_the_advance_it_shares_a_keypress_with() -> None:
     scene, _ = _scene([EncounterKind.NOTHING])
-    assert scene._narration.queue.is_active is True  # FIRST_EXPLORATION, queued at construction
+    assert scene._narration.queue.is_active is True  # INTRO_LORE + FIRST_EXPLORATION, queued at construction
 
-    _press(scene, pygame.K_SPACE)
-    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+    while scene._narration.queue.is_active:
+        _press(scene, pygame.K_SPACE)
+        scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
 
-    assert scene._narration.queue.is_active is False  # dismissed
-    assert scene._phase is _Phase.AT_ENTRY  # the same press did not also start the walk
+    assert scene._phase is _Phase.AT_ENTRY  # none of those presses also started the walk
 
 
 def test_draw_renders_the_active_narration_entry(monkeypatch: pytest.MonkeyPatch) -> None:

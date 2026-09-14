@@ -166,6 +166,26 @@ def test_firing_two_different_triggers_both_enqueue() -> None:
     assert triggers.queue.current == NarrationEntry(message="second", subtitle="b")
 
 
+def test_fire_sequence_enqueues_every_entry_in_order() -> None:
+    triggers = NarrationTriggers()
+
+    triggers.fire_sequence(NarrationTrigger.INTRO_LORE, [("first", "a"), ("second", "b")])
+
+    assert triggers.queue.current == NarrationEntry(message="first", subtitle="a")
+    triggers.queue.dismiss()
+    assert triggers.queue.current == NarrationEntry(message="second", subtitle="b")
+
+
+def test_fire_sequence_is_a_no_op_once_its_trigger_has_already_fired() -> None:
+    triggers = NarrationTriggers()
+    triggers.fire_sequence(NarrationTrigger.INTRO_LORE, [("first", "a")])
+    triggers.queue.dismiss()
+
+    triggers.fire_sequence(NarrationTrigger.INTRO_LORE, [("second", "b")])
+
+    assert triggers.queue.is_active is False
+
+
 def test_persisted_seen_reflects_a_fired_trigger() -> None:
     triggers = NarrationTriggers()
 

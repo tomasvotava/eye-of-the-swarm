@@ -88,6 +88,16 @@ _RESOURCE_SPRITE_KEYS: Mapping[ResourceKind, SpriteKey] = {
     ResourceKind.DISTANCE_DISCOUNT: SpriteKey.ICON_DISTANCE_DISCOUNT,
 }
 
+# One-time opening lore, shown ahead of FIRST_EXPLORATION on a brand-new save only (INTRO_LORE is a
+# persisted trigger, PROJECT_BRIEF.md §9.8) -- no subtitle line, these read as a single beat rather
+# than instruction-plus-hint like the rest of the narration set.
+_INTRO_LORE: tuple[tuple[str, str], ...] = (
+    ("You are not the first to wear this shape.", ""),
+    ("Every generation before you walked out, fought, and fell -- and gave what it found to the swarm.", ""),
+    ("Their spores became your strength. Their planted ground became your home.", ""),
+    ("Now it's your turn. Walk out. Bring back what you can.", ""),
+)
+
 type _ScreenEvent = EffectGranted | ResourceGranted | NothingHappened
 
 
@@ -197,8 +207,8 @@ def _fire_narration_for_advance(narration: NarrationTriggers, events: Sequence[S
     if any(isinstance(event, EffectGranted) for event in events):
         narration.fire(
             NarrationTrigger.FIRST_PICKUP,
-            "There's an obstacle in your path.",
-            "It could help or hinder your swarm. Approach and see.",
+            "Something ahead will change you.",
+            "For good or ill -- and it stays with you until this life ends.",
         )
 
 
@@ -314,6 +324,7 @@ class ExplorationScene:
         turf being safe by definition -- so this fires `advance()` once immediately rather than
         waiting for a `WALKING_TO_EXIT` arrival that will never come for this screen (ADR 0012)."""
         narration = narration if narration is not None else NarrationTriggers()
+        narration.fire_sequence(NarrationTrigger.INTRO_LORE, _INTRO_LORE)
         events = generation.advance()
         narration.fire(
             NarrationTrigger.FIRST_EXPLORATION,
@@ -408,15 +419,19 @@ class ExplorationScene:
         # Level checks, not edge-triggered: safe to call every frame since NarrationTriggers.fire()
         # is itself a once-per-generation no-op once seen.
         if self._can_plant_seed():
-            self._narration.fire(NarrationTrigger.FIRST_SEED_READY, "A seed is ready to plant.", "Press P to plant it.")
+            self._narration.fire(
+                NarrationTrigger.FIRST_SEED_READY,
+                "A seed is ready to plant.",
+                "Press P to plant it -- it won't strengthen you, only marks this ground for whoever comes after.",
+            )
         distance = self._generation.distance_to_nearest_matured_turf
         # inf (no turf has matured this generation yet) is excluded: "you've ventured too far" is
         # a lie on a fresh save's first screen, where zero matured turf is the expected baseline.
         if math.isfinite(distance) and distance >= PROXIMITY_FALLOFF_RANGE:
             self._narration.fire(
                 NarrationTrigger.FIRST_PROXIMITY_FALLOFF,
-                "You've ventured too far from home. You are alone here.",
-                "Too far from the hive, no swarm assists you here.",
+                "You've ventured too far from home.",
+                "Alone here -- the swarm's strength doesn't reach this far.",
             )
 
     def _begin_walk(self, phase: _Phase) -> None:
