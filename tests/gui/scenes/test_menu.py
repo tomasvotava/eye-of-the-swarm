@@ -159,7 +159,7 @@ def test_confirm_on_a_corrupt_slot_still_builds_a_game_driver() -> None:
 def test_status_label_for_an_empty_slot() -> None:
     view = _SlotView(1, save.store_for_slot(1), SlotStatus.EMPTY, None)
 
-    assert _status_label(view) == "Empty -- New Game"
+    assert _status_label(view) == "Empty (New Game)"
 
 
 def test_status_label_for_a_corrupt_slot_reads_distinctly_from_empty() -> None:
@@ -180,13 +180,13 @@ def test_status_label_for_a_valid_slot_with_no_matured_turf_shows_zero_progress(
     game.skill_tree.add_spores(4)
     view = _SlotView(1, save.store_for_slot(1), SlotStatus.VALID, _decoded_snapshot(game))
 
-    assert _status_label(view) == "Spores: 4   Progress: 0 -- Continue"
+    assert _status_label(view) == "Spores: 4   Progress: 0 (Continue)"
 
 
 def test_status_label_for_a_valid_slot_shows_spores_and_furthest_matured_position() -> None:
     view = _SlotView(1, save.store_for_slot(1), SlotStatus.VALID, _decoded_snapshot(_game_with_progress()))
 
-    assert _status_label(view) == "Spores: 50   Progress: 7 -- Continue"
+    assert _status_label(view) == "Spores: 50   Progress: 7 (Continue)"
 
 
 @pytest.mark.parametrize("surface_size", [(64, 64), (800, 600)])
