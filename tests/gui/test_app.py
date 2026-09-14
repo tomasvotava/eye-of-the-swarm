@@ -12,6 +12,7 @@ from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
 from eye.gui.scenes.menu import MenuScene
 from eye.gui.scenes.title import TitleScene
+from tests.gui.doubles import build_fake_audio_manager
 
 
 @pytest.fixture(autouse=True)
@@ -45,13 +46,13 @@ def _app(initial_scene: Scene | None = None) -> App:
 
 
 def test_initial_scene_returns_a_title_scene_by_default() -> None:
-    scene = _initial_scene(random.Random(), dev_asset_viewer=False)
+    scene = _initial_scene(random.Random(), build_fake_audio_manager(), dev_asset_viewer=False)
 
     assert isinstance(scene, TitleScene)
 
 
 def test_title_scene_transitions_to_a_menu_scene_on_keydown() -> None:
-    scene = _initial_scene(random.Random(), dev_asset_viewer=False)
+    scene = _initial_scene(random.Random(), build_fake_audio_manager(), dev_asset_viewer=False)
 
     scene.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE))
 
@@ -59,7 +60,7 @@ def test_title_scene_transitions_to_a_menu_scene_on_keydown() -> None:
 
 
 def test_initial_scene_returns_the_dev_asset_viewer_when_requested() -> None:
-    scene = _initial_scene(random.Random(), dev_asset_viewer=True)
+    scene = _initial_scene(random.Random(), build_fake_audio_manager(), dev_asset_viewer=True)
 
     assert isinstance(scene, DevAssetViewerScene)
 

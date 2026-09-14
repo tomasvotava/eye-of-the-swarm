@@ -23,6 +23,7 @@ from eye.exploration.encounters import ResourceKind
 from eye.exploration.events import EffectGranted, EnemyEncountered, NothingHappened, ResourceGranted, SeedPlanted
 from eye.gui.animation import Animator, crop_to_cover, scale_clip, scale_sprite
 from eye.gui.assets import SpriteAtlas, SpriteKey
+from eye.gui.audio import AudioManager, SoundKey
 from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
@@ -316,6 +317,7 @@ class ExplorationScene:
         generation: Generation,
         game: Game,
         atlas: SpriteAtlas,
+        audio: AudioManager,
         buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
         narration: NarrationTriggers | None = None,
     ) -> ExplorationScene:
@@ -323,6 +325,7 @@ class ExplorationScene:
         position itself is never walked -- it holds no `advance()`-generated encounter, matured
         turf being safe by definition -- so this fires `advance()` once immediately rather than
         waiting for a `WALKING_TO_EXIT` arrival that will never come for this screen (ADR 0012)."""
+        audio.play_ambient(SoundKey.EXPLORATION)
         narration = narration if narration is not None else NarrationTriggers()
         narration.fire_sequence(NarrationTrigger.INTRO_LORE, _INTRO_LORE)
         events = generation.advance()
@@ -348,6 +351,7 @@ class ExplorationScene:
         generation: Generation,
         game: Game,
         atlas: SpriteAtlas,
+        audio: AudioManager,
         buff_icon_factory: Callable[[EffectName], BuffIcon] | None = None,
         narration: NarrationTriggers | None = None,
     ) -> ExplorationScene:
@@ -355,6 +359,7 @@ class ExplorationScene:
         in the `ExplorationScene` instance that existed before the `EnterCombat` swap, and that
         screen's `advance()` already fired before combat took over, so this does not call it
         again (ADR 0012)."""
+        audio.play_ambient(SoundKey.EXPLORATION)
         return cls(generation, game, atlas, buff_icon_factory, starting_phase=_Phase.RESOLVED, narration=narration)
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:

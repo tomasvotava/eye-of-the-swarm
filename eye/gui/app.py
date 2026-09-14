@@ -11,6 +11,7 @@ to `DevAssetViewerScene` behind the dev-only escape hatch.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import random
 from pathlib import Path
@@ -18,6 +19,7 @@ from pathlib import Path
 import pygame
 
 from eye.gui.assets import build_art_atlas
+from eye.gui.audio import AudioManager
 from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
 from eye.gui.scenes.menu import MenuScene
@@ -74,21 +76,27 @@ class App:
         return self._clock.tick(_MAX_FPS) / 1000
 
 
-def _initial_scene(rng: random.Random, dev_asset_viewer: bool) -> Scene:
+def _initial_scene(rng: random.Random, audio: AudioManager, dev_asset_viewer: bool) -> Scene:
     atlas = build_art_atlas(_SPRITES_DIR)
     if dev_asset_viewer:
         return DevAssetViewerScene(atlas)
-    return TitleScene(MenuScene(atlas, rng))
+    return TitleScene(MenuScene(atlas, rng, audio))
 
 
 async def run() -> None:
     pygame.init()
+    # No audio device (a headless machine, a container, some CI/judging environments) must not
+    # crash the game -- AudioManager()'s own pygame.mixer.get_init() check (ADR 0018) makes every
+    # one of its methods a no-op rather than raising, so the game still boots and plays silently.
+    with contextlib.suppress(pygame.error):
+        pygame.mixer.init()
     screen = pygame.display.set_mode(_WINDOW_SIZE, flags=pygame.SCALED)
     pygame.display.set_caption(_TITLE)
     clock = pygame.Clock()
 
     scene = _initial_scene(
         random.Random(),  # noqa: S311 -- game RNG, not cryptographic
+        AudioManager(),
         dev_asset_viewer=_dev_asset_viewer_requested(),
     )
     app = App(screen, clock, scene)

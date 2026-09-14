@@ -15,6 +15,7 @@ import pygame
 import pygame.typing
 
 from eye.gui.assets import SpriteAtlas
+from eye.gui.audio import AudioManager, SoundKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.game_driver import GameDriver
 from eye.gui.scene import Scene
@@ -101,9 +102,11 @@ def _status_label(view: _SlotView) -> str:
 
 
 class MenuScene:
-    def __init__(self, atlas: SpriteAtlas, rng: random.Random) -> None:
+    def __init__(self, atlas: SpriteAtlas, rng: random.Random, audio: AudioManager) -> None:
         self._atlas = atlas
         self._rng = rng
+        self._audio = audio
+        self._audio.play_ambient(SoundKey.MENU)
         self._slots = tuple(_build_slot_view(number) for number in range(1, _SLOT_COUNT + 1))
         self._cursor = 0
         self._pending_action: MenuAction | None = None
@@ -133,6 +136,7 @@ class MenuScene:
         return GameDriver(
             self._atlas,
             self._rng,
+            self._audio,
             save_store=view.store,
             narration_store=save.narration_store_for_slot(view.number),
             combat_speed_multiplier=save.load_settings().combat_speed_multiplier,
