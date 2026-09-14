@@ -91,13 +91,13 @@ def _status_color(status: SlotStatus) -> pygame.typing.ColorLike:
 
 def _status_label(view: _SlotView) -> str:
     if view.status is SlotStatus.EMPTY:
-        return "Empty -- New Game"
+        return "Empty (New Game)"
     if view.status is SlotStatus.CORRUPT:
-        return "Corrupt save -- New Game"
+        return "Corrupt save (New Game)"
     if view.snapshot is None:
         raise RuntimeError("a VALID slot view always carries a decoded snapshot")
     progress = max(view.snapshot.matured_turf_positions, default=0)
-    return f"Spores: {view.snapshot.spores_available}   Progress: {progress} -- Continue"
+    return f"Spores: {view.snapshot.spores_available}   Progress: {progress} (Continue)"
 
 
 class MenuScene:
