@@ -19,6 +19,8 @@ from eye.gui.audio import AudioManager, SoundKey
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.game_driver import GameDriver
 from eye.gui.scene import Scene
+from eye.gui.scenes.credits import CreditsScene
+from eye.gui.scenes.settings import SettingsScene
 from eye.persistence import save
 from eye.persistence.codec import GameSnapshot, SaveDataError
 from eye.persistence.port import SaveStore
@@ -40,7 +42,7 @@ _SLOT_GAP = 10
 _FOOTER_BOTTOM_MARGIN = 24
 
 _TITLE = "The Eye of the Swarm"
-_FOOTER = "Up/Down: select slot   Enter/Space: confirm"
+_FOOTER = "Up/Down: select slot   Enter/Space: confirm   S: settings   C: credits"
 
 
 class SlotStatus(Enum):
@@ -53,6 +55,8 @@ class MenuAction(Enum):
     MOVE_UP = auto()
     MOVE_DOWN = auto()
     CONFIRM = auto()
+    OPEN_SETTINGS = auto()
+    OPEN_CREDITS = auto()
 
 
 # pygame key -> MenuAction. Edit this mapping to reassign controls.
@@ -61,6 +65,8 @@ KEY_ACTIONS: dict[int, MenuAction] = {
     pygame.K_DOWN: MenuAction.MOVE_DOWN,
     pygame.K_RETURN: MenuAction.CONFIRM,
     pygame.K_SPACE: MenuAction.CONFIRM,
+    pygame.K_s: MenuAction.OPEN_SETTINGS,
+    pygame.K_c: MenuAction.OPEN_CREDITS,
 }
 
 
@@ -129,6 +135,10 @@ class MenuScene:
             self._cursor = (self._cursor + 1) % len(self._slots)
         elif action is MenuAction.CONFIRM:
             return self._confirm()
+        elif action is MenuAction.OPEN_SETTINGS:
+            return SettingsScene(self)
+        elif action is MenuAction.OPEN_CREDITS:
+            return CreditsScene(self)
         return None
 
     def _confirm(self) -> Scene:
