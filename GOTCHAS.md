@@ -301,3 +301,17 @@ same. The unit tests cannot catch this on their own: `FakeMixerChannel` has no n
 promoting a queued sound, which is why `tests/gui/test_audio.py` keeps one real-channel test
 (`test_battle_primary_channel_falls_silent_after_the_crossfade_on_real_channels`) with a real
 wall-clock wait.
+
+## 2026-09-25 - PyInstaller builds "successfully" with no game assets
+
+`make exe` reported success, and the build had no sprites, sounds or fonts in it.
+
+`collect_data_files("eye")` imports `eye` in a subprocess to find its files. `eye` isn't installed
+into the venv, and the `pyinstaller` entry point doesn't put the repo root on `sys.path`, so that
+import fails. It only logs `skipping data collection for module 'eye' as it is not a package`.
+The Python modules are still bundled, so nothing else looks wrong.
+
+`eye.spec` puts `SPECPATH` on `sys.path` for this reason. After touching the spec, check the build
+for `_internal/eye/gui/sprites`. Asset lookups must also stay package-relative
+(`Path(__file__).parent / ...`), never CWD-relative: the frozen game runs from wherever the player
+launched it.

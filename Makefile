@@ -1,4 +1,4 @@
-.PHONY: serve web-archive bump run play dev-assets
+.PHONY: serve web-archive exe bump run play dev-assets
 
 run:
 	uv run python -m eye.main
@@ -8,6 +8,15 @@ serve:
 
 web-archive:
 	uv run pygbag --archive .
+
+exe:
+	uv run pyinstaller --noconfirm --distpath dist --workpath build/pyinstaller eye.spec
+# ditto keeps the .app's symlinks, which its code signature covers; zipfile would copy their targets.
+ifeq ($(shell uname -s),Darwin)
+	ditto -c -k --sequesterRsrc --keepParent "dist/The Eye of the Swarm.app" dist/eye-of-the-swarm-osx.zip
+else
+	uv run python -c "import shutil, sys; os_name = {'linux': 'linux', 'win32': 'windows'}[sys.platform]; shutil.make_archive(f'dist/eye-of-the-swarm-{os_name}', 'zip', 'dist', 'eye-of-the-swarm')"
+endif
 
 bump:
 	@test -n "$(PART)" || { echo "usage: make bump PART=patch|minor|major" >&2; exit 1; }
