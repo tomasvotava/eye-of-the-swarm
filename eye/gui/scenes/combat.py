@@ -46,6 +46,7 @@ from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.audio import AudioManager
 from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
+from eye.gui.effect_legend import LEGEND_CLOSE_KEYS, LEGEND_HINT, LEGEND_KEY, draw_effect_legend
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.narration import NarrationTrigger, NarrationTriggers, draw_narration
 from eye.gui.play_scene import BattleConcluded, PlaySceneTransition
@@ -567,6 +568,7 @@ class CombatScene:
         self._pending_query: PlayerTurnNeedsAction | None = None
         self._pending_action_index: int | None = None
         self._cursor_index = 0
+        self._legend_open = False
         self._log: list[str] = []
         self._pending_events: deque[BattleEvent] = deque()
         self._current_phases: deque[Phase] = deque()
@@ -609,10 +611,17 @@ class CombatScene:
             # otherwise the same press both dismisses the overlay and commits a menu action.
             self._narration.queue.dismiss()
             return
+        if self._legend_open:
+            self._legend_open = pygame_event.key not in LEGEND_CLOSE_KEYS
+            return
         if self._pending_query is None:
             return
         if self._current_phases or self._pending_events:
             return  # menu interactivity withheld while a reveal is still playing (ADR 0013)
+        # Not once an action is committed: its reveal would play unseen under the legend.
+        if pygame_event.key == LEGEND_KEY and self._pending_action_index is None:
+            self._legend_open = True
+            return
         available = self._pending_query.available
         if pygame_event.key in ACTION_KEYS:
             index = ACTION_KEYS.index(pygame_event.key)
@@ -1066,6 +1075,13 @@ class CombatScene:
         self._draw_menu(surface)
         self._draw_overlay(surface, player_layout, enemy_layout)
         self._draw_announcement(surface, player_layout, enemy_layout)
+        if self._legend_open:
+            effects = {
+                name
+                for displayed in (self._player_displayed, self._enemy_displayed)
+                for _, name in displayed.active_effects
+            }
+            draw_effect_legend(surface, effects, self._buff_icon_factory)
         self._draw_narration(surface)
 
     def _draw_narration(self, surface: pygame.Surface) -> None:
@@ -1227,7 +1243,7 @@ class CombatScene:
                 pygame.draw.rect(surface, _CURSOR_COLOR, row)
             label = f"{index + 1}) {action.name or action.kind.name.replace('_', ' ').title()}"
             surface.blit(font.render(label, True, _TEXT_COLOR), row.topleft)
-        hint = font.render("1-9: choose   Up/Down + Enter: choose", True, _TEXT_COLOR)
+        hint = font.render(f"1-9: choose   Up/Down + Enter: choose   {LEGEND_HINT}", True, _TEXT_COLOR)
         surface.blit(hint, (_MARGIN, top + len(available) * _FONT_SIZE))
 
     def _draw_overlay(
