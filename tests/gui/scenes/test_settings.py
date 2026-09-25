@@ -7,7 +7,13 @@ import pytest
 from eye.gui.scene import Scene
 from eye.gui.scenes.settings import KEY_ACTIONS, SettingsAction, SettingsScene
 from eye.persistence import save
-from eye.persistence.settings import SETTINGS_SCHEMA_VERSION, SettingsSnapshot, decode_settings, encode_settings
+from eye.persistence.settings import (
+    SETTINGS_SCHEMA_VERSION,
+    SettingsSnapshot,
+    WindowScale,
+    decode_settings,
+    encode_settings,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -34,8 +40,10 @@ def _press(scene: SettingsScene, key: int) -> None:
 
 
 def test_key_actions_maps_the_expected_controls() -> None:
-    assert KEY_ACTIONS[pygame.K_LEFT] is SettingsAction.DECREASE_SPEED
-    assert KEY_ACTIONS[pygame.K_RIGHT] is SettingsAction.INCREASE_SPEED
+    assert KEY_ACTIONS[pygame.K_UP] is SettingsAction.PREVIOUS_ROW
+    assert KEY_ACTIONS[pygame.K_DOWN] is SettingsAction.NEXT_ROW
+    assert KEY_ACTIONS[pygame.K_LEFT] is SettingsAction.DECREASE
+    assert KEY_ACTIONS[pygame.K_RIGHT] is SettingsAction.INCREASE
     assert KEY_ACTIONS[pygame.K_ESCAPE] is SettingsAction.BACK
 
 
@@ -196,3 +204,99 @@ def test_on_change_is_not_called_when_a_step_is_clamped() -> None:
     scene.update(0.016)
 
     assert received == []
+
+
+_SCALES = (WindowScale.AUTO, WindowScale.X1, WindowScale.X2, WindowScale.FULLSCREEN)
+
+
+def _persisted() -> SettingsSnapshot:
+    raw = save.settings_store().load()
+    assert raw is not None
+    return decode_settings(raw)
+
+
+def _window_scene(applied: list[WindowScale], scales: tuple[WindowScale, ...] = _SCALES) -> SettingsScene:
+    return SettingsScene(_StubScene(), window_scales=scales, apply_window_scale=applied.append)
+
+
+def _step(scene: SettingsScene, *keys: int) -> None:
+    for key in keys:
+        _press(scene, key)
+        scene.update(0.016)
+
+
+def test_window_row_steps_the_scale_persists_it_and_applies_it() -> None:
+    applied: list[WindowScale] = []
+    received: list[SettingsSnapshot] = []
+    scene = SettingsScene(
+        _StubScene(), on_change=received.append, window_scales=_SCALES, apply_window_scale=applied.append
+    )
+
+    _step(scene, pygame.K_DOWN, pygame.K_RIGHT)
+
+    assert applied == [WindowScale.X1]
+    assert _persisted().window_scale is WindowScale.X1
+    assert received[-1].window_scale is WindowScale.X1
+
+
+def test_changing_one_setting_keeps_the_other() -> None:
+    applied: list[WindowScale] = []
+    scene = _window_scene(applied)
+
+    _step(scene, pygame.K_RIGHT, pygame.K_DOWN, pygame.K_RIGHT, pygame.K_UP, pygame.K_RIGHT)
+
+    assert _persisted() == SettingsSnapshot(
+        schema_version=SETTINGS_SCHEMA_VERSION, combat_speed_multiplier=2.0, window_scale=WindowScale.X1
+    )
+
+
+def test_window_scale_stops_at_either_end_without_reapplying() -> None:
+    applied: list[WindowScale] = []
+    scene = _window_scene(applied)
+
+    _step(scene, pygame.K_DOWN, pygame.K_LEFT)
+    _step(scene, *[pygame.K_RIGHT] * (len(_SCALES) + 2))
+
+    assert applied == [WindowScale.X1, WindowScale.X2, WindowScale.FULLSCREEN]
+
+
+def test_a_saved_scale_this_desktop_cannot_offer_steps_from_auto() -> None:
+    save.settings_store().save(
+        encode_settings(
+            SettingsSnapshot(
+                schema_version=SETTINGS_SCHEMA_VERSION, combat_speed_multiplier=1.0, window_scale=WindowScale.X4
+            )
+        )
+    )
+    applied: list[WindowScale] = []
+    scene = _window_scene(applied)
+
+    _step(scene, pygame.K_DOWN, pygame.K_RIGHT)
+
+    assert applied == [WindowScale.X1]
+
+
+def test_without_window_scales_the_only_row_is_combat_speed() -> None:
+    applied: list[WindowScale] = []
+    scene = _window_scene(applied, scales=())
+
+    _step(scene, pygame.K_DOWN, pygame.K_RIGHT)
+
+    assert applied == []
+    assert _persisted().combat_speed_multiplier == 1.5
+
+
+def test_row_selection_wraps() -> None:
+    applied: list[WindowScale] = []
+    scene = _window_scene(applied)
+
+    _step(scene, pygame.K_UP, pygame.K_RIGHT)
+
+    assert applied == [WindowScale.X1]
+
+
+@pytest.mark.parametrize("scales", [(), _SCALES])
+def test_draw_with_or_without_the_window_row_does_not_raise(scales: tuple[WindowScale, ...]) -> None:
+    scene = SettingsScene(_StubScene(), window_scales=scales, apply_window_scale=lambda _scale: None)
+
+    scene.draw(pygame.Surface((640, 480)))
