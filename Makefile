@@ -1,10 +1,13 @@
-.PHONY: serve run play dev-assets
+.PHONY: serve web-archive run play dev-assets
 
 run:
 	uv run python -m eye.main
 
 serve:
 	uv run pygbag .
+
+web-archive:
+	uv run pygbag --archive .
 
 play:
 	uv run python -m eye.tui
