@@ -113,13 +113,34 @@ global settings blob, instead of one implicit file/key.
   `Phase`s (ADR 0013) — a higher multiplier plays faster. This is GUI-only pacing, the same
   category of change ADR 0013 already scoped as "how `CombatScene` walks through and displays one
   call's events," not a domain change.
-- **Window-scale setting is a stretch item, additive to this design, not required for
-  submission.** If time allows: a `WindowScale` enum (`X1`/`X2`/`X3`/`X4`/`FULLSCREEN`) stored on
-  `SettingsSnapshot`; `app.py.run()` reads it before the first `pygame.display.set_mode()` call so
-  the window boots at the saved scale; the Settings scene calls `pygame.display.set_mode()` again
-  directly on change (pygame's display state is already a process-global singleton touched only in
-  `run()` — no new plumbing through `App` needed). Manual window resizing by the OS/user is not
-  tracked or reconciled -- explicitly out of scope for this stretch item.
+- **Settings is also reachable in-game, from `ExplorationScene`, via Escape.** A new
+  `OpenSettings` member of `PlaySceneTransition` (`eye/gui/play_scene.py`) carries the request.
+  `ExplorationScene` raises it only while the player is idle (`RESOLVED`/`AT_ENTRY`) with no card
+  or narration up, and never from the keypress that dismisses narration. `GameDriver.update()`
+  intercepts it before `_resolve()` and returns `SettingsScene(self, on_change=...)` to `App`: an
+  outer-level swap, the same mechanism `MenuScene` uses. `GameDriver` keeps its inner scene as is,
+  frozen while Settings is up because nothing updates it; ambient music keeps playing. Combat and
+  the skill tree do not open Settings.
+- **`SettingsScene` takes an optional `on_change: Callable[[SettingsSnapshot], None]`**, called
+  after every persisted change. `GameDriver` uses it to update its combat-speed multiplier, so the
+  next `CombatScene` it constructs plays at the new speed. No `CombatScene` exists while Settings
+  is open, since only exploration opens it.
+- **Window-scale setting.** A `WindowScale` StrEnum (`AUTO`/`X1`/`X2`/`X3`/`X4`/`FULLSCREEN`) in
+  `eye/persistence/settings.py`, stored as `SettingsSnapshot.window_scale` (default `AUTO`) and
+  encoded as its string value. A blob without the key decodes as `AUTO`, so `schema_version`
+  stays 1; an unrecognised value raises `SaveDataError`, which `load_settings()` already turns
+  into all-default settings. `AUTO` is the size SDL picks for the `SCALED` window at boot, i.e.
+  the behaviour before this setting existed.
+  - Applied by `eye/gui/window.py` through `pygame.Window.from_display_module()`: `set_mode()`
+    cannot choose a `SCALED` window's scale, but resizing the display module's `Window` can,
+    while the logical surface stays 640x480. `run()` applies the saved scale right after the
+    first `set_mode()`, so the window briefly appears at the `AUTO` size first. The Settings
+    scene applies it again on every change. Leaving `FULLSCREEN` calls `set_windowed()` before
+    resizing, and the window is recentred after each resize.
+  - `Xn` options larger than the desktop (`pygame.display.get_desktop_sizes()`) are not offered.
+  - Under emscripten the browser owns the canvas size: the Settings scene hides the window row
+    and applying a scale is a no-op.
+  - Manual window resizing by the OS/user is not tracked or reconciled.
 
 ## Consequences
 
@@ -139,7 +160,11 @@ global settings blob, instead of one implicit file/key.
 - `CombatScene`'s phase-duration math now depends on an injected multiplier rather than reading
   `eye/gui/tuning.py` constants as fixed values directly — any future per-phase-kind speed tuning
   builds on this seam rather than re-threading a new parameter.
-- `GameDriver` reads the multiplier once, at construction (from `MenuScene._confirm()`) — a
-  setting changed mid-game (once Settings is reachable outside the pre-game menu) would not affect
-  the `GameDriver`/`CombatScene` already running. Acceptable today since Settings is only reached
-  before a `GameDriver` exists; revisit if that ever changes.
+- `GameDriver` takes the multiplier at construction (from `MenuScene._confirm()`) and updates it
+  through `SettingsScene`'s `on_change` when Settings is opened in-game. A `CombatScene` keeps the
+  multiplier it was built with, which is safe only because Settings can't be opened mid-battle;
+  opening it from combat later would need the scene to accept a live value.
+- `pygame.Window.from_display_module()` is deprecated in pygame-ce 2.5.8 (it emits a
+  `DeprecationWarning`), yet it is the only way to resize a `SCALED` display-module window.
+  Accepted risk: `eye/gui/window.py` is its single caller and suppresses the warning there, so a
+  pygame-ce release that removes it needs a fix in that one module.
