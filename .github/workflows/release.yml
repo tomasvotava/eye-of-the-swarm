@@ -57,18 +57,33 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  build-native:
+    uses: ./.github/workflows/native-build.yml
+
   publish-github:
-    needs: build-web
+    needs: [build-web, build-native]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download archives
+      - name: Download web archive
         uses: actions/download-artifact@v8
         with:
-          pattern: release-*
+          name: release-web
           path: dist/
+
+      - name: Download native archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: eye-of-the-swarm-*
+          path: native/
           merge-multiple: true
+
+      - name: Name native archives after the tag
+        run: |
+          for os in linux windows osx; do
+            mv "native/eye-of-the-swarm-${os}.zip" "dist/eye-of-the-swarm-${GITHUB_REF_NAME}-${os}.zip"
+          done
 
       # --verify-tag: the tag is pushed by a human; the workflow must never create one.
       - name: Create release
@@ -98,3 +113,30 @@ jobs:
         env:
           BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
         run: butler push dist/*-web.zip "${ITCH_TARGET}:html5" --userversion "$GITHUB_REF_NAME"
+
+  publish-itch-native:
+    needs: [build-native, publish-github]
+    runs-on: ubuntu-latest
+    environment: itch.io
+    steps:
+      - name: Download native archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: eye-of-the-swarm-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Install butler
+        run: |
+          curl -fsSL -o butler.zip "https://broth.itch.zone/butler/linux-amd64/${BUTLER_VERSION}/archive/default"
+          unzip -q butler.zip -d "$RUNNER_TEMP/butler"
+          echo "$RUNNER_TEMP/butler" >> "$GITHUB_PATH"
+
+      # butler reads a zip as the directory inside it, so delta patches still work per file.
+      - name: Push to itch.io
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          for os in linux windows osx; do
+            butler push "dist/eye-of-the-swarm-${os}.zip" "${ITCH_TARGET}:${os}" --userversion "$GITHUB_REF_NAME"
+          done
