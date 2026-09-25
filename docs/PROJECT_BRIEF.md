@@ -46,7 +46,7 @@ Death is not failure in the traditional sense — it's a generational handoff. N
 ### 5.1 Proximity-to-Hive Power Scaling
 The player's abilities are strongest near the hive's *matured* Turf and weaken with distance from it (see §5.2 for how Turf differs from a freshly planted, not-yet-matured Seed). This is the constant, moment-to-moment expression of the game's theme: straying from the collective has an immediate, felt cost.
 
-**v1 implementation:** linear falloff. Simple to build and tune first; a curved or stepped falloff can be explored later if time allows.
+**v1 implementation:** linear falloff for Swarm Attack damage. The Swarm Meter's fill rate uses its own falloff: linear down to a floor inside the influence radius, then zero beyond it (docs/adr/0019).
 
 ### 5.2 Seed / Turf Mechanic
 
@@ -77,7 +77,7 @@ Utility sub-branches on both sides could govern things like Seed growth rate, ma
 ### 5.4 Combat System
 - Turn-based, with an ATB-style meter (à la *Final Fantasy*) that fills over a few turns to unlock a special attack.
 - **Base attack ("Struggle"-style):** weak and self-damaging without upgrades — intentionally bad, so upgrading it feels like an obvious early win. This is the game's "hook" for the self-investment path.
-- **Swarm attack:** the special, meter-gated attack. Its power *and* frequency (how fast the meter fills) both scale down with distance from the hive/turf — tying combat directly back into the core proximity mechanic.
+- **Swarm attack:** the special, meter-gated attack. Its power *and* frequency (how fast the meter fills) both scale down with distance from the hive/turf — tying combat directly back into the core proximity mechanic. The meter fills in about 3 turns next to matured Turf and about 8 at the edge of its influence, and not at all beyond it (docs/adr/0019).
 - Basic stat set: HP, Attack, Defense, plus something like a "Swarm Meter" or "Resonance" stat governing the special attack.
 - Enemy action selection each turn follows the process in §5.7; buffs/debuffs (§5.6) modify combat stats and can alter that process (e.g. Clouded Judgement).
 
@@ -87,7 +87,7 @@ Utility sub-branches on both sides could govern things like Seed growth rate, ma
 
 ### 5.6 Buffs & Debuffs
 
-The intended effect: fights can't be fully calculated in advance from stats alone — some volatility, in bounded and named ways.
+The intended effect: fights can't be fully calculated in advance from stats alone — some volatility, in bounded and named ways. Alongside the effects below, every landed hit varies within a fixed spread and has a flat chance to land as a critical hit (docs/adr/0019).
 
 **Two categories, kept strictly separate** (no exploration-granted effect is battle-scoped, and vice versa):
 - **Lifespan** — granted only while exploring (touching a power-up, §6). Lasts for the lifetime of the current generation; lost on death, not on battle end.
