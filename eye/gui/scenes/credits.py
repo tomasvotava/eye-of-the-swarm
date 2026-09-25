@@ -20,6 +20,7 @@ _FOOTER_BOTTOM_MARGIN = 24
 _LINES = (
     "Tomas Votava — Developer",
     "Jan Kloboucnik — Character Designer",
+    "Tomas Votava — Music and Sound effects",
     "Remaining assets generated using Midjourney, Claude, and Mistral",
 )
 _FOOTER = "Enter or Escape: back"
