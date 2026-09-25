@@ -36,6 +36,8 @@ from eye.gui.scenes.exploration import (
     _SPORES_ICON_SIZE,
     _SPORES_LABEL_GAP,
     _TEXT_COLOR,
+    _TURF_DISTANCE_NEAR_COLOR,
+    _TURF_DISTANCE_OUT_OF_RANGE_COLOR,
     KEY_ACTIONS,
     RESOURCE_DESCRIPTIONS,
     EncounterAnimationState,
@@ -46,6 +48,8 @@ from eye.gui.scenes.exploration import (
     _encounter_scale_factor,
     _Phase,
     _resolve_encounter_sprite_key,
+    _turf_distance_color,
+    _turf_distance_label,
 )
 from eye.gui.tuning import (
     ENCOUNTER_ENEMY_SCALE_FACTOR,
@@ -1713,3 +1717,69 @@ def test_draw_renders_the_active_narration_entry(monkeypatch: pytest.MonkeyPatch
     scene.draw(pygame.Surface((800, 600)))
 
     assert drawn == [scene._narration.queue.current]
+
+
+@pytest.mark.parametrize(
+    ("distance", "label"),
+    [(0.0, "0"), (3.0, "3"), (9.5, "9"), (PROXIMITY_FALLOFF_RANGE, "10+"), (23.5, "10+")],
+)
+def test_turf_distance_label_counts_whole_screens_up_to_the_falloff_range(distance: float, label: str) -> None:
+    assert _turf_distance_label(distance) == label
+
+
+def test_turf_distance_color_runs_from_near_to_out_of_range() -> None:
+    assert _turf_distance_color(0.0) == _TURF_DISTANCE_NEAR_COLOR
+    assert _turf_distance_color(PROXIMITY_FALLOFF_RANGE / 2) not in (
+        _TURF_DISTANCE_NEAR_COLOR,
+        _TURF_DISTANCE_OUT_OF_RANGE_COLOR,
+    )
+    assert _turf_distance_color(PROXIMITY_FALLOFF_RANGE) == _TURF_DISTANCE_OUT_OF_RANGE_COLOR
+
+
+def _scene_near_turf(
+    kind_queue: Sequence[EncounterKind], resource_queue: Sequence[ResourceKind] = ()
+) -> tuple[ExplorationScene, Generation]:
+    game = Game(ScriptedEncounterRandom(kind_queue, resource_queue=resource_queue), matured_turf_positions=(1,))
+    generation = game.start_generation()
+    return ExplorationScene.for_new_generation(generation, game, _art_atlas(), audio=_audio()), generation
+
+
+def test_turf_distance_steps_up_only_when_the_walk_reaches_the_marker() -> None:
+    scene, generation = _scene_near_turf([EncounterKind.NOTHING])
+    assert generation.distance_to_nearest_matured_turf == 1.0
+
+    assert scene._displayed_turf_distance == 0.0
+    _resolve_next_screen(scene)
+    assert scene._displayed_turf_distance == 1.0
+
+
+def test_turf_distance_holds_through_the_exit_walk_until_the_marker_is_reached() -> None:
+    # The next screen's advance() runs as the exit walk ends, and may apply a distance discount
+    # that the badge must not show before its reveal.
+    scene, generation = _scene_near_turf([EncounterKind.NOTHING] * 2)
+    _resolve_next_screen(scene)
+    _drain_narration(scene)
+    assert scene._displayed_turf_distance == 1.0
+
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_EXIT_DURATION_SECONDS)
+    assert scene._phase is _Phase.AT_ENTRY
+    assert generation.distance_to_nearest_matured_turf == 2.0
+    assert scene._displayed_turf_distance == 1.0
+
+    _drain_narration(scene)
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+    assert scene._displayed_turf_distance == 2.0
+
+
+def test_turf_distance_badge_is_drawn_only_once_a_turf_distance_is_known() -> None:
+    scene, _ = _scene_near_turf([EncounterKind.NOTHING])
+    with_badge = pygame.Surface(_WINDOW_SIZE)
+    scene._draw_status_icons(with_badge)
+
+    scene._displayed_turf_distance = math.inf
+    without_badge = pygame.Surface(_WINDOW_SIZE)
+    scene._draw_status_icons(without_badge)
+
+    assert pygame.image.tobytes(with_badge, "RGB") != pygame.image.tobytes(without_badge, "RGB")
