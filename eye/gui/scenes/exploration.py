@@ -68,6 +68,13 @@ _BUFF_ICON_STEP = 36
 _STATUS_ICON_KEYS = (SpriteKey.SEED, SpriteKey.TURF)  # in the order of appearance
 _SPORES_ICON_SIZE = _BUFF_ICON_SIZE
 _SPORES_LABEL_GAP = 4
+_TURF_DISTANCE_FONT_SIZE = 14
+_TURF_DISTANCE_PLATE_COLOR = pygame.Color("black")
+_TURF_DISTANCE_PLATE_PADDING = 1
+# Lerped from near to far across PROXIMITY_FALLOFF_RANGE; out of range once swarm help is gone.
+_TURF_DISTANCE_NEAR_COLOR = pygame.Color("white")
+_TURF_DISTANCE_FAR_COLOR = pygame.Color("orange")
+_TURF_DISTANCE_OUT_OF_RANGE_COLOR = pygame.Color("orangered")
 # Fixed: EffectGranted carries no category, and every effect a pickup grants is Lifespan-scoped.
 _EFFECT_CARD_SUBTITLE = "This generation"
 _CARD_FOOTER = "(press any key to close)"
@@ -172,6 +179,19 @@ def _resolve_enemy_sprite_key(strain_name: str) -> SpriteKey:
         return SpriteKey.UNKNOWN
 
 
+def _turf_distance_label(distance: float) -> str:
+    """Whole screens to the nearest matured turf, capped at the range where swarm help runs out."""
+    if distance >= PROXIMITY_FALLOFF_RANGE:
+        return f"{math.floor(PROXIMITY_FALLOFF_RANGE)}+"
+    return str(math.floor(distance))
+
+
+def _turf_distance_color(distance: float) -> pygame.Color:
+    if distance >= PROXIMITY_FALLOFF_RANGE:
+        return _TURF_DISTANCE_OUT_OF_RANGE_COLOR
+    return _TURF_DISTANCE_NEAR_COLOR.lerp(_TURF_DISTANCE_FAR_COLOR, distance / PROXIMITY_FALLOFF_RANGE)
+
+
 def _status_icon_row_right(atlas: SpriteAtlas) -> int:
     """The x of the next drawable element, calculated based on the widest the status row can ever get"""
     right = _ICON_MARGIN
@@ -255,6 +275,7 @@ class ExplorationScene:
         starting_phase: _Phase,
         pending_events: Sequence[SessionEvent] = (),
         narration: NarrationTriggers | None = None,
+        displayed_turf_distance: float | None = None,
     ) -> None:
         self._generation = generation
         self._game = game
@@ -290,6 +311,12 @@ class ExplorationScene:
             event.amount
             for event in pending_events
             if isinstance(event, ResourceGranted) and event.kind is ResourceKind.SPORES
+        )
+        # Same reveal rule: a distance-discount pickup lowers the live value before it's revealed.
+        self._displayed_turf_distance = (
+            displayed_turf_distance
+            if displayed_turf_distance is not None
+            else generation.distance_to_nearest_matured_turf
         )
         self._card: Card | None = None
         self._dismiss_card = False
@@ -330,6 +357,7 @@ class ExplorationScene:
         audio.play_ambient(SoundKey.EXPLORATION)
         narration = narration if narration is not None else NarrationTriggers()
         narration.fire_sequence(NarrationTrigger.INTRO_LORE, _INTRO_LORE)
+        turf_distance_before_advance = generation.distance_to_nearest_matured_turf
         events = generation.advance()
         narration.fire(
             NarrationTrigger.FIRST_EXPLORATION,
@@ -345,6 +373,7 @@ class ExplorationScene:
             starting_phase=_Phase.AT_ENTRY,
             pending_events=events,
             narration=narration,
+            displayed_turf_distance=turf_distance_before_advance,
         )
 
     @classmethod
@@ -520,6 +549,7 @@ class ExplorationScene:
         # The reveal point: advance() applied the pickup back when the screen loaded.
         self._displayed_effects = self._generation.active_lifespan_effects
         self._displayed_spores = self._generation.spores_gained
+        self._displayed_turf_distance = self._generation.distance_to_nearest_matured_turf
 
         encounter = next((event for event in events if isinstance(event, EnemyEncountered)), None)
         if encounter is not None:
@@ -643,7 +673,22 @@ class ExplorationScene:
                 continue
             sprite = self._atlas.get(key)
             surface.blit(sprite, (x, _ICON_MARGIN))
+            if key is SpriteKey.TURF and math.isfinite(self._displayed_turf_distance):
+                self._draw_turf_distance_badge(surface, sprite.get_rect(topleft=(x, _ICON_MARGIN)))
             x += sprite.get_width() + _ICON_MARGIN
+
+    def _draw_turf_distance_badge(self, surface: pygame.Surface, icon_rect: pygame.Rect) -> None:
+        # Overlaid on the icon's corner rather than beside it: the top row has no width to spare
+        # once every Lifespan effect is showing.
+        distance = self._displayed_turf_distance
+        font = get_font(GameFont.ITHACA, _TURF_DISTANCE_FONT_SIZE)
+        text = _turf_distance_label(distance)
+        label = font.render(text, True, _turf_distance_color(distance))
+        # A plate, so the tint never has to contrast with whatever art the icon carries.
+        plate = label.get_rect().inflate(_TURF_DISTANCE_PLATE_PADDING * 2, 0)
+        plate.bottomright = icon_rect.bottomright
+        pygame.draw.rect(surface, _TURF_DISTANCE_PLATE_COLOR, plate)
+        surface.blit(label, label.get_rect(center=plate.center))
 
     def _draw_spores_counter(self, surface: pygame.Surface) -> None:
         self._spores_icon.render(surface, pygame.Vector2(self._spores_counter_left, _ICON_MARGIN), _SPORES_ICON_SIZE)
