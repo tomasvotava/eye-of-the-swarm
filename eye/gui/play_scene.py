@@ -30,7 +30,12 @@ class Continue:
     pass
 
 
-type PlaySceneTransition = EnterCombat | BattleConcluded | Continue
+@dataclass(frozen=True)
+class OpenSettings:
+    pass
+
+
+type PlaySceneTransition = EnterCombat | BattleConcluded | Continue | OpenSettings
 
 
 class PlayScene(Protocol):

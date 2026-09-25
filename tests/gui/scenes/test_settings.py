@@ -171,3 +171,28 @@ def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
     scene = SettingsScene(_StubScene())
 
     scene.draw(pygame.Surface(surface_size))
+
+
+def test_on_change_receives_each_persisted_snapshot() -> None:
+    received: list[SettingsSnapshot] = []
+    scene = SettingsScene(_StubScene(), on_change=received.append)
+
+    _press(scene, pygame.K_RIGHT)
+    scene.update(0.016)
+
+    assert [snapshot.combat_speed_multiplier for snapshot in received] == [1.5]
+    assert received[-1] == decode_settings(save.settings_store().load() or "")
+
+
+def test_on_change_is_not_called_when_a_step_is_clamped() -> None:
+    received: list[SettingsSnapshot] = []
+    scene = SettingsScene(_StubScene(), on_change=received.append)
+
+    for _ in range(10):
+        _press(scene, pygame.K_LEFT)
+        scene.update(0.016)
+    received.clear()
+    _press(scene, pygame.K_LEFT)
+    scene.update(0.016)
+
+    assert received == []

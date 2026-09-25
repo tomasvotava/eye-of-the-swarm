@@ -2,9 +2,11 @@
 values stepped with Left/Right, persisted via `save.settings_store()` immediately on every change
 rather than only on exit. Takes `back_scene` rather than resolving one itself, mirroring
 `CreditsScene`'s constructor pattern -- whatever constructs it decides how it is reached and
-dismissed.
+dismissed. An optional `on_change` receives each newly persisted snapshot, for a caller that holds
+a setting live (e.g. `GameDriver` when Settings is opened in-game).
 """
 
+from collections.abc import Callable
 from enum import Enum, auto
 
 import pygame
@@ -49,8 +51,9 @@ def _closest_preset_index(multiplier: float) -> int:
 
 
 class SettingsScene:
-    def __init__(self, back_scene: Scene) -> None:
+    def __init__(self, back_scene: Scene, on_change: Callable[[SettingsSnapshot], None] | None = None) -> None:
         self._back_scene = back_scene
+        self._on_change = on_change
         self._settings = save.load_settings()
         self._preset_index = _closest_preset_index(self._settings.combat_speed_multiplier)
         self._pending_action: SettingsAction | None = None
@@ -85,6 +88,8 @@ class SettingsScene:
             combat_speed_multiplier=_COMBAT_SPEED_PRESETS[clamped],
         )
         save.settings_store().save(encode_settings(self._settings))
+        if self._on_change is not None:
+            self._on_change(self._settings)
 
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill("black")
