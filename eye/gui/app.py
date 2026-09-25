@@ -30,7 +30,7 @@ from eye.persistence import save
 _WINDOW_SIZE = (640, 480)
 _MAX_FPS = 60
 _TITLE = "The Eye of the Swarm"
-_SPRITES_DIR = Path("eye/gui/sprites")
+_SPRITES_DIR = Path(__file__).parent / "sprites"
 
 # Set (to any value) to boot straight into DevAssetViewerScene instead of the generational loop --
 # a developer-only escape hatch, never the game's default entry point.
