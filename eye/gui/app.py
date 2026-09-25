@@ -24,6 +24,8 @@ from eye.gui.scene import Scene
 from eye.gui.scenes.dev_assets import DevAssetViewerScene
 from eye.gui.scenes.menu import MenuScene
 from eye.gui.scenes.title import TitleScene
+from eye.gui.window import apply_window_scale, desktop_window_scales, effective_window_scale
+from eye.persistence import save
 
 _WINDOW_SIZE = (640, 480)
 _MAX_FPS = 60
@@ -92,6 +94,10 @@ async def run() -> None:
         pygame.mixer.init()
     screen = pygame.display.set_mode(_WINDOW_SIZE, flags=pygame.SCALED)
     pygame.display.set_caption(_TITLE)
+    # Right after the first set_mode(): window.py records the size SDL just chose as AUTO's. A
+    # saved scale the video driver refuses must not stop every later boot; the window keeps its size.
+    with contextlib.suppress(pygame.error):
+        apply_window_scale(effective_window_scale(save.load_settings().window_scale, desktop_window_scales()))
     clock = pygame.Clock()
 
     scene = _initial_scene(
