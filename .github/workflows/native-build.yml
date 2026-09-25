@@ -1,0 +1,64 @@
+name: Native build
+
+# Builds the PyInstaller executables on each OS and uploads them as workflow artifacts, without
+# publishing anywhere. Tagged releases publish through release.yml instead.
+on:
+  pull_request:
+    paths:
+      - "eye/**"
+      - "eye.spec"
+      - "Makefile"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".python-version"
+      - ".github/workflows/native-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+          - runner: windows-latest
+            os: windows
+          - runner: macos-latest
+            os: osx
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          lfs: true
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Setup python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Build executable
+        run: make exe
+
+      # Upload the zip rather than the directory: artifact uploads drop the executable bit.
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: eye-of-the-swarm-${{ matrix.os }}
+          path: dist/eye-of-the-swarm-${{ matrix.os }}.zip
+          if-no-files-found: error
