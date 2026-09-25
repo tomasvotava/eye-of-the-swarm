@@ -154,6 +154,7 @@ def test_key_actions_maps_the_expected_controls() -> None:
     assert KEY_ACTIONS[pygame.K_RETURN] is ExplorationAction.ADVANCE
     assert KEY_ACTIONS[pygame.K_p] is ExplorationAction.PLANT_SEED
     assert KEY_ACTIONS[pygame.K_ESCAPE] is ExplorationAction.OPEN_SETTINGS
+    assert KEY_ACTIONS[pygame.K_l] is ExplorationAction.OPEN_LEGEND
 
 
 def test_for_new_generation_calls_advance_once_and_starts_at_entry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1447,7 +1448,7 @@ def test_the_bottom_hud_leaves_the_spore_total_to_the_top_row() -> None:
     lines = [
         "Seed ready to plant: no",
         scene._last_message,
-        "Space/Enter: advance   P: plant seed   Esc: settings",
+        "Space/Enter: advance   P: plant seed   L: effects   Esc: settings",
     ]
     font = get_font(GameFont.ITHACA, _FONT_SIZE)
     expected = pygame.Surface(_WINDOW_SIZE)
@@ -1783,3 +1784,62 @@ def test_turf_distance_badge_is_drawn_only_once_a_turf_distance_is_known() -> No
     scene._draw_status_icons(without_badge)
 
     assert pygame.image.tobytes(with_badge, "RGB") != pygame.image.tobytes(without_badge, "RGB")
+
+
+def test_legend_key_opens_the_legend_while_idle() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    _drain_narration(scene)
+
+    _press(scene, pygame.K_l)
+
+    assert scene.update(0.016) is None
+    assert scene._legend_open is True
+
+
+def test_the_open_legend_swallows_advance_and_closes_on_escape_without_opening_settings() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    _drain_narration(scene)
+    _press(scene, pygame.K_l)
+    scene.update(0.016)
+
+    _press(scene, pygame.K_SPACE)
+    assert scene.update(0.016) is None
+    assert scene._phase is _Phase.AT_ENTRY
+
+    _press(scene, pygame.K_ESCAPE)
+    assert scene.update(0.016) is None
+    assert scene._legend_open is False
+
+
+def test_legend_key_that_dismisses_the_last_narration_entry_does_not_open_the_legend() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    while scene._narration.queue.is_active:
+        _press(scene, pygame.K_l)
+
+    scene.update(0.016)
+
+    assert scene._legend_open is False
+
+
+def test_draw_with_the_legend_open_does_not_raise() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)
+    _drain_narration(scene)
+    scene._card = None
+    _press(scene, pygame.K_l)
+    scene.update(0.016)
+
+    scene.draw(pygame.Surface(_WINDOW_SIZE))
+
+
+def test_legend_key_is_a_no_op_mid_walk() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    _drain_narration(scene)
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
+
+    _press(scene, pygame.K_l)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS)
+    scene.update(0.016)
+
+    assert scene._legend_open is False

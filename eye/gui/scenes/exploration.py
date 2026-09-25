@@ -26,6 +26,7 @@ from eye.gui.assets import SpriteAtlas, SpriteKey
 from eye.gui.audio import AudioManager, SoundKey
 from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
+from eye.gui.effect_legend import LEGEND_CLOSE_KEYS, LEGEND_HINT, LEGEND_KEY, draw_effect_legend
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.narration import NarrationTrigger, NarrationTriggers, draw_narration
 from eye.gui.play_scene import EnterCombat, OpenSettings, PlaySceneTransition
@@ -120,7 +121,11 @@ class ExplorationAction(Enum):
     ADVANCE = auto()
     PLANT_SEED = auto()
     OPEN_SETTINGS = auto()
+    OPEN_LEGEND = auto()
 
+
+# Never forwarded from the keypress that dismisses narration.
+_OVERLAY_ACTIONS = frozenset({ExplorationAction.OPEN_SETTINGS, ExplorationAction.OPEN_LEGEND})
 
 # pygame key -> ExplorationAction. Edit this mapping to reassign controls.
 KEY_ACTIONS: dict[int, ExplorationAction] = {
@@ -128,6 +133,7 @@ KEY_ACTIONS: dict[int, ExplorationAction] = {
     pygame.K_RETURN: ExplorationAction.ADVANCE,
     pygame.K_p: ExplorationAction.PLANT_SEED,
     pygame.K_ESCAPE: ExplorationAction.OPEN_SETTINGS,
+    LEGEND_KEY: ExplorationAction.OPEN_LEGEND,
 }
 
 
@@ -320,6 +326,7 @@ class ExplorationScene:
         )
         self._card: Card | None = None
         self._dismiss_card = False
+        self._legend_open = False
 
         # None when the atlas has no player animation data (e.g. build_placeholder_atlas()) --
         # mirrors DevAssetViewerScene's identical guard for this identical key/enum (ADR 0011).
@@ -401,14 +408,16 @@ class ExplorationScene:
             self._narration.queue.dismiss()
             # Forwarded only on the dismiss that empties the queue, and never under a card --
             # FIRST_SEED_READY can fire on a frame where a pickup card is already up (GOTCHAS.md).
-            # Never OPEN_SETTINGS: Escape is a natural way to close the overlay itself.
             if (
                 not self._narration.queue.is_active
                 and self._card is None
                 and action is not None
-                and action is not ExplorationAction.OPEN_SETTINGS
+                and action not in _OVERLAY_ACTIONS
             ):
                 self._pending_action = action
+            return
+        if self._legend_open:
+            self._legend_open = pygame_event.key not in LEGEND_CLOSE_KEYS
             return
         if self._card is not None:
             # Returning here, before any _pending_action write, is the entire reason no walk or
@@ -448,9 +457,14 @@ class ExplorationScene:
             if self._can_plant_seed() and not self._narration.queue.is_active:
                 self._handle_plant_seed()
             return None
-        if action is ExplorationAction.OPEN_SETTINGS:
+        if action in _OVERLAY_ACTIONS:
             # Same same-frame FIRST_SEED_READY race as PLANT_SEED above.
-            return None if self._narration.queue.is_active else OpenSettings()
+            if self._narration.queue.is_active:
+                return None
+            if action is ExplorationAction.OPEN_SETTINGS:
+                return OpenSettings()
+            self._legend_open = True
+            return None
         if self._phase is _Phase.RESOLVED:
             self._begin_walk(_Phase.WALKING_TO_EXIT)
         elif self._phase is _Phase.AT_ENTRY:
@@ -591,6 +605,8 @@ class ExplorationScene:
         self._draw_buff_icons(surface)
         self._draw_hud(surface)
         self._draw_raised_card(surface)
+        if self._legend_open:
+            draw_effect_legend(surface, self._displayed_effects, self._buff_icon_factory)
         self._draw_narration(surface)
 
     def _draw_background(self, surface: pygame.Surface) -> None:
@@ -738,7 +754,7 @@ class ExplorationScene:
         lines = [
             f"Seed ready to plant: {'yes' if self._can_plant_seed() else 'no'}",
             self._last_message,
-            "Space/Enter: advance   P: plant seed   Esc: settings",
+            f"Space/Enter: advance   P: plant seed   {LEGEND_HINT}   Esc: settings",
         ]
         top = surface.get_height() - len(lines) * _FONT_SIZE - _HUD_MARGIN
         for index, line in enumerate(lines):

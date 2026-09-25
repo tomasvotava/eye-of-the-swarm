@@ -3365,3 +3365,67 @@ def test_draw_renders_the_active_narration_entry(monkeypatch: pytest.MonkeyPatch
     scene.draw(pygame.Surface((800, 600)))
 
     assert drawn == [scene._narration.queue.current]
+
+
+def _scene_at_the_action_menu() -> CombatScene:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    _drive_to_next_player_query(scene)
+    return scene
+
+
+def test_legend_key_opens_the_legend_while_the_action_menu_is_up() -> None:
+    scene = _scene_at_the_action_menu()
+
+    _press(scene, pygame.K_l)
+
+    assert scene._legend_open is True
+
+
+def test_the_open_legend_swallows_action_keys() -> None:
+    scene = _scene_at_the_action_menu()
+    _press(scene, pygame.K_l)
+
+    _press(scene, ACTION_KEYS[0])
+    _press(scene, pygame.K_RETURN)
+
+    assert scene._pending_action_index is None
+    assert scene._legend_open is True
+
+
+@pytest.mark.parametrize("key", [pygame.K_l, pygame.K_ESCAPE])
+def test_legend_closes_on_its_own_key_or_escape(key: int) -> None:
+    scene = _scene_at_the_action_menu()
+    _press(scene, pygame.K_l)
+
+    _press(scene, key)
+
+    assert scene._legend_open is False
+
+
+def test_legend_key_is_ignored_while_a_reveal_is_playing() -> None:
+    scene = _scene_at_the_action_menu()
+    _press(scene, ACTION_KEYS[0])
+    scene.update(0.016)
+    assert scene._current_phases or scene._pending_events
+
+    _press(scene, pygame.K_l)
+
+    assert scene._legend_open is False
+
+
+def test_draw_with_the_legend_open_does_not_raise() -> None:
+    scene = _scene_at_the_action_menu()
+    scene._player_displayed.active_effects.add((EffectCategory.BATTLE, EffectName.FIBROUS))
+    _press(scene, pygame.K_l)
+
+    scene.draw(pygame.Surface(_WINDOW_SIZE))
+
+
+def test_legend_key_is_ignored_once_an_action_is_committed_in_the_same_frame() -> None:
+    scene = _scene_at_the_action_menu()
+
+    _press(scene, ACTION_KEYS[0])
+    _press(scene, pygame.K_l)
+
+    assert scene._legend_open is False
