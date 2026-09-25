@@ -25,15 +25,20 @@ import pygame
 from eye.gui.assets import SpriteAtlas
 from eye.gui.audio import AudioManager, SoundKey
 from eye.gui.narration import NarrationTriggers, load_seen_triggers, persist_seen_triggers
-from eye.gui.play_scene import BattleConcluded, Continue, EnterCombat, PlayScene, PlaySceneTransition
+from eye.gui.play_scene import BattleConcluded, Continue, EnterCombat, OpenSettings, PlayScene
 from eye.gui.scene import Scene
 from eye.gui.scenes.combat import CombatScene
 from eye.gui.scenes.exploration import ExplorationScene
+from eye.gui.scenes.settings import SettingsScene
 from eye.gui.scenes.skilltree import SkillTreeScene
 from eye.persistence import save
 from eye.persistence.port import SaveStore
+from eye.persistence.settings import SettingsSnapshot
 from eye.session.game import Game
 from eye.session.generation import Generation
+
+# Every transition `_resolve` swaps an inner scene for; OpenSettings leaves GameDriver instead.
+type _InnerTransition = EnterCombat | BattleConcluded | Continue
 
 
 class GameDriver:
@@ -77,6 +82,8 @@ class GameDriver:
 
     def update(self, dt: float) -> Scene | None:
         transition = self._scene.update(dt)
+        if isinstance(transition, OpenSettings):
+            return SettingsScene(self, on_change=self._apply_settings)
         if transition is not None:
             self._scene = self._resolve(transition)
         return None
@@ -84,7 +91,7 @@ class GameDriver:
     def draw(self, surface: pygame.Surface) -> None:
         self._scene.draw(surface)
 
-    def _resolve(self, transition: PlaySceneTransition) -> PlayScene:
+    def _resolve(self, transition: _InnerTransition) -> PlayScene:
         match transition:
             case EnterCombat(encounter=encounter):
                 return CombatScene(
@@ -133,6 +140,9 @@ class GameDriver:
         if self._generation is None:
             raise RuntimeError("no generation is active -- EnterCombat/BattleConcluded arrived before Continue")
         return self._generation
+
+    def _apply_settings(self, settings: SettingsSnapshot) -> None:
+        self._combat_speed_multiplier = settings.combat_speed_multiplier
 
     def _persist(self) -> None:
         save.persist(self._game, self._save_store)

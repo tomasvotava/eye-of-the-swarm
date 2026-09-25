@@ -24,7 +24,7 @@ from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.narration import NarrationEntry, NarrationTrigger, NarrationTriggers
-from eye.gui.play_scene import EnterCombat, PlaySceneTransition
+from eye.gui.play_scene import EnterCombat, OpenSettings, PlaySceneTransition
 from eye.gui.scenes.exploration import (
     _BUFF_ICON_SIZE,
     _BUFF_ICON_STEP,
@@ -149,6 +149,7 @@ def test_key_actions_maps_the_expected_controls() -> None:
     assert KEY_ACTIONS[pygame.K_SPACE] is ExplorationAction.ADVANCE
     assert KEY_ACTIONS[pygame.K_RETURN] is ExplorationAction.ADVANCE
     assert KEY_ACTIONS[pygame.K_p] is ExplorationAction.PLANT_SEED
+    assert KEY_ACTIONS[pygame.K_ESCAPE] is ExplorationAction.OPEN_SETTINGS
 
 
 def test_for_new_generation_calls_advance_once_and_starts_at_entry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -373,6 +374,78 @@ def test_can_plant_seed_reflects_phase_not_just_seed_readiness() -> None:
     scene.update(WALK_TO_EXIT_DURATION_SECONDS)  # now AT_ENTRY
     assert generation.is_seed_ready is True
     assert scene._can_plant_seed() is False
+
+
+def test_open_settings_action_returns_open_settings_at_entry() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    _drain_narration(scene)
+    assert scene._phase is _Phase.AT_ENTRY
+
+    _press(scene, pygame.K_ESCAPE)
+
+    assert scene.update(0.016) == OpenSettings()
+    assert scene._phase is _Phase.AT_ENTRY
+
+
+def test_open_settings_action_returns_open_settings_once_resolved() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    _resolve_next_screen(scene)
+    _drain_narration(scene)
+    assert scene._phase is _Phase.RESOLVED
+
+    _press(scene, pygame.K_ESCAPE)
+
+    assert scene.update(0.016) == OpenSettings()
+
+
+def test_open_settings_action_is_a_no_op_mid_walk() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    _drain_narration(scene)
+    _press(scene, pygame.K_SPACE)
+    scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS / 2)
+    assert scene._phase is _Phase.WALKING_TO_ENCOUNTER
+
+    _press(scene, pygame.K_ESCAPE)
+
+    # Runs the walk to its end, then a frame at rest: a queued Escape would surface on either.
+    assert scene.update(WALK_TO_ENCOUNTER_DURATION_SECONDS) is None
+    assert scene.update(0.016) is None
+
+
+def test_open_settings_action_only_dismisses_a_card_that_is_up() -> None:
+    scene, _ = _scene([EncounterKind.EFFECT_PICKUP])
+    _resolve_next_screen(scene)
+    _drain_narration(scene)
+    assert scene._card is not None
+
+    _press(scene, pygame.K_ESCAPE)
+
+    assert scene.update(0.016) is None
+    assert scene._card is None
+    assert scene.update(0.016) is None
+
+
+def test_escape_that_dismisses_the_last_narration_entry_does_not_open_settings() -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    while scene._narration.queue.is_active:
+        _press(scene, pygame.K_ESCAPE)
+
+    assert scene.update(0.016) is None
+    assert scene.update(0.016) is None
+
+
+def test_open_settings_action_is_withheld_when_narration_rises_on_the_same_frame() -> None:
+    scene, generation = _scene([EncounterKind.NOTHING] * _ADVANCES_TO_READY_SEED)
+    for _ in range(_ADVANCES_TO_READY_SEED):
+        _resolve_next_screen(scene)
+    assert generation.is_seed_ready is True
+    assert scene._narration.queue.is_active is False
+
+    _press(scene, pygame.K_ESCAPE)
+
+    # This update() is the one that raises FIRST_SEED_READY -- Settings must not open over it.
+    assert scene.update(0.016) is None
+    assert scene._narration.queue.is_active is True
 
 
 def test_advance_action_returns_an_enter_combat_transition_on_encounter() -> None:
@@ -1370,7 +1443,7 @@ def test_the_bottom_hud_leaves_the_spore_total_to_the_top_row() -> None:
     lines = [
         "Seed ready to plant: no",
         scene._last_message,
-        "Space/Enter: advance   P: plant seed",
+        "Space/Enter: advance   P: plant seed   Esc: settings",
     ]
     font = get_font(GameFont.ITHACA, _FONT_SIZE)
     expected = pygame.Surface(_WINDOW_SIZE)

@@ -1,5 +1,7 @@
 from collections.abc import Sequence
+from pathlib import Path
 
+import platformdirs
 import pygame
 import pytest
 
@@ -13,6 +15,7 @@ from eye.gui.game_driver import GameDriver
 from eye.gui.narration import NarrationTrigger
 from eye.gui.scenes.combat import ACTION_KEYS, CombatScene
 from eye.gui.scenes.exploration import ExplorationScene
+from eye.gui.scenes.settings import SettingsScene
 from eye.gui.scenes.skilltree import _ROWS, SkillTreeScene
 from eye.gui.tuning import WALK_TO_ENCOUNTER_DURATION_SECONDS
 from eye.persistence.codec import decode, encode
@@ -172,6 +175,51 @@ def test_enter_combat_threads_the_combat_speed_multiplier_into_the_combat_scene(
 
     assert isinstance(driver._scene, CombatScene)
     assert driver._scene._combat_speed_multiplier == 2.0
+
+
+def _open_settings(driver: GameDriver) -> SettingsScene:
+    scene = driver._scene
+    assert isinstance(scene, ExplorationScene)
+    while scene._narration.queue.is_active:
+        scene._narration.queue.dismiss()
+    driver.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+    settings = driver.update(0.016)
+    assert isinstance(settings, SettingsScene)
+    return settings
+
+
+@pytest.fixture
+def _isolated_settings_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # SettingsScene persists through the real save.settings_store(); keep it off the developer's
+    # own settings file.
+    monkeypatch.setattr(platformdirs, "user_data_dir", lambda _app_name: str(tmp_path))
+
+
+@pytest.mark.usefixtures("_isolated_settings_dir")
+def test_open_settings_leaves_the_driver_and_backs_out_to_the_same_inner_scene() -> None:
+    driver = _driver()
+    exploration = driver._scene
+
+    settings = _open_settings(driver)
+    settings.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+
+    assert settings.update(0.016) is driver
+    assert driver._scene is exploration
+
+
+@pytest.mark.usefixtures("_isolated_settings_dir")
+def test_combat_speed_changed_in_game_reaches_the_next_combat_scene() -> None:
+    driver = _driver([EncounterKind.ENEMY], combat_speed_multiplier=1.0)
+
+    settings = _open_settings(driver)
+    settings.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RIGHT))
+    settings.update(0.016)
+    settings.handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE))
+    assert settings.update(0.016) is driver
+    _advance(driver)
+
+    assert isinstance(driver._scene, CombatScene)
+    assert driver._scene._combat_speed_multiplier == 1.5
 
 
 def test_enter_combat_threads_the_same_audio_manager_into_the_combat_scene() -> None:

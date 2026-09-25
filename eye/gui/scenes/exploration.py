@@ -28,7 +28,7 @@ from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.fonts.fonts import GameFont, get_font
 from eye.gui.narration import NarrationTrigger, NarrationTriggers, draw_narration
-from eye.gui.play_scene import EnterCombat, PlaySceneTransition
+from eye.gui.play_scene import EnterCombat, OpenSettings, PlaySceneTransition
 from eye.gui.props import resolve_prop_sampling
 from eye.gui.tuning import (
     ENCOUNTER_ENEMY_SCALE_FACTOR,
@@ -112,6 +112,7 @@ class PlayerAnimationState(StrEnum):
 class ExplorationAction(Enum):
     ADVANCE = auto()
     PLANT_SEED = auto()
+    OPEN_SETTINGS = auto()
 
 
 # pygame key -> ExplorationAction. Edit this mapping to reassign controls.
@@ -119,6 +120,7 @@ KEY_ACTIONS: dict[int, ExplorationAction] = {
     pygame.K_SPACE: ExplorationAction.ADVANCE,
     pygame.K_RETURN: ExplorationAction.ADVANCE,
     pygame.K_p: ExplorationAction.PLANT_SEED,
+    pygame.K_ESCAPE: ExplorationAction.OPEN_SETTINGS,
 }
 
 
@@ -370,7 +372,13 @@ class ExplorationScene:
             self._narration.queue.dismiss()
             # Forwarded only on the dismiss that empties the queue, and never under a card --
             # FIRST_SEED_READY can fire on a frame where a pickup card is already up (GOTCHAS.md).
-            if not self._narration.queue.is_active and self._card is None and action is not None:
+            # Never OPEN_SETTINGS: Escape is a natural way to close the overlay itself.
+            if (
+                not self._narration.queue.is_active
+                and self._card is None
+                and action is not None
+                and action is not ExplorationAction.OPEN_SETTINGS
+            ):
                 self._pending_action = action
             return
         if self._card is not None:
@@ -411,6 +419,9 @@ class ExplorationScene:
             if self._can_plant_seed() and not self._narration.queue.is_active:
                 self._handle_plant_seed()
             return None
+        if action is ExplorationAction.OPEN_SETTINGS:
+            # Same same-frame FIRST_SEED_READY race as PLANT_SEED above.
+            return None if self._narration.queue.is_active else OpenSettings()
         if self._phase is _Phase.RESOLVED:
             self._begin_walk(_Phase.WALKING_TO_EXIT)
         elif self._phase is _Phase.AT_ENTRY:
@@ -682,7 +693,7 @@ class ExplorationScene:
         lines = [
             f"Seed ready to plant: {'yes' if self._can_plant_seed() else 'no'}",
             self._last_message,
-            "Space/Enter: advance   P: plant seed",
+            "Space/Enter: advance   P: plant seed   Esc: settings",
         ]
         top = surface.get_height() - len(lines) * _FONT_SIZE - _HUD_MARGIN
         for index, line in enumerate(lines):
