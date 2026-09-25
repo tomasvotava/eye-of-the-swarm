@@ -21,6 +21,7 @@ _LINES = (
     "Tomas Votava — Developer",
     "Jan Kloboucnik — Character Designer",
     "Tomas Votava — Music and Sound effects",
+    "Renata Hlavova — Lore and Story",
     "Remaining assets generated using Midjourney, Claude, and Mistral",
 )
 _FOOTER = "Enter or Escape: back"
