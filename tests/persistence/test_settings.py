@@ -1,7 +1,13 @@
 import pytest
 
 from eye.persistence.codec import SaveDataError
-from eye.persistence.settings import SETTINGS_SCHEMA_VERSION, SettingsSnapshot, decode_settings, encode_settings
+from eye.persistence.settings import (
+    SETTINGS_SCHEMA_VERSION,
+    SettingsSnapshot,
+    WindowScale,
+    decode_settings,
+    encode_settings,
+)
 
 
 def test_encode_then_decode_round_trips_the_settings() -> None:
@@ -61,3 +67,23 @@ def test_decode_rejects_a_zero_combat_speed_multiplier() -> None:
 def test_decode_rejects_a_negative_combat_speed_multiplier() -> None:
     with pytest.raises(SaveDataError):
         decode_settings('{"schema_version": 1, "combat_speed_multiplier": -1.5}')
+
+
+@pytest.mark.parametrize("window_scale", list(WindowScale))
+def test_encode_then_decode_round_trips_every_window_scale(window_scale: WindowScale) -> None:
+    settings = SettingsSnapshot(schema_version=1, combat_speed_multiplier=1.0, window_scale=window_scale)
+
+    assert decode_settings(encode_settings(settings)) == settings
+
+
+def test_decode_treats_a_missing_window_scale_as_auto() -> None:
+    decoded = decode_settings('{"schema_version": 1, "combat_speed_multiplier": 1.5}')
+
+    assert decoded.window_scale is WindowScale.AUTO
+    assert decoded.combat_speed_multiplier == 1.5
+
+
+@pytest.mark.parametrize("window_scale", ['"x9"', "2", "null"])
+def test_decode_rejects_an_unknown_window_scale(window_scale: str) -> None:
+    with pytest.raises(SaveDataError):
+        decode_settings(f'{{"schema_version": 1, "combat_speed_multiplier": 1.0, "window_scale": {window_scale}}}')
