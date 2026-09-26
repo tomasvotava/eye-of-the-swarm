@@ -77,11 +77,13 @@ def _render_event(console: Console, event: SessionEvent) -> None:
             hit_count=hit_count,
             damage=damage,
             target_hp_after=target_hp_after,
+            is_critical=is_critical,
         ):
             hit_label = f" (hit {hit_index + 1}/{hit_count})" if hit_count > 1 else ""
+            critical = " Critical hit!" if is_critical else ""
             console.print(
                 f"{source.name}'s {_label(action)} hits {target.name} for {damage}{hit_label} "
-                f"-- {target.name} at {target_hp_after} HP."
+                f"-- {target.name} at {target_hp_after} HP.{critical}"
             )
         case HitReflected(source=source, target=target, damage=damage, target_hp_after=target_hp_after):
             console.print(
