@@ -328,3 +328,15 @@ the butler output shows this.
 
 Keep exactly one web upload on the game's Edit game → Uploads page: the `html5` channel one,
 with the checkbox ticked. Delete any manually uploaded web zip.
+
+## 2026-09-26 - A silent `effects.remove()` leaves its combat HUD icon up
+
+An Adrenaline consumed by a revive vanished from the domain state, but its icon stayed in the
+buff row for the rest of the battle.
+
+The combat scene's `active_effects` is a displayed snapshot (ADR 0013). It drops a
+`(category, effect)` key only when an `EffectExpired` for it plays back, and never re-reads
+`Combatant.effects`. The end-of-battle clear can't catch it either, since the effect is already
+gone by then.
+
+Any domain path that removes an effect emits `EffectExpired` with the removed instance's category.

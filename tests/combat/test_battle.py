@@ -170,6 +170,7 @@ def test_wilty_adrenaline_chain_continues_as_an_extra_turn() -> None:
         MeterFilled(combatant=player, amount=10, meter_after=10),
         Death(combatant=enemy),
         Revive(combatant=enemy, revived_hp=ADRENALINE_REVIVE_HP),
+        EffectExpired(target=enemy, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE),
         EffectExpired(target=enemy, effect=EffectName.WILTY, category=EffectCategory.BATTLE),
         EffectApplied(target=enemy, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3),
         ActionChosen(actor=enemy, action=ActionKind.STRUGGLE, was_swapped_by_clouded_judgement=False),
@@ -430,10 +431,14 @@ def test_revive_consumes_only_the_battle_category_adrenaline_when_both_are_activ
         0.0,
     )
 
-    _play_round(battle, STRUGGLE_ACTION)
+    events = _play_round(battle, STRUGGLE_ACTION)
 
     assert enemy.effects.has(EffectName.ADRENALINE, category=EffectCategory.BATTLE) is False
     assert enemy.effects.has(EffectName.ADRENALINE, category=EffectCategory.LIFESPAN) is True
+    adrenaline_expiries = [e for e in events if isinstance(e, EffectExpired) and e.effect is EffectName.ADRENALINE]
+    assert adrenaline_expiries == [
+        EffectExpired(target=enemy, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE)
+    ]
 
 
 def test_revive_consumes_lifespan_adrenaline_when_no_battle_instance_is_active() -> None:
@@ -449,10 +454,11 @@ def test_revive_consumes_lifespan_adrenaline_when_no_battle_instance_is_active()
         0.0,
     )
 
-    _play_round(battle, STRUGGLE_ACTION)
+    events = _play_round(battle, STRUGGLE_ACTION)
 
     assert enemy.current_hp == ADRENALINE_REVIVE_HP
     assert enemy.effects.has(EffectName.ADRENALINE, category=EffectCategory.LIFESPAN) is False
+    assert EffectExpired(target=enemy, effect=EffectName.ADRENALINE, category=EffectCategory.LIFESPAN) in events
 
 
 def _revive_enemy_via_wilty(enemy: Combatant) -> list[BattleEvent]:
@@ -485,9 +491,10 @@ def test_revive_clears_debuffs_of_both_categories_and_battle_buffs_in_order() ->
 
     events = _revive_enemy_via_wilty(enemy)
 
-    assert events[:8] == [
+    assert events[:9] == [
         Death(combatant=enemy),
         Revive(combatant=enemy, revived_hp=ADRENALINE_REVIVE_HP),
+        EffectExpired(target=enemy, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE),
         EffectExpired(target=enemy, effect=EffectName.WILTY, category=EffectCategory.LIFESPAN),
         EffectExpired(target=enemy, effect=EffectName.TOXICITY, category=EffectCategory.BATTLE),
         EffectExpired(target=enemy, effect=EffectName.NOURISHED, category=EffectCategory.BATTLE),
@@ -517,17 +524,27 @@ def test_revive_keeps_lifespan_buffs() -> None:
     assert enemy.effects.has(EffectName.ADRENALINE, category=EffectCategory.LIFESPAN)
     assert enemy.effects.has(EffectName.NOURISHED, category=EffectCategory.LIFESPAN)
     assert enemy.effects.has(EffectName.SPIKY_SKIN, category=EffectCategory.LIFESPAN)
-    expired = {event.effect for event in events if isinstance(event, EffectExpired) and event.target is enemy}
-    assert expired == {EffectName.WILTY}
+    expired = {
+        (event.effect, event.category) for event in events if isinstance(event, EffectExpired) and event.target is enemy
+    }
+    assert expired == {
+        (EffectName.ADRENALINE, EffectCategory.BATTLE),
+        (EffectName.WILTY, EffectCategory.BATTLE),
+    }
 
 
-def test_revive_consumes_the_triggering_adrenaline_without_an_expiry_event() -> None:
+def test_revive_emits_one_expiry_for_the_consumed_adrenaline_right_after_revive() -> None:
     enemy = _combatant("Enemy")
     enemy.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
 
     events = _revive_enemy_via_wilty(enemy)
 
-    assert not any(isinstance(event, EffectExpired) and event.effect is EffectName.ADRENALINE for event in events)
+    assert events[:3] == [
+        Death(combatant=enemy),
+        Revive(combatant=enemy, revived_hp=ADRENALINE_REVIVE_HP),
+        EffectExpired(target=enemy, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE),
+    ]
+    assert len([e for e in events if isinstance(e, EffectExpired) and e.effect is EffectName.ADRENALINE]) == 1
 
 
 def test_a_toxicity_holder_revived_by_a_lethal_tick_takes_no_further_ticks() -> None:
@@ -801,6 +818,7 @@ def test_vegetative_skip_cascading_into_lethal_toxicity_and_adrenaline_revive_st
     assert TurnSkipped(combatant=player) in query.events
     assert Death(combatant=player) in query.events
     assert Revive(combatant=player, revived_hp=ADRENALINE_REVIVE_HP) in query.events
+    assert EffectExpired(target=player, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE) in query.events
     assert EffectExpired(target=player, effect=EffectName.TOXICITY, category=EffectCategory.BATTLE) in query.events
     assert EffectExpired(target=player, effect=EffectName.VEGETATIVE, category=EffectCategory.BATTLE) in query.events
     assert player.current_hp == ADRENALINE_REVIVE_HP
