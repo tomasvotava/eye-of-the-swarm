@@ -457,8 +457,19 @@ def test_battle_ending_clears_indefinite_battle_effects_and_emits_effect_expired
 
     events = _play_round(battle, STRUGGLE_ACTION)
 
-    assert EffectExpired(target=enemy, effect=EffectName.RUNT) in events
+    assert EffectExpired(target=enemy, effect=EffectName.RUNT, category=EffectCategory.BATTLE) in events
     assert enemy.effects.has(EffectName.RUNT, category=EffectCategory.BATTLE) is False
+
+
+def test_a_timed_out_battle_effect_emits_a_battle_scoped_effect_expired() -> None:
+    player = _combatant("Player")
+    player.effects.apply(ActiveEffect(EffectName.RUNT, EffectCategory.BATTLE, remaining_turns=1))
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0)
+
+    events = _play_round(battle, STRUGGLE_ACTION)
+
+    assert EffectExpired(target=player, effect=EffectName.RUNT, category=EffectCategory.BATTLE) in events
 
 
 def test_action_availability_reports_every_action_including_unavailable_ones() -> None:
@@ -507,7 +518,7 @@ def test_start_prefills_the_meter_for_a_combatant_holding_lifespan_resonance() -
     assert player.current_meter == expected_amount
     assert events == [
         MeterFilled(combatant=player, amount=expected_amount, meter_after=expected_amount),
-        EffectExpired(target=player, effect=EffectName.RESONANCE),
+        EffectExpired(target=player, effect=EffectName.RESONANCE, category=EffectCategory.LIFESPAN),
     ]
 
 
@@ -522,7 +533,7 @@ def test_start_clamps_the_prefill_to_meter_capacity() -> None:
     assert player.current_meter == 100
     assert events == [
         MeterFilled(combatant=player, amount=round(100 * RESONANCE_METER_PREFILL_RATIO), meter_after=100),
-        EffectExpired(target=player, effect=EffectName.RESONANCE),
+        EffectExpired(target=player, effect=EffectName.RESONANCE, category=EffectCategory.LIFESPAN),
     ]
 
 
@@ -566,9 +577,9 @@ def test_start_prefills_both_combatants_independently() -> None:
     assert enemy.current_meter == expected_amount
     assert events == [
         MeterFilled(combatant=player, amount=expected_amount, meter_after=expected_amount),
-        EffectExpired(target=player, effect=EffectName.RESONANCE),
+        EffectExpired(target=player, effect=EffectName.RESONANCE, category=EffectCategory.LIFESPAN),
         MeterFilled(combatant=enemy, amount=expected_amount, meter_after=expected_amount),
-        EffectExpired(target=enemy, effect=EffectName.RESONANCE),
+        EffectExpired(target=enemy, effect=EffectName.RESONANCE, category=EffectCategory.LIFESPAN),
     ]
 
 

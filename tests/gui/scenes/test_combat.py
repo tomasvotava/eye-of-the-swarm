@@ -166,7 +166,7 @@ _ONE_OF_EACH_BATTLE_EVENT: tuple[BattleEvent, ...] = (
     HitReflected(source=_combatant(), target=_combatant(), damage=2, target_hp_after=18),
     SelfDamageTaken(combatant=_combatant(), damage=1, combatant_hp_after=19),
     EffectApplied(target=_combatant(), effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3),
-    EffectExpired(target=_combatant(), effect=EffectName.FIBROUS),
+    EffectExpired(target=_combatant(), effect=EffectName.FIBROUS, category=EffectCategory.BATTLE),
     DotTicked(target=_combatant(), effect=EffectName.TOXICITY, damage=1, target_hp_after=19),
     HealApplied(target=_combatant(), effect=EffectName.NOURISHED, amount=2, target_hp_after=20),
     ExtraActionTriggered(actor=_combatant(), extra_action_index=1),
@@ -1076,6 +1076,19 @@ def test_displayed_state_is_seeded_before_battle_starts_own_events_are_revealed(
     assert scene._player_displayed.meter == 0  # but the seeded snapshot predates that mutation
 
 
+def test_a_resonance_consumed_by_battle_start_clears_from_the_displayed_active_effects() -> None:
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.RESONANCE, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character)
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    assert (EffectCategory.LIFESPAN, EffectName.RESONANCE) in scene._player_displayed.active_effects
+
+    while scene._current_phases or scene._pending_events:
+        scene._advance_phases(60.0)
+
+    assert (EffectCategory.LIFESPAN, EffectName.RESONANCE) not in scene._player_displayed.active_effects
+
+
 def test_death_phase_holds_for_the_tuned_duration_and_sets_the_dead_state(tmp_path: Path) -> None:
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     atlas = build_art_atlas(tmp_path)
@@ -1938,7 +1951,7 @@ def test_effect_expired_phase_discards_from_the_displayed_active_effects_on_star
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
     key = (EffectCategory.BATTLE, EffectName.FIBROUS)
     scene._player_displayed.active_effects.add(key)
-    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE)
 
     scene._phases_for(event)[0].on_start()
 
@@ -1951,7 +1964,7 @@ def test_effect_expired_phase_discards_the_displayed_remaining_turns_on_start() 
     key = (EffectCategory.BATTLE, EffectName.FIBROUS)
     scene._player_displayed.active_effects.add(key)
     scene._player_displayed.remaining_turns[key] = 1
-    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE)
 
     scene._phases_for(event)[0].on_start()
 
@@ -1989,11 +2002,25 @@ def test_effect_expired_phase_only_discards_the_battle_scoped_key() -> None:
         (EffectCategory.LIFESPAN, EffectName.FIBROUS),
         (EffectCategory.BATTLE, EffectName.FIBROUS),
     }
-    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE)
 
     scene._phases_for(event)[0].on_start()
 
     assert scene._player_displayed.active_effects == {(EffectCategory.LIFESPAN, EffectName.FIBROUS)}
+
+
+def test_a_lifespan_effect_expired_phase_only_discards_the_lifespan_scoped_key() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    scene._player_displayed.active_effects = {
+        (EffectCategory.LIFESPAN, EffectName.RESONANCE),
+        (EffectCategory.BATTLE, EffectName.RESONANCE),
+    }
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.RESONANCE, category=EffectCategory.LIFESPAN)
+
+    scene._phases_for(event)[0].on_start()
+
+    assert scene._player_displayed.active_effects == {(EffectCategory.BATTLE, EffectName.RESONANCE)}
 
 
 def test_meter_bar_renders_the_displayed_snapshot_not_live_combatant_state() -> None:
@@ -2154,7 +2181,7 @@ def test_effect_expired_phase_sets_an_effect_card_announcement_with_a_wears_off_
         generation, _encounter(generation), build_placeholder_atlas(), buff_icon_factory=_spy_factory, audio=_audio()
     )
     assert not scene._battle.is_over  # the announcing case
-    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE)
 
     phases = scene._phases_for(event)
     phases[0].on_start()
@@ -2179,7 +2206,7 @@ def test_effect_expiry_from_end_of_battle_cleanup_clears_the_display_without_ann
     scene._player_displayed.active_effects.add(key)
     scene._player_displayed.remaining_turns[key] = 2
     scene._battle.enemy.current_hp = 0
-    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS)
+    event = EffectExpired(target=scene._battle.player, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE)
 
     phases = scene._phases_for(event)
 

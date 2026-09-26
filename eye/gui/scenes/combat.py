@@ -923,11 +923,7 @@ class CombatScene:
             duration = _duration_subtitle(event.category, event.remaining_turns)
             remaining_turns = event.remaining_turns
         else:
-            # EffectExpired carries no category (only ever fired for a Battle-scoped effect today
-            # -- Battle._expire_battle_effects/_clear_battle_effects both filter to
-            # EffectCategory.BATTLE), so the key to discard is inferred rather than read off the
-            # event. This breaks if a future domain change ever expires a Lifespan effect this way.
-            key = (EffectCategory.BATTLE, event.effect)
+            key = (event.category, event.effect)
             if self._battle.is_over:
                 # End-of-battle cleanup expires every effect at once, so a card apiece would bury
                 # the fight's own result. is_over is exact here: update() withholds every domain

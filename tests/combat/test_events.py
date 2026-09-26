@@ -133,13 +133,14 @@ def test_effect_applied_carries_effect_category_and_duration() -> None:
     assert event.remaining_turns == 3
 
 
-def test_effect_expired_carries_target_and_effect() -> None:
+def test_effect_expired_carries_target_effect_and_category() -> None:
     target = _combatant("Grub")
 
-    event = EffectExpired(target=target, effect=EffectName.TOXICITY)
+    event = EffectExpired(target=target, effect=EffectName.TOXICITY, category=EffectCategory.BATTLE)
 
     assert event.target is target
     assert event.effect is EffectName.TOXICITY
+    assert event.category is EffectCategory.BATTLE
 
 
 def test_dot_ticked_carries_damage_and_hp_after() -> None:
