@@ -2,7 +2,7 @@ import math
 
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.stats import Stats
-from eye.combat.tuning import PROXIMITY_FALLOFF_RANGE, meter_fill_scale
+from eye.combat.tuning import CRIT_CHANCE, CRIT_MULTIPLIER, PROXIMITY_FALLOFF_RANGE, meter_fill_scale
 from eye.player import BASE_PLAYER_ACTIONS, BASE_PLAYER_STATS
 
 
@@ -12,6 +12,11 @@ def test_base_player_stats_is_a_stats_instance() -> None:
 
 def test_base_player_stats_has_nonzero_recoil() -> None:
     assert BASE_PLAYER_STATS.recoil > 0.0
+
+
+def test_base_player_stats_crit_at_the_shared_tuning_values() -> None:
+    assert BASE_PLAYER_STATS.crit_chance == CRIT_CHANCE
+    assert BASE_PLAYER_STATS.crit_multiplier == CRIT_MULTIPLIER
 
 
 def _base_player_fill_per_turn(distance_from_turf: float) -> int:

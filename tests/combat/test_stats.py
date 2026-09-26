@@ -36,6 +36,13 @@ def test_stats_recoil_defaults_to_zero() -> None:
     assert _stats().recoil == 0.0
 
 
+def test_stats_default_to_never_critting() -> None:
+    stats = _stats()
+
+    assert stats.crit_chance == 0.0
+    assert stats.crit_multiplier == 1.0
+
+
 def test_combatant_defaults_have_no_active_modifiers() -> None:
     combatant = Combatant(name="Sporeling", base_stats=_stats(), current_hp=100)
 

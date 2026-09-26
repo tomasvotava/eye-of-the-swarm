@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from eye.combat.actions import ActionDefinition, ActionKind, EffectTarget, InflictedEffect
 from eye.combat.effects import EffectName
 from eye.combat.stats import Stats
+from eye.combat.tuning import CRIT_CHANCE, CRIT_MULTIPLIER
 from eye.exploration.encounters import Strain
 
 
@@ -25,6 +26,8 @@ _BRAMBLE_STATS = Stats(
     meter_capacity=100,
     meter_fill_rate=10,
     recoil=0.0,
+    crit_chance=CRIT_CHANCE,
+    crit_multiplier=CRIT_MULTIPLIER,
 )
 
 # Real, encounterable Strains (eye.exploration.encounters.ENCOUNTERABLE_STRAINS), one sprite each
@@ -40,6 +43,8 @@ _TUMBLEWEED_STATS = Stats(
     meter_capacity=100,
     meter_fill_rate=15,
     recoil=0.0,
+    crit_chance=CRIT_CHANCE,
+    crit_multiplier=CRIT_MULTIPLIER,
 )
 _TUMBLEWEED_ACTIONS = (
     ActionDefinition(kind=ActionKind.STRUGGLE, name="Roll"),
@@ -53,6 +58,8 @@ _BEATLE_STATS = Stats(
     meter_capacity=100,
     meter_fill_rate=10,
     recoil=0.0,
+    crit_chance=CRIT_CHANCE,
+    crit_multiplier=CRIT_MULTIPLIER,
 )
 _BEATLE_ACTIONS = (
     ActionDefinition(kind=ActionKind.STRUGGLE, name="Mandible Bite"),
@@ -66,6 +73,8 @@ _FLEA_STATS = Stats(
     meter_capacity=100,
     meter_fill_rate=20,
     recoil=0.0,
+    crit_chance=CRIT_CHANCE,
+    crit_multiplier=CRIT_MULTIPLIER,
 )
 _FLEA_ACTIONS = (
     ActionDefinition(kind=ActionKind.STRUGGLE, name="Quick Bites", hit_count=2),
@@ -79,6 +88,8 @@ _PHIDIZVIK_STATS = Stats(
     meter_capacity=100,
     meter_fill_rate=12,
     recoil=0.0,
+    crit_chance=CRIT_CHANCE,
+    crit_multiplier=CRIT_MULTIPLIER,
 )
 _PHIDIZVIK_ACTIONS = (
     ActionDefinition(
@@ -101,6 +112,8 @@ _GOLEM_STATS = Stats(
     meter_capacity=100,
     meter_fill_rate=8,
     recoil=0.0,
+    crit_chance=CRIT_CHANCE,
+    crit_multiplier=CRIT_MULTIPLIER,
 )
 _GOLEM_ACTIONS = (
     ActionDefinition(kind=ActionKind.STRUGGLE, name="Rock Fist"),

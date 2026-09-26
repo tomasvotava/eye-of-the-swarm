@@ -164,6 +164,7 @@ _ONE_OF_EACH_BATTLE_EVENT: tuple[BattleEvent, ...] = (
         hit_count=1,
         damage=3,
         target_hp_after=17,
+        is_critical=False,
     ),
     HitReflected(source=_combatant(), target=_combatant(), damage=2, target_hp_after=18),
     SelfDamageTaken(combatant=_combatant(), damage=1, combatant_hp_after=19),
@@ -1203,6 +1204,7 @@ def _hit_landed(scene: CombatScene) -> HitLanded:
         hit_count=1,
         damage=5,
         target_hp_after=scene._battle.enemy.current_hp - 5,
+        is_critical=False,
     )
 
 
@@ -1863,6 +1865,7 @@ def test_advance_phases_leaves_displayed_hp_strictly_between_before_and_after_mi
         hit_count=1,
         damage=5,
         target_hp_after=target_hp_after,
+        is_critical=False,
     )
     scene._battle.enemy.current_hp = target_hp_after  # Battle has already resolved this hit
 
@@ -2571,6 +2574,7 @@ def test_the_next_events_focus_is_established_by_the_same_call_that_drains_the_p
         hit_count=1,
         damage=4,
         target_hp_after=player.current_hp - 4,
+        is_critical=False,
     )
     scene._queue_events([_hit_landed(scene), riposte])
 
@@ -3260,6 +3264,7 @@ def test_fire_narration_for_a_player_hit_landed_fires_first_attack() -> None:
         hit_count=1,
         damage=3,
         target_hp_after=17,
+        is_critical=False,
     )
 
     scene._fire_narration_for(event)
@@ -3278,6 +3283,7 @@ def test_fire_narration_for_an_enemy_hit_landed_does_not_fire_first_attack() -> 
         hit_count=1,
         damage=3,
         target_hp_after=17,
+        is_critical=False,
     )
 
     scene._fire_narration_for(event)

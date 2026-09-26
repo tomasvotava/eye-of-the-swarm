@@ -9,6 +9,8 @@ SPLINTERED_DEFENSE_MAGNITUDE = -4.0
 
 STRUGGLE_BASE_POWER = 5.0
 SWARM_ATTACK_BASE_POWER = 20.0
+CRIT_CHANCE = 0.1
+CRIT_MULTIPLIER = 1.5
 DAMAGE_SPREAD = 0.2  # each landed hit is scaled by a uniform draw in [1 - spread, 1 + spread]
 PROXIMITY_FALLOFF_RANGE = 10.0  # distance_from_turf at which proximity-to-hive scaling (SS5.1) reaches zero
 

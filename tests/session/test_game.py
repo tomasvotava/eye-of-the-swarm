@@ -6,6 +6,7 @@ from eye.combat.events import HitLanded
 from eye.exploration.encounters import EncounterKind, Strain
 from eye.exploration.events import SeedPlanted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
+from eye.player import BASE_PLAYER_STATS
 from eye.session.events import SeedsMatured, SporesAwarded
 from eye.session.game import Game
 from tests.session.doubles import ScriptedEncounterRandom, advance_flat
@@ -31,7 +32,9 @@ def test_start_generation_uses_base_player_stats_from_an_empty_skill_tree() -> N
     events = advance_flat(generation)
 
     first_hit = next(event for event in events if isinstance(event, HitLanded))
-    assert first_hit.damage == 9  # base ATK 10 gives P = 15 against Golem's DEF 10: 225 / 25
+    assert first_hit.source.base_stats == BASE_PLAYER_STATS
+    # base ATK 10 gives P = 15 against Golem's DEF 10: 225 / 25 = 9, or round(9 * 1.5) = 14 on a crit
+    assert first_hit.damage == (14 if first_hit.is_critical else 9)
 
 
 def test_start_generation_spawns_at_the_furthest_matured_turf() -> None:

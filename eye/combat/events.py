@@ -44,6 +44,7 @@ class HitLanded:
     hit_count: int  # lets a UI render "hit 2 of 3"
     damage: int
     target_hp_after: int
+    is_critical: bool
 
 
 @dataclass(frozen=True, slots=True)

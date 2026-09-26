@@ -322,12 +322,13 @@ class Battle:
         self, actor: Combatant, opponent: Combatant, action: ActionDefinition, hit_index: int
     ) -> list[BattleEvent]:
         events: list[BattleEvent] = []
+        damage_multiplier, is_critical = self._damage_multiplier(actor)
         outcome = resolve_hit(
             actor,
             opponent,
             action,
             distance_from_turf=self._distance_from_turf,
-            damage_multiplier=self._damage_multiplier(),
+            damage_multiplier=damage_multiplier,
         )
 
         opponent.current_hp -= outcome.damage_to_defender
@@ -340,6 +341,7 @@ class Battle:
                 hit_count=action.hit_count,
                 damage=outcome.damage_to_defender,
                 target_hp_after=opponent.current_hp,
+                is_critical=is_critical,
             )
         )
 
@@ -506,10 +508,17 @@ class Battle:
             return round(rate * meter_fill_scale(self._distance_from_turf, PROXIMITY_FALLOFF_RANGE))
         return rate
 
-    def _damage_multiplier(self) -> float:
-        if self._damage_spread == 0:
-            return 1.0  # no draw, so a spread-free battle leaves the rng stream untouched
-        return self._rng.uniform(1 - self._damage_spread, 1 + self._damage_spread)
+    def _damage_multiplier(self, actor: Combatant) -> tuple[float, bool]:
+        # Draw order per hit: spread, then crit. A zero spread or crit chance skips its draw, so
+        # battles without them leave the rng stream untouched.
+        multiplier = 1.0
+        if self._damage_spread > 0:
+            multiplier = self._rng.uniform(1 - self._damage_spread, 1 + self._damage_spread)
+        stats = actor.base_stats
+        is_critical = stats.crit_chance > 0 and self._roll(stats.crit_chance)
+        if is_critical:
+            multiplier *= stats.crit_multiplier
+        return multiplier, is_critical
 
     def _roll(self, probability: float) -> bool:
         return self._rng.random() < probability

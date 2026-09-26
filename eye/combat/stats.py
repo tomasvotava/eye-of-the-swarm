@@ -55,6 +55,8 @@ class Stats:
     meter_capacity: int
     meter_fill_rate: int
     recoil: float = 0.0
+    crit_chance: float = 0.0
+    crit_multiplier: float = 1.0
 
 
 @dataclass(slots=True)
