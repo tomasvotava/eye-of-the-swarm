@@ -123,8 +123,8 @@ def test_basic_round_with_no_active_effects() -> None:
             action=ActionKind.STRUGGLE,
             hit_index=0,
             hit_count=1,
-            damage=10,
-            target_hp_after=90,
+            damage=11,
+            target_hp_after=89,
         ),
         MeterFilled(combatant=player, amount=10, meter_after=10),
         ActionChosen(actor=enemy, action=ActionKind.STRUGGLE, was_swapped_by_clouded_judgement=False),
@@ -134,8 +134,8 @@ def test_basic_round_with_no_active_effects() -> None:
             action=ActionKind.STRUGGLE,
             hit_index=0,
             hit_count=1,
-            damage=10,
-            target_hp_after=90,
+            damage=11,
+            target_hp_after=89,
         ),
         MeterFilled(combatant=enemy, amount=10, meter_after=10),
     ]
@@ -165,8 +165,8 @@ def test_wilty_adrenaline_chain_continues_as_an_extra_turn() -> None:
             action=ActionKind.STRUGGLE,
             hit_index=0,
             hit_count=1,
-            damage=10,
-            target_hp_after=90,
+            damage=11,
+            target_hp_after=89,
         ),
         MeterFilled(combatant=player, amount=10, meter_after=10),
         Wilted(combatant=enemy),
@@ -182,8 +182,8 @@ def test_wilty_adrenaline_chain_continues_as_an_extra_turn() -> None:
             action=ActionKind.STRUGGLE,
             hit_index=0,
             hit_count=1,
-            damage=14,
-            target_hp_after=86,
+            damage=15,
+            target_hp_after=85,
         ),
         MeterFilled(combatant=enemy, amount=10, meter_after=10),
     ]
@@ -207,8 +207,8 @@ def test_cluster_hit_stops_early_on_death_and_short_circuits_the_round() -> None
             action=ActionKind.STRUGGLE,
             hit_index=0,
             hit_count=3,
-            damage=10,
-            target_hp_after=5,
+            damage=11,
+            target_hp_after=4,
         ),
         HitLanded(
             source=player,
@@ -216,8 +216,8 @@ def test_cluster_hit_stops_early_on_death_and_short_circuits_the_round() -> None
             action=ActionKind.STRUGGLE,
             hit_index=1,
             hit_count=3,
-            damage=10,
-            target_hp_after=-5,
+            damage=11,
+            target_hp_after=-7,
         ),
         Death(combatant=enemy),
         BattleEnded(winner=player),
@@ -227,7 +227,7 @@ def test_cluster_hit_stops_early_on_death_and_short_circuits_the_round() -> None
 
 
 def test_uprooted_chains_extra_actions_up_to_the_hard_cap() -> None:
-    player = _combatant("Player", attack=0)  # 0 damage keeps enemy hp irrelevant to this scenario
+    player = _combatant("Player", attack=0)  # 2 per swing keeps the enemy alive through the whole chain
     enemy = _combatant("Enemy")
     player.effects.apply(ActiveEffect(EffectName.UPROOTED, EffectCategory.BATTLE, remaining_turns=None))
     uprooted_rolls = [0.0] * MAX_EXTRA_ACTIONS_PER_TURN  # every offered roll succeeds; none are offered past the cap
@@ -339,7 +339,7 @@ def test_spiky_skin_reflects_partial_damage_to_the_attacker() -> None:
     events = _play_round(battle, STRUGGLE_ACTION)
 
     reflected = next(event for event in events if isinstance(event, HitReflected))
-    assert reflected == HitReflected(source=enemy, target=player, damage=5, target_hp_after=95)
+    assert reflected == HitReflected(source=enemy, target=player, damage=6, target_hp_after=94)
 
 
 def test_spiky_skin_reflects_at_least_1_from_a_1_damage_hit() -> None:
@@ -378,7 +378,7 @@ def test_recoil_damages_the_attacker_via_self_damage_taken() -> None:
     events = _play_round(battle, STRUGGLE_ACTION)
 
     self_damage = next(event for event in events if isinstance(event, SelfDamageTaken))
-    assert self_damage == SelfDamageTaken(combatant=player, damage=5, combatant_hp_after=95)
+    assert self_damage == SelfDamageTaken(combatant=player, damage=6, combatant_hp_after=94)
 
 
 def test_nourished_heals_after_toxicity_ticks_in_the_same_turn(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -413,12 +413,13 @@ def test_lethal_toxicity_kills_when_heal_does_not_precede_damage_ticks(monkeypat
 def test_lethal_toxicity_is_survived_when_heal_precedes_damage_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(battle_module, "HEAL_BEFORE_DAMAGE_TICKS", True)
     player = _combatant("Player", current_hp=3)
-    enemy = _combatant("Enemy", attack=0)
+    enemy = _combatant("Enemy")
     player.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, remaining_turns=3))
     player.effects.apply(ActiveEffect(EffectName.NOURISHED, EffectCategory.BATTLE, remaining_turns=3))
-    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0)
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom([]), 0.0)
 
-    _play_round(battle, STRUGGLE_ACTION)
+    battle.query_player_turn()
+    battle.resolve_player_turn(STRUGGLE_ACTION)  # stop before the enemy's hit moves current_hp
 
     assert player.current_hp == 3
 
@@ -934,7 +935,7 @@ def test_query_player_turn_raises_after_the_player_turn_already_concluded_via_pr
 def test_unfold_drives_an_uprooted_chain_one_swing_at_a_time() -> None:
     total_swings = MAX_EXTRA_ACTIONS_PER_TURN + 1
     player = _combatant("Player")
-    enemy = _combatant("Enemy", current_hp=10 * total_swings)  # dies exactly on the chain's last swing
+    enemy = _combatant("Enemy", current_hp=11 * total_swings)  # dies exactly on the chain's last swing
     player.effects.apply(ActiveEffect(EffectName.UPROOTED, EffectCategory.BATTLE, remaining_turns=None))
     uprooted_rolls = [0.0] * MAX_EXTRA_ACTIONS_PER_TURN  # every offered roll succeeds; none offered past the cap
     battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom(uprooted_rolls), 0.0)

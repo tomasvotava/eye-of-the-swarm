@@ -1,6 +1,6 @@
 from eye.bestiary import BESTIARY, StrainProfile
-from eye.combat.actions import ActionDefinition, ActionKind
-from eye.combat.stats import Stats
+from eye.combat.actions import ActionDefinition, ActionKind, resolve_hit
+from eye.combat.stats import Combatant, Stats
 from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, Strain
 
 # Design intent (PROJECT_BRIEF.md §8 -- playtesting-driven, not final): weakest to strongest.
@@ -51,3 +51,19 @@ def test_encounterable_strain_power_follows_the_designed_strength_order() -> Non
 def test_encounterable_strains_award_more_spores_the_stronger_they_are() -> None:
     awards = [BESTIARY[strain].spore_award for strain in _STRENGTH_ORDER]
     assert awards == sorted(awards)
+
+
+def test_every_strain_action_hurts_a_maxed_defense_player() -> None:
+    player = Combatant(
+        name="Sporeling",
+        base_stats=Stats(max_hp=100, attack=10, defense=22, meter_capacity=100, meter_fill_rate=20),
+        current_hp=100,
+    )
+    damages = []
+    for strain, profile in BESTIARY.items():
+        enemy = Combatant(name=strain.name, base_stats=profile.stats, current_hp=profile.stats.max_hp)
+        for action in profile.actions:
+            outcome = resolve_hit(enemy, player, action, distance_from_turf=0.0)
+            assert outcome.damage_to_defender >= 1, (strain, action.name)
+            damages.append(outcome.damage_to_defender)
+    assert max(damages) > 1  # the formula itself, not only the floor, gets through DEF 22

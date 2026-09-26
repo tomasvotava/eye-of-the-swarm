@@ -12,8 +12,7 @@ from eye.combat.battle import Battle, PlayerTurnNeedsAction
 from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
 from eye.combat.events import HitLanded
 from eye.combat.stats import Combatant, Stats
-from eye.combat.tuning import FIBROUS_ATTACK_MAGNITUDE, STRUGGLE_BASE_POWER
-from eye.exploration.encounters import EncounterKind
+from eye.exploration.encounters import EncounterKind, Strain
 from eye.exploration.events import EnemyEncountered, NothingHappened, SeedGrew, SeedPlanted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
 from eye.session.events import GenerationEnded
@@ -30,12 +29,13 @@ def _generation(
     character: Character | None = None,
     stats: Stats | None = None,
     kind_queue: Sequence[EncounterKind] = (),
+    strain_queue: Sequence[Strain] = (),
 ) -> Generation:
     return Generation(
         character=character or _character(),
         stats=stats or Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10, recoil=0.0),
         actions=(ActionDefinition(kind=ActionKind.STRUGGLE),),
-        rng=ScriptedEncounterRandom(kind_queue),
+        rng=ScriptedEncounterRandom(kind_queue, strain_queue=strain_queue),
         starting_screen=0,
         matured_turfs=(),
     )
@@ -52,14 +52,12 @@ def test_advance_forwards_exploration_events_untouched_when_nothing_happens() ->
 
 
 def test_enemy_encounter_resolves_a_battle_against_the_bestiary_profile() -> None:
-    generation = _generation(kind_queue=[EncounterKind.ENEMY])
+    generation = _generation(kind_queue=[EncounterKind.ENEMY], strain_queue=[Strain.GOLEM])
 
     events = advance_flat(generation)
 
-    enemy_event = next(event for event in events if isinstance(event, EnemyEncountered))
-    profile = BESTIARY[enemy_event.strain]
     first_hit = next(event for event in events if isinstance(event, HitLanded))
-    assert first_hit.damage == round(STRUGGLE_BASE_POWER + 10 - profile.stats.defense)
+    assert first_hit.damage == 9  # P = 15 against Golem's DEF 10: 225 / 25
 
 
 def test_player_win_awards_the_strains_spores_and_writes_hp_back() -> None:
@@ -100,15 +98,14 @@ def test_character_lifespan_effects_apply_to_the_player_combatant_in_battle() ->
     character = _character(current_hp=100, max_hp=100)
     character.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.LIFESPAN, None))
     stats = Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
-    generation = _generation(character=character, stats=stats, kind_queue=[EncounterKind.ENEMY])
+    generation = _generation(
+        character=character, stats=stats, kind_queue=[EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]
+    )
 
     events = advance_flat(generation)
 
-    enemy_event = next(event for event in events if isinstance(event, EnemyEncountered))
-    profile = BESTIARY[enemy_event.strain]
     first_hit = next(event for event in events if isinstance(event, HitLanded))
-    expected = round(STRUGGLE_BASE_POWER + 10 + FIBROUS_ATTACK_MAGNITUDE - profile.stats.defense)
-    assert first_hit.damage == expected
+    assert first_hit.damage == 12  # Fibrous lifts P to 19 against Golem's DEF 10: 361 / 29 = 12.45
 
 
 def test_active_lifespan_effects_lists_only_the_characters_lifespan_scoped_effects() -> None:

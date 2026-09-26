@@ -4,7 +4,7 @@ from eye.combat import actions as actions_module
 from eye.combat.actions import ActionDefinition, ActionKind, EffectTarget, InflictedEffect, resolve_hit
 from eye.combat.effects import EffectName
 from eye.combat.stats import Combatant, Stats
-from eye.combat.tuning import PROXIMITY_FALLOFF_RANGE, STRUGGLE_BASE_POWER, SWARM_ATTACK_BASE_POWER
+from eye.combat.tuning import PROXIMITY_FALLOFF_RANGE
 
 
 def _combatant(name: str, attack: int, defense: int, recoil: float = 0.0) -> Combatant:
@@ -12,14 +12,14 @@ def _combatant(name: str, attack: int, defense: int, recoil: float = 0.0) -> Com
     return Combatant(name=name, base_stats=stats, current_hp=100)
 
 
-def test_struggle_damage_uses_base_power_plus_attack_minus_defense() -> None:
+def test_struggle_damage_is_power_squared_over_power_plus_defense() -> None:
     attacker = _combatant("Sporeling", attack=10, defense=3)
-    defender = _combatant("Grub", attack=4, defense=3)
+    defender = _combatant("Grub", attack=4, defense=5)
     action = ActionDefinition(kind=ActionKind.STRUGGLE)
 
     outcome = resolve_hit(attacker, defender, action, distance_from_turf=0.0)
 
-    assert outcome.damage_to_defender == round(STRUGGLE_BASE_POWER + 10 - 3)
+    assert outcome.damage_to_defender == 11  # P = 15: 225 / 20 = 11.25
 
 
 def test_struggle_recoil_scales_with_attacker_recoil_stat() -> None:
@@ -59,18 +59,19 @@ def test_swarm_attack_damage_falls_off_linearly_with_distance() -> None:
 
     outcome = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE / 2)
 
-    base_damage = SWARM_ATTACK_BASE_POWER + 10 - 5
-    assert outcome.damage_to_defender == round(base_damage * 0.5)
+    assert outcome.damage_to_defender == 13  # P = 30: 900 / 35 * 0.5 = 12.86
 
 
-def test_swarm_attack_damage_is_zero_at_or_beyond_falloff_range() -> None:
+def test_swarm_attack_damage_floors_at_one_at_or_beyond_falloff_range() -> None:
     attacker = _combatant("Sporeling", attack=10, defense=3)
     defender = _combatant("Grub", attack=4, defense=5)
     action = ActionDefinition(kind=ActionKind.SWARM_ATTACK, requires_full_meter=True)
 
-    outcome = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE * 2)
+    at_range = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE)
+    beyond = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE * 2)
 
-    assert outcome.damage_to_defender == 0
+    assert at_range.damage_to_defender == 1
+    assert beyond.damage_to_defender == 1
 
 
 def test_struggle_damage_is_distance_independent_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,18 +94,48 @@ def test_struggle_damage_falls_off_with_distance_when_enabled(monkeypatch: pytes
 
     outcome = resolve_hit(attacker, defender, action, distance_from_turf=PROXIMITY_FALLOFF_RANGE / 2)
 
-    base_damage = STRUGGLE_BASE_POWER + 10 - 3
-    assert outcome.damage_to_defender == round(base_damage * 0.5)
+    assert outcome.damage_to_defender == 6  # P = 15: 225 / 18 * 0.5 = 6.25
 
 
-def test_damage_floors_at_zero_when_defense_overwhelms_attack() -> None:
+def test_damage_floors_at_one_when_defense_overwhelms_attack() -> None:
     attacker = _combatant("Sporeling", attack=1, defense=1)
     defender = _combatant("Grub", attack=1, defense=1000)
     action = ActionDefinition(kind=ActionKind.STRUGGLE)
 
     outcome = resolve_hit(attacker, defender, action, distance_from_turf=0.0)
 
-    assert outcome.damage_to_defender == 0
+    assert outcome.damage_to_defender == 1
+
+
+def test_runt_reduced_attacker_still_deals_one_against_maxed_defense() -> None:
+    attacker = _combatant("Sporeling", attack=-2, defense=1)  # P = 3
+    defender = _combatant("Grub", attack=1, defense=22)
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    outcome = resolve_hit(attacker, defender, action, distance_from_turf=0.0)
+
+    assert outcome.damage_to_defender == 1  # 9 / 25 = 0.36
+
+
+@pytest.mark.parametrize(("attack", "defense"), [(-5, 0), (-12, 0), (-8, 3)])
+def test_non_positive_power_deals_the_floor_of_one(attack: int, defense: int) -> None:
+    attacker = _combatant("Sporeling", attack=attack, defense=1)
+    defender = _combatant("Grub", attack=1, defense=defense)  # (-8, 3): unclamped P + DEF would be 0
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    outcome = resolve_hit(attacker, defender, action, distance_from_turf=0.0)
+
+    assert outcome.damage_to_defender == 1
+
+
+def test_negative_defense_is_treated_as_zero() -> None:
+    attacker = _combatant("Sporeling", attack=10, defense=1)
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    negative = resolve_hit(attacker, _combatant("Grub", attack=1, defense=-4), action, distance_from_turf=0.0)
+    zero = resolve_hit(attacker, _combatant("Grub", attack=1, defense=0), action, distance_from_turf=0.0)
+
+    assert negative.damage_to_defender == zero.damage_to_defender == 15
 
 
 def test_resolve_hit_is_deterministic_for_unchanged_inputs() -> None:
