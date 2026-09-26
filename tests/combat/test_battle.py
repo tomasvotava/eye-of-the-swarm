@@ -342,6 +342,34 @@ def test_spiky_skin_reflects_partial_damage_to_the_attacker() -> None:
     assert reflected == HitReflected(source=enemy, target=player, damage=5, target_hp_after=95)
 
 
+def test_spiky_skin_reflects_at_least_1_from_a_1_damage_hit() -> None:
+    player = _combatant("Player", attack=-3)
+    enemy = _combatant("Enemy", defense=1)
+    enemy.effects.apply(ActiveEffect(EffectName.SPIKY_SKIN, EffectCategory.BATTLE, remaining_turns=3))
+    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0)
+
+    events = _play_round(battle, STRUGGLE_ACTION)
+
+    landed = next(event for event in events if isinstance(event, HitLanded) and event.target is enemy)
+    reflected = next(event for event in events if isinstance(event, HitReflected))
+    assert landed.damage == 1
+    assert reflected == HitReflected(source=enemy, target=player, damage=1, target_hp_after=99)
+
+
+def test_spiky_skin_rounds_an_odd_reflection_up() -> None:
+    player = _combatant("Player", attack=1)
+    enemy = _combatant("Enemy", defense=1)
+    enemy.effects.apply(ActiveEffect(EffectName.SPIKY_SKIN, EffectCategory.BATTLE, remaining_turns=3))
+    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0)
+
+    events = _play_round(battle, STRUGGLE_ACTION)
+
+    landed = next(event for event in events if isinstance(event, HitLanded) and event.target is enemy)
+    reflected = next(event for event in events if isinstance(event, HitReflected))
+    assert landed.damage == 5
+    assert reflected == HitReflected(source=enemy, target=player, damage=3, target_hp_after=97)
+
+
 def test_recoil_damages_the_attacker_via_self_damage_taken() -> None:
     player = _combatant("Player", recoil=0.5)
     enemy = _combatant("Enemy")
