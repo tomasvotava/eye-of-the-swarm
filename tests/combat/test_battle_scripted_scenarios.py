@@ -95,7 +95,9 @@ def _build_adrenaline_inflicted_mid_battle_then_revives() -> _Scenario:
     that applied it and still triggers a revive on a later, otherwise-lethal hit."""
     player = _combatant("Player", attack=15, defense=5, available_actions=(ADRENALINE_ON_HIT, STRUGGLE_ACTION))
     enemy = _combatant("Enemy", attack=0, defense=5, current_hp=20)
-    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION, STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0)
+    battle = Battle(
+        player, enemy, ScriptedChooser([STRUGGLE_ACTION, STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0, damage_spread=0.0
+    )
 
     swings = 0
 
@@ -132,6 +134,7 @@ def _build_player_wilty_revive_clears_wilty_then_real_death() -> _Scenario:
         ScriptedChooser([STRUGGLE_ACTION, STRUGGLE_ACTION]),
         _ScriptedRandom([0.0]),  # the only Wilty roll; a second one would exhaust the script
         0.0,
+        damage_spread=0.0,
     )
 
     def pick_action(available: Sequence[ActionDefinition]) -> ActionDefinition:
@@ -162,7 +165,7 @@ def _build_uprooted_chain_reaches_cap_under_clouded_judgement() -> _Scenario:
     player.effects.apply(ActiveEffect(EffectName.CLOUDED_JUDGEMENT, EffectCategory.BATTLE, remaining_turns=None))
     enemy = _combatant("Enemy", attack=0, defense=10, current_hp=143)  # dies exactly on the chain's 11th swing
     uprooted_rolls = [0.0] * MAX_EXTRA_ACTIONS_PER_TURN  # every offered chain roll succeeds
-    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom(uprooted_rolls), 0.0)
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom(uprooted_rolls), 0.0, damage_spread=0.0)
 
     def pick_action(available: Sequence[ActionDefinition]) -> ActionDefinition:
         return STRONG_ACTION  # always requested, but Clouded Judgement swaps it away every swing
@@ -194,6 +197,7 @@ def _build_vegetative_skip_does_not_spuriously_trigger_spiky_skin() -> _Scenario
         ScriptedChooser([STRUGGLE_ACTION]),
         _ScriptedRandom([0.0, 0.5]),  # round 1: Vegetative fires; round 2: it doesn't
         0.0,
+        damage_spread=0.0,
     )
 
     def pick_action(available: Sequence[ActionDefinition]) -> ActionDefinition:
@@ -226,6 +230,7 @@ def _build_both_sides_hold_wilty_and_adrenaline_simultaneously() -> _Scenario:
         ScriptedChooser([STRUGGLE_ACTION]),
         _ScriptedRandom([0.0, 0.0]),  # round 1: both sides' Wilty fires; each revive clears it
         0.0,
+        damage_spread=0.0,
     )
 
     def pick_action(available: Sequence[ActionDefinition]) -> ActionDefinition:
@@ -258,7 +263,7 @@ def _build_greedy_ai_enemy_drives_a_full_battle_to_completion() -> _Scenario:
     enemy = _combatant("Enemy", attack=15, defense=5, current_hp=30, available_actions=(STRUGGLE_ACTION,))
     rng = _ScriptedRandom([0.5])  # consumed by GreedyAI's single-candidate weighted pick, round 1 only
     enemy_chooser = GreedyAI(t=0.5, rng=rng, distance_from_turf=0.0)
-    battle = Battle(player, enemy, enemy_chooser, rng, 0.0)
+    battle = Battle(player, enemy, enemy_chooser, rng, 0.0, damage_spread=0.0)
 
     def pick_action(available: Sequence[ActionDefinition]) -> ActionDefinition:
         return STRUGGLE_ACTION

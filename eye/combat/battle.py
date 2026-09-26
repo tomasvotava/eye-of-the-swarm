@@ -29,6 +29,7 @@ from eye.combat.events import (
 from eye.combat.stats import Combatant
 from eye.combat.tuning import (
     ADRENALINE_REVIVE_HP,
+    DAMAGE_SPREAD,
     DEFAULT_BATTLE_EFFECT_DURATION_TURNS,
     HEAL_BEFORE_DAMAGE_TICKS,
     MAX_EXTRA_ACTIONS_PER_TURN,
@@ -90,12 +91,17 @@ class Battle:
         enemy_chooser: ActionChooser,
         rng: random.Random,
         distance_from_turf: float,
+        *,
+        damage_spread: float = DAMAGE_SPREAD,
     ) -> None:
+        if not 0 <= damage_spread < 1:
+            raise ValueError(f"damage_spread must be in [0, 1), got {damage_spread}")
         self._player = player
         self._enemy = enemy
         self._enemy_chooser = enemy_chooser
         self._rng = rng
         self._distance_from_turf = distance_from_turf
+        self._damage_spread = damage_spread
         self._pending_player_query: PlayerTurnQuery | None = None
         self._extra_action_index: int | None = None
         self._player_turn_done = False
@@ -316,7 +322,13 @@ class Battle:
         self, actor: Combatant, opponent: Combatant, action: ActionDefinition, hit_index: int
     ) -> list[BattleEvent]:
         events: list[BattleEvent] = []
-        outcome = resolve_hit(actor, opponent, action, distance_from_turf=self._distance_from_turf)
+        outcome = resolve_hit(
+            actor,
+            opponent,
+            action,
+            distance_from_turf=self._distance_from_turf,
+            damage_multiplier=self._damage_multiplier(),
+        )
 
         opponent.current_hp -= outcome.damage_to_defender
         events.append(
@@ -493,6 +505,11 @@ class Battle:
         if actor is self._player:
             return round(rate * meter_fill_scale(self._distance_from_turf, PROXIMITY_FALLOFF_RANGE))
         return rate
+
+    def _damage_multiplier(self) -> float:
+        if self._damage_spread == 0:
+            return 1.0  # no draw, so a spread-free battle leaves the rng stream untouched
+        return self._rng.uniform(1 - self._damage_spread, 1 + self._damage_spread)
 
     def _roll(self, probability: float) -> bool:
         return self._rng.random() < probability
