@@ -37,7 +37,7 @@ from eye.combat.tuning import (
     TOXICITY_DAMAGE_PER_TURN,
     VEGETATIVE_TRIGGER_CHANCE,
     WILTY_TRIGGER_CHANCE,
-    distance_falloff_scale,
+    meter_fill_scale,
     uprooted_chance,
 )
 
@@ -471,8 +471,7 @@ class Battle:
     def _meter_fill_amount(self, actor: Combatant) -> int:
         rate = actor.base_stats.meter_fill_rate
         if actor is self._player:
-            scale = distance_falloff_scale(self._distance_from_turf, PROXIMITY_FALLOFF_RANGE)
-            return round(rate * scale)
+            return round(rate * meter_fill_scale(self._distance_from_turf, PROXIMITY_FALLOFF_RANGE))
         return rate
 
     def _roll(self, probability: float) -> bool:
