@@ -1105,6 +1105,22 @@ def test_a_lifespan_debuff_cleared_by_a_revive_clears_from_the_displayed_active_
     assert (EffectCategory.LIFESPAN, EffectName.WILTY) not in scene._player_displayed.active_effects
 
 
+def test_the_adrenaline_a_revive_consumes_clears_from_the_displayed_active_effects() -> None:
+    character = Character(current_hp=_STATS.max_hp, max_hp=_STATS.max_hp)
+    character.effects.apply(ActiveEffect(EffectName.WILTY, EffectCategory.LIFESPAN, None))
+    character.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.LIFESPAN, None))
+    generation = _generation(character=character, rng=_AlwaysRolling([EncounterKind.ENEMY]))
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    assert (EffectCategory.LIFESPAN, EffectName.ADRENALINE) in scene._player_displayed.active_effects
+
+    _drive_to_next_player_query(scene)
+    while scene._current_phases or scene._pending_events:
+        scene._advance_phases(60.0)
+
+    assert scene._battle.player.current_hp == ADRENALINE_REVIVE_HP  # the Wilty roll killed and revived
+    assert (EffectCategory.LIFESPAN, EffectName.ADRENALINE) not in scene._player_displayed.active_effects
+
+
 def test_death_phase_holds_for_the_tuned_duration_and_sets_the_dead_state(tmp_path: Path) -> None:
     _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
     atlas = build_art_atlas(tmp_path)

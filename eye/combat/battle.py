@@ -444,7 +444,10 @@ class Battle:
         combatant.current_hp = ADRENALINE_REVIVE_HP
         # Consumed before the clear, so a Battle Adrenaline isn't swept up as a Battle buff.
         combatant.effects.remove(EffectName.ADRENALINE, category=adrenaline_category)
-        events: list[BattleEvent] = [Revive(combatant=combatant, revived_hp=ADRENALINE_REVIVE_HP)]
+        events: list[BattleEvent] = [
+            Revive(combatant=combatant, revived_hp=ADRENALINE_REVIVE_HP),
+            EffectExpired(target=combatant, effect=EffectName.ADRENALINE, category=adrenaline_category),
+        ]
         events.extend(self._clear_on_revive(combatant))
         combatant.effects.apply(
             ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, DEFAULT_BATTLE_EFFECT_DURATION_TURNS)
