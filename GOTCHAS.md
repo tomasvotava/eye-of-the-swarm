@@ -315,3 +315,16 @@ The Python modules are still bundled, so nothing else looks wrong.
 for `_internal/eye/gui/sprites`. Asset lookups must also stay package-relative
 (`Path(__file__).parent / ...`), never CWD-relative: the frozen game runs from wherever the player
 launched it.
+
+## 2026-09-26 - itch.io keeps playing an old web zip after a successful `html5` push
+
+The release run's `butler push` to `html5` succeeded, and the itch.io page said "updated N hours
+ago", but the browser embed still ran the jam-era build.
+
+`butler push` updates only the upload behind its channel. "This file will be played in the
+browser" is a per-upload checkbox, and a web zip uploaded by hand is a separate upload with no
+channel. If that manual upload has the checkbox ticked, the embed keeps serving it. Nothing in
+the butler output shows this.
+
+Keep exactly one web upload on the game's Edit game → Uploads page: the `html5` channel one,
+with the checkbox ticked. Delete any manually uploaded web zip.
