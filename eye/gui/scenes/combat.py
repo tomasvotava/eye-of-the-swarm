@@ -178,8 +178,19 @@ def _describe_event(event: BattleEvent, player: Combatant) -> str:
         case ActionChosen(actor=actor, action=action, was_swapped_by_clouded_judgement=swapped):
             suffix = " (clouded judgement!)" if swapped else ""
             return f"{actor.name} uses {_label(action)}{suffix}."
-        case HitLanded(source=source, target=target, action=action, damage=damage, target_hp_after=target_hp_after):
-            return f"{source.name}'s {_label(action)} hits {target.name} for {damage} -- {target_hp_after} HP left."
+        case HitLanded(
+            source=source,
+            target=target,
+            action=action,
+            damage=damage,
+            target_hp_after=target_hp_after,
+            is_critical=is_critical,
+        ):
+            critical = " Critical hit!" if is_critical else ""
+            return (
+                f"{source.name}'s {_label(action)} hits {target.name} for {damage} "
+                f"-- {target_hp_after} HP left.{critical}"
+            )
         case HitReflected(source=source, target=target, damage=damage, target_hp_after=target_hp_after):
             return f"{source.name} reflects {damage} back at {target.name} -- {target_hp_after} HP left."
         case SelfDamageTaken(combatant=combatant, damage=damage, combatant_hp_after=combatant_hp_after):
@@ -1045,9 +1056,12 @@ class CombatScene:
                 return [_meter_tween_phase(self._displayed_for(combatant), meter_after, self._combat_speed_multiplier)]
             case MeterConsumed(combatant=combatant, meter_after=meter_after):
                 return [_meter_tween_phase(self._displayed_for(combatant), meter_after, self._combat_speed_multiplier)]
-            case HitLanded(source=source, target=target, target_hp_after=target_hp_after):
+            case HitLanded(source=source, target=target, target_hp_after=target_hp_after, is_critical=is_critical):
+                # Its own hold, not the swing's: without animators the swing is zero-duration.
+                callout = [self._announcement_phase(Announcement(text="Critical!"))] if is_critical else []
                 return [
                     self._swing_phase(source, target),
+                    *callout,
                     _hp_tween_phase(self._displayed_for(target), target_hp_after, self._combat_speed_multiplier),
                 ]
             case HitReflected(target=target, target_hp_after=target_hp_after):

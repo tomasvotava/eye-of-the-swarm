@@ -2,6 +2,7 @@ import json
 import random
 from collections import deque
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pygame
@@ -1206,6 +1207,51 @@ def _hit_landed(scene: CombatScene) -> HitLanded:
         target_hp_after=scene._battle.enemy.current_hp - 5,
         is_critical=False,
     )
+
+
+def test_describe_event_calls_out_only_a_critical_hit() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    hit = _hit_landed(scene)
+
+    assert _describe_event(replace(hit, is_critical=True), scene._battle.player).endswith(" Critical hit!")
+    assert "Critical" not in _describe_event(hit, scene._battle.player)
+
+
+def test_a_critical_hit_holds_a_critical_callout_even_without_animators() -> None:
+    # The placeholder atlas has no animators, so the swing phase is zero-duration and can't carry it.
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    hit = replace(_hit_landed(scene), is_critical=True)
+    displayed = scene._displayed_for(scene._battle.enemy)
+    hp_before = displayed.hp
+    scene._queue_events([hit])
+
+    scene._advance_phases(0.0)
+    assert scene._announcement == Announcement(text="Critical!")
+
+    scene._advance_phases(BATTLE_ANNOUNCEMENT_HOLD_SECONDS / 2)
+    assert scene._announcement == Announcement(text="Critical!")
+    assert displayed.hp == hp_before  # the bar waits for the callout
+
+    scene._advance_phases(BATTLE_ANNOUNCEMENT_HOLD_SECONDS / 2)
+    assert scene._announcement is None
+
+    scene._advance_phases(BATTLE_VALUE_TWEEN_SECONDS)
+    assert displayed.hp == hit.target_hp_after
+
+
+def test_a_non_critical_hit_shows_no_callout() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    hit = _hit_landed(scene)
+
+    phases = scene._phases_for(hit)
+    for phase in phases:
+        phase.on_start()
+
+    assert len(phases) == 2
+    assert scene._announcement is None
 
 
 def test_hp_tween_phase_duration_is_divided_by_the_combat_speed_multiplier() -> None:
