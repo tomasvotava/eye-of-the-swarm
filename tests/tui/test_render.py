@@ -1,5 +1,6 @@
 import io
 
+import pytest
 from rich.console import Console
 
 from eye.combat.actions import ActionKind
@@ -83,6 +84,7 @@ def test_events_renders_hit_landed_with_damage_and_hp() -> None:
                 hit_count=1,
                 damage=5,
                 target_hp_after=15,
+                is_critical=False,
             )
         ],
     )
@@ -107,11 +109,35 @@ def test_events_renders_multi_hit_index() -> None:
                 hit_count=3,
                 damage=3,
                 target_hp_after=10,
+                is_critical=False,
             )
         ],
     )
 
     assert "2/3" in buffer.getvalue()
+
+
+@pytest.mark.parametrize(("is_critical", "called_out"), [(True, True), (False, False)])
+def test_events_calls_out_only_a_critical_hit(is_critical: bool, called_out: bool) -> None:
+    console, buffer = _console()
+
+    render.events(
+        console,
+        [
+            HitLanded(
+                source=_combatant(),
+                target=_combatant(),
+                action=ActionKind.STRUGGLE,
+                hit_index=0,
+                hit_count=1,
+                damage=24,
+                target_hp_after=76,
+                is_critical=is_critical,
+            )
+        ],
+    )
+
+    assert ("Critical hit!" in buffer.getvalue()) is called_out
 
 
 def test_events_renders_effect_applied_with_effect_name() -> None:

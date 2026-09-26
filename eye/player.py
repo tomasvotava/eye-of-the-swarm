@@ -5,6 +5,7 @@
 
 from eye.combat.actions import ActionDefinition, ActionKind
 from eye.combat.stats import Stats
+from eye.combat.tuning import CRIT_CHANCE, CRIT_MULTIPLIER
 
 BASE_PLAYER_STATS = Stats(
     max_hp=100,
@@ -13,6 +14,8 @@ BASE_PLAYER_STATS = Stats(
     meter_capacity=100,
     meter_fill_rate=34,  # ~3 turns to full next to turf, ~7-8 at the falloff edge (tuning.meter_fill_scale)
     recoil=0.5,
+    crit_chance=CRIT_CHANCE,
+    crit_multiplier=CRIT_MULTIPLIER,
 )
 
 STRUGGLE = ActionDefinition(kind=ActionKind.STRUGGLE, name="Struggle")
