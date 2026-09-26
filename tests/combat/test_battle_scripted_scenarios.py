@@ -20,6 +20,7 @@ from eye.combat.events import (
     HitReflected,
     Revive,
     TurnSkipped,
+    Wilted,
 )
 from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import ADRENALINE_REVIVE_HP, MAX_EXTRA_ACTIONS_PER_TURN
@@ -141,6 +142,8 @@ def _build_player_wilty_revive_clears_wilty_then_real_death() -> _Scenario:
         assert events[-1] == BattleEnded(winner=enemy)
         deaths = [e for e in events if isinstance(e, Death) and e.combatant is player]
         assert len(deaths) == 2  # the Wilty death that revives, then the enemy's killing hit
+        assert [e for e in events if isinstance(e, Wilted)] == [Wilted(combatant=player)]
+        assert events[events.index(Wilted(combatant=player)) + 1] == Death(combatant=player)
         assert [e for e in events if isinstance(e, Revive)] == [
             Revive(combatant=player, revived_hp=ADRENALINE_REVIVE_HP)
         ]
@@ -234,7 +237,9 @@ def _build_both_sides_hold_wilty_and_adrenaline_simultaneously() -> _Scenario:
         assert sorted(revive.combatant.name for revive in revives) == ["Enemy", "Player"]
         deaths = [e for e in events if isinstance(e, Death)]
         assert len(deaths) == 3  # each side's Wilty death, then the enemy's real one
+        assert len([e for e in events if isinstance(e, Wilted)]) == 2
         for combatant in (player, enemy):
+            assert events[events.index(Wilted(combatant=combatant)) + 1] == Death(combatant=combatant)
             assert EffectExpired(target=combatant, effect=EffectName.WILTY, category=EffectCategory.BATTLE) in events
             assert (
                 EffectExpired(target=combatant, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE) in events

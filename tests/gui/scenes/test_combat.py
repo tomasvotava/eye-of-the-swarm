@@ -30,6 +30,7 @@ from eye.combat.events import (
     Revive,
     SelfDamageTaken,
     TurnSkipped,
+    Wilted,
 )
 from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import ADRENALINE_REVIVE_HP, RESONANCE_METER_PREFILL_RATIO
@@ -151,6 +152,7 @@ def _combatant(name: str = "Combatant") -> Combatant:
 # One instance of every BattleEvent variant -- used to check that `_phases_for` is exhaustive.
 _ONE_OF_EACH_BATTLE_EVENT: tuple[BattleEvent, ...] = (
     Death(combatant=_combatant()),
+    Wilted(combatant=_combatant()),
     Revive(combatant=_combatant(), revived_hp=5),
     TurnSkipped(combatant=_combatant()),
     ActionChosen(actor=_combatant(), action=ActionKind.STRUGGLE, was_swapped_by_clouded_judgement=False),
@@ -779,7 +781,7 @@ def test_the_bar_icons_stay_in_the_gutter_outboard_of_the_rest_of_the_panel(mirr
 
 
 _ANIMATION_DRIVEN_EVENT_TYPES = (Death, Revive, HitLanded)
-_TWEEN_ONLY_EVENT_TYPES = (MeterFilled, MeterConsumed)
+_TWEEN_ONLY_EVENT_TYPES = (MeterFilled, MeterConsumed, Wilted)
 _ANNOUNCEMENT_EVENT_TYPES = (EffectApplied, EffectExpired, TurnSkipped, ExtraActionTriggered, BattleEnded)
 _OVERLAY_EVENT_TYPES = (DotTicked, HealApplied, HitReflected, SelfDamageTaken)
 _EVENT_TYPES_WITH_REAL_PHASES = (
@@ -1147,17 +1149,49 @@ def test_death_phase_duration_is_divided_by_the_combat_speed_multiplier() -> Non
     assert phases[0].duration_seconds == BATTLE_DEATH_POSE_HOLD_SECONDS / 2.0
 
 
-def test_death_phase_defensively_snaps_hp_with_no_preceding_tween() -> None:
-    # A Wilty-triggered death sets current_hp directly with no preceding damage event at all --
-    # Death's on_start must not assume some earlier phase already tweened displayed.hp to match.
+def test_death_phase_does_not_read_live_hp() -> None:
+    # By the time a Death reveals, an Adrenaline revive has already restored live HP.
     generation = _generation()
     scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
-    scene._battle.player.current_hp = 0
-    assert scene._player_displayed.hp != 0  # still the untouched construction-time snapshot
+    scene._player_displayed.hp = 0.0
+    scene._battle.player.current_hp = ADRENALINE_REVIVE_HP
 
     scene._phases_for(Death(combatant=scene._battle.player))[0].on_start()
 
     assert scene._player_displayed.hp == 0.0
+
+
+def test_wilted_focuses_the_combatant_and_drains_its_displayed_hp_to_zero() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    scene._queue_events([Wilted(combatant=scene._battle.enemy)])
+
+    scene._advance_phases(0.0)
+    assert scene._current_phases[0].duration_seconds == BATTLE_VALUE_TWEEN_SECONDS
+    assert scene._phase_focus == PhaseFocus(receiving=scene._battle.enemy)
+
+    scene._advance_phases(BATTLE_VALUE_TWEEN_SECONDS)
+    assert scene._enemy_displayed.hp == 0.0
+
+
+def test_a_revive_after_a_wilty_death_climbs_from_zero() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+    player = scene._battle.player
+    player.current_hp = ADRENALINE_REVIVE_HP  # Battle revives synchronously, before any of this reveals
+    scene._queue_events([Wilted(combatant=player), Death(combatant=player)])
+    while scene._current_phases or scene._pending_events:
+        scene._advance_phases(60.0)
+
+    scene._phases_for(Revive(combatant=player, revived_hp=ADRENALINE_REVIVE_HP))[1].on_progress(0.0)
+
+    assert scene._player_displayed.hp == 0.0
+
+
+def test_describe_event_names_a_wilty_death() -> None:
+    combatant = _combatant("Beatle")
+
+    assert _describe_event(Wilted(combatant=combatant), _combatant("Player")) == "Beatle wilts away."
 
 
 def _hit_landed(scene: CombatScene) -> HitLanded:
@@ -3337,6 +3371,70 @@ def test_fire_narration_for_the_enemys_death_does_not_fire_first_death() -> None
     scene._fire_narration_for(event)
 
     assert NarrationTrigger.FIRST_DEATH not in scene._narration._seen
+
+
+def test_fire_narration_for_the_players_wilted_queues_the_player_copy() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+
+    scene._fire_narration_for(Wilted(combatant=scene._battle.player))
+
+    assert scene._narration.queue.current == NarrationEntry(
+        "You wilted away.", "Wilty's rot took you - no blow was struck."
+    )
+
+
+def test_fire_narration_for_the_enemys_wilted_queues_the_enemy_copy() -> None:
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+
+    scene._fire_narration_for(Wilted(combatant=scene._battle.enemy))
+
+    assert scene._narration.queue.current == NarrationEntry(
+        f"The {scene._battle.enemy.name} wilted away.", "Wilty's rot claimed it - no blow was struck."
+    )
+
+
+def test_fire_narration_for_wilted_queues_an_entry_every_time() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+
+    scene._fire_narration_for(Wilted(combatant=scene._battle.player))
+    scene._fire_narration_for(Wilted(combatant=scene._battle.player))
+
+    scene._narration.queue.dismiss()
+
+    assert scene._narration.queue.is_active
+
+
+def test_a_wilty_death_shows_its_card_then_drains_hp_then_plays_the_death_pose(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_art_atlas(tmp_path), audio=_audio())
+    player = scene._battle.player
+    animator = scene._player_animator
+    assert animator is not None
+
+    def posed_dead() -> bool:
+        return animator.state is CombatAnimationState.DEAD
+
+    scene._queue_events([Wilted(combatant=player), Death(combatant=player)])
+
+    scene.update(0.0)
+    for _ in range(200):
+        scene.update(0.016)  # frozen under the card, however long it stays up
+    assert scene._narration.queue.is_active
+    assert scene._player_displayed.hp == _STATS.max_hp
+    assert not posed_dead()
+
+    scene._narration.queue.dismiss()
+    scene.update(BATTLE_VALUE_TWEEN_SECONDS / 2)
+    assert 0.0 < scene._player_displayed.hp < _STATS.max_hp
+    assert not posed_dead()
+
+    scene.update(BATTLE_VALUE_TWEEN_SECONDS / 2)
+    assert scene._player_displayed.hp == 0.0
+    assert posed_dead()
 
 
 def test_a_won_battle_fires_first_attack_narration_along_the_way() -> None:

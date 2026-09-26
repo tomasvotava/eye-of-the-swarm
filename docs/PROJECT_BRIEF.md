@@ -296,7 +296,8 @@ from your swarm's land into biomes unknown — press → to venture further," "Y
 spores. Might be useful.") lets the game speak to the player at key first-playthrough moments,
 folding instruction into story instead of breaking away for it. Presentation-only: an
 overlay/queue the GUI shows at scripted trigger points, no domain involvement. Leaving a matured
-Turf's influence, and growing a seed ready to plant, are announced each time they happen.
+Turf's influence, growing a seed ready to plant, and a Wilty death on either side are announced
+each time they happen.
 
 ### 9.9 Art & audio asset pipeline
 

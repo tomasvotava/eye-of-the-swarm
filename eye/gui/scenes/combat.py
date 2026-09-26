@@ -37,6 +37,7 @@ from eye.combat.events import (
     Revive,
     SelfDamageTaken,
     TurnSkipped,
+    Wilted,
 )
 from eye.combat.stats import Combatant
 from eye.exploration.encounters import Strain
@@ -168,6 +169,8 @@ def _describe_event(event: BattleEvent, player: Combatant) -> str:
     match event:
         case Death(combatant=combatant):
             return f"{combatant.name} falls."
+        case Wilted(combatant=combatant):
+            return f"{combatant.name} wilts away."
         case Revive(combatant=combatant, revived_hp=revived_hp):
             return f"{combatant.name} revives with {revived_hp} HP!"
         case TurnSkipped(combatant=combatant):
@@ -201,6 +204,13 @@ def _describe_event(event: BattleEvent, player: Combatant) -> str:
             return "You win!" if winner is player else "You lose!"
         case _:
             assert_never(event)
+
+
+def _wilted_narration(combatant: Combatant, player: Combatant) -> tuple[str, str]:
+    """The narration entry (message, subtitle) announcing that a Wilty roll killed `combatant`."""
+    if combatant is player:
+        return "You wilted away.", "Wilty's rot took you - no blow was struck."
+    return f"The {combatant.name} wilted away.", "Wilty's rot claimed it - no blow was struck."
 
 
 def _turn_title(combatant: Combatant) -> str:
@@ -727,10 +737,12 @@ class CombatScene:
         self._current_phases = deque(self._phases_for(event))
 
     def _fire_narration_for(self, event: BattleEvent) -> None:
-        # Player-initiated only (eye.combat.events' own source/target naming) -- an enemy's
-        # HitLanded, MeterFilled or Death says nothing about a mechanic the player has personally
-        # met yet.
+        # The first-playthrough triggers are player-initiated only -- an enemy's HitLanded,
+        # MeterFilled or Death says nothing about a mechanic the player has personally met yet.
         match event:
+            case Wilted(combatant=combatant):
+                # Every time and for either side: nothing else on screen explains a Wilty death.
+                self._narration.queue.enqueue(*_wilted_narration(combatant, self._battle.player))
             case HitLanded(source=source) if source is self._battle.player:
                 self._narration.fire(
                     NarrationTrigger.FIRST_ATTACK,
@@ -970,13 +982,9 @@ class CombatScene:
                 return []
             case Death(combatant=combatant):
                 animator = self._animator_for(combatant)
-                displayed = self._displayed_for(combatant)
 
                 def on_start() -> None:
                     self._phase_focus = PhaseFocus(receiving=combatant)
-                    # Defensive snap: a Wilty-triggered death sets current_hp directly and emits
-                    # no event for the GUI to tween against.
-                    displayed.hp = float(max(0, combatant.current_hp))
                     if animator is not None:
                         animator.set_state(CombatAnimationState.DEAD)
 
@@ -985,6 +993,16 @@ class CombatScene:
                         duration_seconds=BATTLE_DEATH_POSE_HOLD_SECONDS / self._combat_speed_multiplier,
                         on_start=on_start,
                     )
+                ]
+            case Wilted(combatant=combatant):
+
+                def focus() -> None:
+                    self._phase_focus = PhaseFocus(receiving=combatant)
+
+                # Its real duration stops the zero-duration cascade from starting Death's pose under the card.
+                return [
+                    Phase(duration_seconds=0.0, on_start=focus),
+                    _hp_tween_phase(self._displayed_for(combatant), 0, self._combat_speed_multiplier),
                 ]
             case Revive(combatant=combatant, revived_hp=revived_hp):
                 animator = self._animator_for(combatant)

@@ -11,6 +11,7 @@ from eye.combat.events import (
     EffectApplied,
     HitLanded,
     MeterFilled,
+    Wilted,
 )
 from eye.combat.stats import Combatant, Stats
 from eye.exploration.encounters import Biome, ResourceKind, Strain
@@ -131,6 +132,14 @@ def test_events_renders_death() -> None:
     render.events(console, [Death(combatant=_combatant(name="Bramble"))])
 
     assert "Bramble" in buffer.getvalue()
+
+
+def test_events_renders_wilted() -> None:
+    console, buffer = _console()
+
+    render.events(console, [Wilted(combatant=_combatant(name="Bramble"))])
+
+    assert "Bramble wilts away." in buffer.getvalue()
 
 
 def test_events_renders_battle_ended_with_winner_name() -> None:
