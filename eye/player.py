@@ -11,7 +11,7 @@ BASE_PLAYER_STATS = Stats(
     attack=10,
     defense=5,
     meter_capacity=100,
-    meter_fill_rate=20,  # ~5 turns to full at zero distance_from_turf; falloff-scaled per eye/combat/battle.py
+    meter_fill_rate=34,  # ~3 turns to full next to turf, ~7-8 at the falloff edge (tuning.meter_fill_scale)
     recoil=0.5,
 )
 

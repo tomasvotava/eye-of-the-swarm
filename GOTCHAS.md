@@ -203,7 +203,7 @@ matured turf yet -- including every brand-new save's entire first life -- and th
 a bug to "fix" by loosening the guard back up.
 
 `ExplorationRun.distance_to_nearest_matured_turf` returns `math.inf` when `_matured_turfs` is empty
-(no turf has matured this generation). `distance_falloff_scale(inf, ...)` is `0.0`, so the player's
+(no turf has matured this generation). `meter_fill_scale(inf, ...)` is `0.0`, so the player's
 meter-fill rate is genuinely scaled to zero for that whole life -- the meter can never reach
 capacity, so `FIRST_METER_FULL` never has a real occasion to fire. `FIRST_PROXIMITY_FALLOFF`
 excludes the `inf` case on purpose (`math.isfinite(distance)` in `exploration.py`) because "you've

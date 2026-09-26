@@ -1,3 +1,4 @@
+import math
 import random
 from collections.abc import Sequence
 
@@ -372,6 +373,23 @@ def test_requires_full_meter_action_consumes_the_meter() -> None:
     assert consumed == MeterConsumed(combatant=player, meter_after=0)
     filled = next(event for event in events if isinstance(event, MeterFilled) and event.combatant is player)
     assert filled == MeterFilled(combatant=player, amount=10, meter_after=10)
+
+
+@pytest.mark.parametrize(
+    ("distance_from_turf", "expected_player_fill"),
+    [(0.0, 100), (2.0, 87), (9.0, 43), (10.0, 0), (math.inf, 0)],
+)
+def test_player_meter_fill_follows_the_floored_proximity_falloff_while_enemy_fills_flat(
+    distance_from_turf: float, expected_player_fill: int
+) -> None:
+    player = _combatant("Player", meter_fill_rate=100)
+    enemy = _combatant("Enemy", meter_fill_rate=100)
+    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([]), distance_from_turf)
+
+    events = _play_round(battle, STRUGGLE_ACTION)
+
+    fills = {event.combatant.name: event.amount for event in events if isinstance(event, MeterFilled)}
+    assert fills == {"Player": expected_player_fill, "Enemy": 100}
 
 
 def test_winner_is_none_while_battle_is_ongoing() -> None:

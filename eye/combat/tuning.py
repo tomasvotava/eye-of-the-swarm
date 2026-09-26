@@ -32,6 +32,7 @@ UPROOTED_DECAY_FACTOR = 1.0  # v1: no decay; lower later if procs feel too frequ
 MAX_EXTRA_ACTIONS_PER_TURN = 10  # defensive ceiling only, not intended to bind at sane tuning values
 
 RESONANCE_METER_PREFILL_RATIO = 0.3
+METER_FILL_EDGE_SCALE = 0.37  # player meter-fill scale just inside PROXIMITY_FALLOFF_RANGE, before the cliff to 0
 
 
 def uprooted_chance(extra_action_index: int) -> float:
@@ -40,3 +41,10 @@ def uprooted_chance(extra_action_index: int) -> float:
 
 def distance_falloff_scale(distance_from_turf: float, falloff_range: float) -> float:
     return max(0.0, 1.0 - distance_from_turf / falloff_range)
+
+
+def meter_fill_scale(distance_from_turf: float, falloff_range: float) -> float:
+    """1.0 at the turf, linear down to METER_FILL_EDGE_SCALE just inside `falloff_range`, 0.0 at or beyond it."""
+    if not distance_from_turf < falloff_range:
+        return 0.0
+    return 1.0 - (1.0 - METER_FILL_EDGE_SCALE) * distance_from_turf / falloff_range
