@@ -132,7 +132,7 @@ class Battle:
         combatant.effects.remove(EffectName.RESONANCE, category=EffectCategory.LIFESPAN)
         return [
             MeterFilled(combatant=combatant, amount=amount, meter_after=combatant.current_meter),
-            EffectExpired(target=combatant, effect=EffectName.RESONANCE),
+            EffectExpired(target=combatant, effect=EffectName.RESONANCE, category=EffectCategory.LIFESPAN),
         ]
 
     def _conclude_if_over(self, events: list[BattleEvent]) -> None:
@@ -409,14 +409,14 @@ class Battle:
         events: list[BattleEvent] = []
         for combatant in (self._player, self._enemy):
             for name in combatant.effects.tick_battle_effects():
-                events.append(EffectExpired(target=combatant, effect=name))
+                events.append(EffectExpired(target=combatant, effect=name, category=EffectCategory.BATTLE))
         return events
 
     def _clear_battle_effects(self) -> list[BattleEvent]:
         events: list[BattleEvent] = []
         for combatant in (self._player, self._enemy):
             for name in combatant.effects.clear_battle_effects():
-                events.append(EffectExpired(target=combatant, effect=name))
+                events.append(EffectExpired(target=combatant, effect=name, category=EffectCategory.BATTLE))
         return events
 
     def _check_death(self, combatant: Combatant) -> list[BattleEvent]:
