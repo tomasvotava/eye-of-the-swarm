@@ -8,6 +8,7 @@ from eye.gui.narration import (
     NarrationQueue,
     NarrationTrigger,
     NarrationTriggers,
+    RecurringNarration,
     _fitted_font,
     _wrapped_lines,
     draw_narration,
@@ -194,10 +195,12 @@ def test_persisted_seen_reflects_a_fired_trigger() -> None:
     assert triggers.persisted_seen == frozenset({NarrationTrigger.FIRST_DEATH})
 
 
-def test_persisted_seen_excludes_first_seed_ready() -> None:
+def test_persisted_seen_never_holds_a_recurring_announcement() -> None:
     triggers = NarrationTriggers()
 
-    triggers.fire(NarrationTrigger.FIRST_SEED_READY, _MESSAGE, _SUBTITLE)
+    triggers.announce_recurring(
+        RecurringNarration.SEED_READY, armed=True, level=True, message=_MESSAGE, subtitle=_SUBTITLE
+    )
 
     assert triggers.persisted_seen == frozenset()
 
@@ -210,12 +213,57 @@ def test_for_generation_pre_seeds_persisted_triggers_as_already_seen() -> None:
     assert triggers.queue.is_active is False
 
 
-def test_for_generation_never_pre_seeds_first_seed_ready_even_if_passed_in() -> None:
-    triggers = NarrationTriggers.for_generation({NarrationTrigger.FIRST_SEED_READY})
+def test_announce_recurring_enqueues_once_per_rise_of_its_level() -> None:
+    triggers = NarrationTriggers()
 
-    triggers.fire(NarrationTrigger.FIRST_SEED_READY, _MESSAGE, _SUBTITLE)
+    for _ in range(3):
+        triggers.announce_recurring(
+            RecurringNarration.TOO_FAR_FROM_HOME, armed=True, level=True, message=_MESSAGE, subtitle=_SUBTITLE
+        )
 
-    assert triggers.queue.is_active is True
+    assert triggers.queue.current == NarrationEntry(message=_MESSAGE, subtitle=_SUBTITLE)
+    triggers.queue.dismiss()
+    assert triggers.queue.is_active is False
+
+
+def test_announce_recurring_re_fires_after_its_level_falls() -> None:
+    triggers = NarrationTriggers()
+    beat = RecurringNarration.TOO_FAR_FROM_HOME
+    triggers.announce_recurring(beat, armed=True, level=True, message="first", subtitle="a")
+    triggers.queue.dismiss()
+
+    triggers.announce_recurring(beat, armed=False, level=False, message="first", subtitle="a")
+    triggers.announce_recurring(beat, armed=True, level=True, message="second", subtitle="b")
+
+    assert triggers.queue.current == NarrationEntry(message="second", subtitle="b")
+
+
+def test_announce_recurring_neither_fires_nor_unlatches_while_disarmed_at_level() -> None:
+    triggers = NarrationTriggers()
+    beat = RecurringNarration.SEED_READY
+
+    triggers.announce_recurring(beat, armed=False, level=True, message=_MESSAGE, subtitle=_SUBTITLE)
+    assert triggers.queue.is_active is False
+
+    triggers.announce_recurring(beat, armed=True, level=True, message=_MESSAGE, subtitle=_SUBTITLE)
+    triggers.queue.dismiss()
+    triggers.announce_recurring(beat, armed=False, level=True, message=_MESSAGE, subtitle=_SUBTITLE)
+    triggers.announce_recurring(beat, armed=True, level=True, message=_MESSAGE, subtitle=_SUBTITLE)
+
+    assert triggers.queue.is_active is False
+
+
+def test_recurring_announcements_latch_independently_of_each_other() -> None:
+    triggers = NarrationTriggers()
+
+    triggers.announce_recurring(RecurringNarration.SEED_READY, armed=True, level=True, message="seed", subtitle="a")
+    triggers.announce_recurring(
+        RecurringNarration.TOO_FAR_FROM_HOME, armed=True, level=True, message="far", subtitle="b"
+    )
+
+    assert triggers.queue.current == NarrationEntry(message="seed", subtitle="a")
+    triggers.queue.dismiss()
+    assert triggers.queue.current == NarrationEntry(message="far", subtitle="b")
 
 
 def test_load_seen_triggers_from_an_empty_store_is_empty() -> None:
@@ -232,6 +280,12 @@ def test_load_seen_triggers_from_a_non_list_payload_is_empty() -> None:
 
 def test_load_seen_triggers_ignores_an_unknown_trigger_name() -> None:
     store = FakeSaveStore(data='["FIRST_DEATH", "SOME_FUTURE_TRIGGER"]')
+
+    assert load_seen_triggers(store) == frozenset({NarrationTrigger.FIRST_DEATH})
+
+
+def test_load_seen_triggers_ignores_retired_recurring_trigger_names() -> None:
+    store = FakeSaveStore(data='["FIRST_DEATH", "FIRST_PROXIMITY_FALLOFF", "FIRST_SEED_READY"]')
 
     assert load_seen_triggers(store) == frozenset({NarrationTrigger.FIRST_DEATH})
 

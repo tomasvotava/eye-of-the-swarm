@@ -28,7 +28,7 @@ from eye.gui.biome import resolve_biome
 from eye.gui.card import Card, card_column_width, draw_card
 from eye.gui.effect_legend import LEGEND_CLOSE_KEYS, LEGEND_HINT, LEGEND_KEY, draw_effect_legend
 from eye.gui.fonts.fonts import GameFont, get_font
-from eye.gui.narration import NarrationTrigger, NarrationTriggers, draw_narration
+from eye.gui.narration import NarrationTrigger, NarrationTriggers, RecurringNarration, draw_narration
 from eye.gui.play_scene import EnterCombat, OpenSettings, PlaySceneTransition
 from eye.gui.props import resolve_prop_sampling
 from eye.gui.tuning import (
@@ -407,7 +407,7 @@ class ExplorationScene:
         if self._narration.queue.is_active:
             self._narration.queue.dismiss()
             # Forwarded only on the dismiss that empties the queue, and never under a card --
-            # FIRST_SEED_READY can fire on a frame where a pickup card is already up (GOTCHAS.md).
+            # the seed-ready alert can fire on a frame where a pickup card is already up (GOTCHAS.md).
             if (
                 not self._narration.queue.is_active
                 and self._card is None
@@ -451,14 +451,14 @@ class ExplorationScene:
         if action is None:
             return None
         if action is ExplorationAction.PLANT_SEED:
-            # The narration check above can raise FIRST_SEED_READY on this very frame, on the same
+            # The narration check above can raise the seed-ready alert on this very frame, on the same
             # press that would otherwise plant -- withhold planting until that prompt has actually
             # been read and dismissed, rather than have the "press P" message outlive its own action.
             if self._can_plant_seed() and not self._narration.queue.is_active:
                 self._handle_plant_seed()
             return None
         if action in _OVERLAY_ACTIONS:
-            # Same same-frame FIRST_SEED_READY race as PLANT_SEED above.
+            # Same same-frame seed-ready race as PLANT_SEED above.
             if self._narration.queue.is_active:
                 return None
             if action is ExplorationAction.OPEN_SETTINGS:
@@ -478,23 +478,25 @@ class ExplorationScene:
         return self._advance_walk(dt)
 
     def _check_narration_triggers(self) -> None:
-        # Level checks, not edge-triggered: safe to call every frame since NarrationTriggers.fire()
-        # is itself a once-per-generation no-op once seen.
-        if self._can_plant_seed():
-            self._narration.fire(
-                NarrationTrigger.FIRST_SEED_READY,
-                "A seed is ready to plant.",
-                "Press P to plant it - it won't strengthen you, only marks this ground for whoever comes after.",
-            )
+        # Latched per seed, not per _can_plant_seed() edge: that flips on every walk and rebuild.
+        self._narration.announce_recurring(
+            RecurringNarration.SEED_READY,
+            armed=self._can_plant_seed(),
+            level=self._generation.is_seed_ready,
+            message="A seed is ready to plant.",
+            subtitle="Press P to plant it - it won't strengthen you, only marks this ground for whoever comes after.",
+        )
         distance = self._generation.distance_to_nearest_matured_turf
         # inf (no turf has matured this generation yet) is excluded: "you've ventured too far" is
         # a lie on a fresh save's first screen, where zero matured turf is the expected baseline.
-        if math.isfinite(distance) and distance >= PROXIMITY_FALLOFF_RANGE:
-            self._narration.fire(
-                NarrationTrigger.FIRST_PROXIMITY_FALLOFF,
-                "You've ventured too far from home.",
-                "Alone here - the swarm's strength doesn't reach this far.",
-            )
+        too_far = math.isfinite(distance) and distance >= PROXIMITY_FALLOFF_RANGE
+        self._narration.announce_recurring(
+            RecurringNarration.TOO_FAR_FROM_HOME,
+            armed=too_far,
+            level=too_far,
+            message="You've ventured too far from home.",
+            subtitle="Alone here - the swarm's strength doesn't reach this far.",
+        )
 
     def _begin_walk(self, phase: _Phase) -> None:
         # No card can be up here: handle_pygame_event returns before writing _pending_action

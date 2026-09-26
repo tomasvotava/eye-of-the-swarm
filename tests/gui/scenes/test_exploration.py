@@ -133,7 +133,7 @@ def _resolve_next_screen(scene: ExplorationScene) -> PlaySceneTransition | None:
     the full `RESOLVED -> WALKING_TO_EXIT -> AT_ENTRY -> WALKING_TO_ENCOUNTER` cycle.
 
     Dismisses any narration active ahead of each press below (e.g. FIRST_EXPLORATION queued at
-    construction, or FIRST_SEED_READY/FIRST_PROXIMITY_FALLOFF raised by the first half-lap's own
+    construction, or a seed-ready/too-far-from-home alert raised by the first half-lap's own
     update() call) -- otherwise that press would just dismiss it instead of walking."""
 
     def _dismiss_any_narration() -> None:
@@ -289,7 +289,7 @@ def test_plant_seed_action_plants_once_the_seed_is_ready() -> None:
     assert generation.is_seed_ready is True
     assert scene._phase is _Phase.RESOLVED
 
-    # The very first press's own update() is what raises FIRST_SEED_READY (the trigger check runs
+    # The very first press's own update() is what raises the seed-ready alert (the trigger check runs
     # before is_seed_ready flips visible to it, one frame behind) -- that press is withheld from
     # planting alongside it.
     _press(scene, pygame.K_p)
@@ -307,7 +307,7 @@ def test_plant_seed_action_plants_once_the_seed_is_ready() -> None:
 
 def test_plant_seed_action_is_withheld_while_a_card_is_up_even_once_narration_is_dismissed() -> None:
     # The screen whose own advance() makes the seed ready is also the one revealing a pickup, so
-    # FIRST_SEED_READY can raise (at rest -- see test_seed_ready_does_not_fire_mid_walk_...) on a
+    # the seed-ready alert can raise (at rest -- see test_seed_ready_does_not_fire_mid_walk_...) on a
     # frame where that pickup's card is already showing.
     scene, generation = _scene([EncounterKind.NOTHING] * (_ADVANCES_TO_READY_SEED - 1) + [EncounterKind.EFFECT_PICKUP])
     for _ in range(_ADVANCES_TO_READY_SEED):
@@ -316,7 +316,7 @@ def test_plant_seed_action_is_withheld_while_a_card_is_up_even_once_narration_is
     assert scene._card is not None
     scene._narration.queue.dismiss()  # FIRST_PICKUP, raised alongside the card
 
-    scene.update(0.016)  # a frame at rest: raises FIRST_SEED_READY, card still up
+    scene.update(0.016)  # a frame at rest: raises the seed-ready alert, card still up
     assert scene._narration.queue.is_active is True
     assert scene._card is not None
 
@@ -448,7 +448,7 @@ def test_open_settings_action_is_withheld_when_narration_rises_on_the_same_frame
 
     _press(scene, pygame.K_ESCAPE)
 
-    # This update() is the one that raises FIRST_SEED_READY -- Settings must not open over it.
+    # This update() is the one that raises the seed-ready alert -- Settings must not open over it.
     assert scene.update(0.016) is None
     assert scene._narration.queue.is_active is True
 
@@ -1484,6 +1484,32 @@ def test_draw_props_samples_the_resolved_pools_the_correct_number_of_times(
     assert choice_calls == expected_total
 
 
+_SEED_READY_MESSAGE = "A seed is ready to plant."
+_TOO_FAR_MESSAGE = "You've ventured too far from home."
+
+
+def _record_narration(monkeypatch: pytest.MonkeyPatch, narration: NarrationTriggers) -> list[str]:
+    """Every message enqueued on `narration` from here on, in order, dismissed or not."""
+    recorded: list[str] = []
+    enqueue = narration.queue.enqueue
+
+    def recording_enqueue(message: str, subtitle: str) -> None:
+        recorded.append(message)
+        enqueue(message, subtitle)
+
+    monkeypatch.setattr(narration.queue, "enqueue", recording_enqueue)
+    return recorded
+
+
+def _override_turf_distance(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
+    """Pins every Generation's `distance_to_nearest_matured_turf` to whatever the returned setter was
+    last given, so a test can move it freely -- including back into range, which a DISTANCE_DISCOUNT
+    pickup at its shipped magnitude of 1 can't do: it only cancels its own screen's step."""
+    current = [math.inf]
+    monkeypatch.setattr(Generation, "distance_to_nearest_matured_turf", property(lambda _: current[0]))
+    return lambda distance: current.__setitem__(0, distance)
+
+
 def _drain_narration(scene: ExplorationScene) -> list[NarrationEntry]:
     """Dismisses every currently queued entry and returns them in order -- FIRST_EXPLORATION queues
     at construction, so a screen's own trigger can land behind it rather than at the front."""
@@ -1544,8 +1570,11 @@ def test_resuming_after_combat_does_not_refire_an_already_seen_trigger() -> None
     assert scene._narration.queue.is_active is False
 
 
-def test_seed_ready_does_not_fire_mid_walk_and_fires_once_the_screen_is_at_rest() -> None:
+def test_seed_ready_does_not_fire_mid_walk_and_fires_once_the_screen_is_at_rest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     scene, generation = _scene([EncounterKind.NOTHING] * _ADVANCES_TO_READY_SEED)
+    announced = _record_narration(monkeypatch, scene._narration)
     assert generation.is_seed_ready is False
 
     for _ in range(_ADVANCES_TO_READY_SEED):
@@ -1555,15 +1584,48 @@ def test_seed_ready_does_not_fire_mid_walk_and_fires_once_the_screen_is_at_rest(
     assert scene._phase is _Phase.RESOLVED
     # The seed became ready while arriving at this screen (AT_ENTRY), not while at rest -- the
     # mid-walk check that saw it must not have fired.
-    assert NarrationTrigger.FIRST_SEED_READY not in scene._narration._seen
+    assert _SEED_READY_MESSAGE not in announced
 
     scene.update(0.016)  # a frame at rest, seed still ready
 
-    assert NarrationTrigger.FIRST_SEED_READY in scene._narration._seen
     assert NarrationEntry(
-        message="A seed is ready to plant.",
+        message=_SEED_READY_MESSAGE,
         subtitle="Press P to plant it - it won't strengthen you, only marks this ground for whoever comes after.",
     ) in _drain_narration(scene)
+
+
+def test_seed_ready_is_not_re_announced_while_walking_on_with_the_seed_unplanted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scene, generation = _scene([EncounterKind.NOTHING] * (_ADVANCES_TO_READY_SEED + 2))
+    announced = _record_narration(monkeypatch, scene._narration)
+
+    for _ in range(_ADVANCES_TO_READY_SEED + 2):
+        _resolve_next_screen(scene)
+        scene.update(0.016)
+
+    assert generation.is_seed_ready is True
+    assert announced.count(_SEED_READY_MESSAGE) == 1
+
+
+def test_seed_ready_is_announced_again_for_a_second_seed_in_the_same_life(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scene, generation = _scene([EncounterKind.NOTHING] * 40)
+    announced = _record_narration(monkeypatch, scene._narration)
+    for _ in range(_ADVANCES_TO_READY_SEED):
+        _resolve_next_screen(scene)
+    scene.update(0.016)  # announces the first seed
+    _drain_narration(scene)
+    _press(scene, pygame.K_p)
+    scene.update(0.016)
+    assert generation.pending_seeds != ()
+
+    while not generation.is_seed_ready:
+        _resolve_next_screen(scene)
+    scene.update(0.016)
+
+    assert announced.count(_SEED_READY_MESSAGE) == 2
 
 
 def test_effect_pickup_fires_first_pickup_narration() -> None:
@@ -1626,7 +1688,7 @@ def test_narration_dismiss_does_not_also_dismiss_the_pickup_card_underneath() ->
     assert scene._card is not None
     assert scene._narration.queue.is_active is False  # already dismissed well before the walk got here
 
-    # Some other trigger (e.g. FIRST_PROXIMITY_FALLOFF, checked every frame independently of the
+    # Some other narration (e.g. the too-far-from-home alert, checked every frame independently of the
     # pickup) becoming active while the card is up must not let a dismiss also clear the card.
     scene._narration.fire(NarrationTrigger.FIRST_DEATH, "msg", "sub")
     assert scene._narration.queue.is_active is True
@@ -1647,39 +1709,95 @@ def test_resource_pickup_does_not_fire_the_buff_debuff_pickup_narration() -> Non
     assert NarrationTrigger.FIRST_PICKUP not in scene._narration._seen
 
 
-def test_proximity_falloff_does_not_fire_when_no_turf_has_matured_yet() -> None:
+def test_too_far_from_home_does_not_fire_when_no_turf_has_matured_yet(monkeypatch: pytest.MonkeyPatch) -> None:
     # inf (no matured turf this generation) trivially satisfies ">= PROXIMITY_FALLOFF_RANGE", but
     # nothing has actually been "ventured" on a fresh save's first screen -- must not fire.
-    scene, generation = _scene([EncounterKind.NOTHING])
+    scene, generation = _scene([EncounterKind.NOTHING] * 3)
+    announced = _record_narration(monkeypatch, scene._narration)
 
-    scene.update(0.016)
+    for _ in range(3):
+        _resolve_next_screen(scene)
+        scene.update(0.016)
 
     assert generation.distance_to_nearest_matured_turf == math.inf
-    assert NarrationTrigger.FIRST_PROXIMITY_FALLOFF not in scene._narration._seen
+    assert _TOO_FAR_MESSAGE not in announced
 
 
-def test_proximity_falloff_does_not_fire_within_range_of_a_matured_turf() -> None:
+def test_too_far_from_home_does_not_fire_within_range_of_a_matured_turf(monkeypatch: pytest.MonkeyPatch) -> None:
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING]), matured_turf_positions=(0,))
     generation = game.start_generation()
     scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=_audio())
+    announced = _record_narration(monkeypatch, scene._narration)
 
     scene.update(0.016)
 
     assert generation.distance_to_nearest_matured_turf < PROXIMITY_FALLOFF_RANGE
-    assert NarrationTrigger.FIRST_PROXIMITY_FALLOFF not in scene._narration._seen
+    assert _TOO_FAR_MESSAGE not in announced
 
 
-def test_proximity_falloff_fires_once_walked_far_enough_past_a_matured_turf() -> None:
-    screens_to_walk = int(PROXIMITY_FALLOFF_RANGE)
+def test_too_far_from_home_fires_once_walked_far_enough_past_a_matured_turf(monkeypatch: pytest.MonkeyPatch) -> None:
+    screens_to_walk = int(PROXIMITY_FALLOFF_RANGE) + 2
     game = Game(ScriptedEncounterRandom([EncounterKind.NOTHING] * screens_to_walk), matured_turf_positions=(0,))
     generation = game.start_generation()
     scene = ExplorationScene.for_new_generation(generation, game, build_placeholder_atlas(), audio=_audio())
+    announced = _record_narration(monkeypatch, scene._narration)
 
     for _ in range(screens_to_walk):
         _resolve_next_screen(scene)
+        scene.update(0.016)
 
     assert generation.distance_to_nearest_matured_turf >= PROXIMITY_FALLOFF_RANGE
-    assert NarrationTrigger.FIRST_PROXIMITY_FALLOFF in scene._narration._seen
+    assert announced.count(_TOO_FAR_MESSAGE) == 1
+
+
+def test_too_far_from_home_fires_again_each_time_the_threshold_is_crossed(monkeypatch: pytest.MonkeyPatch) -> None:
+    scene, _ = _scene([EncounterKind.NOTHING])
+    announced = _record_narration(monkeypatch, scene._narration)
+    set_distance = _override_turf_distance(monkeypatch)
+
+    for distance in (PROXIMITY_FALLOFF_RANGE, PROXIMITY_FALLOFF_RANGE - 1, PROXIMITY_FALLOFF_RANGE + 3):
+        set_distance(distance)
+        scene.update(0.016)
+        _drain_narration(scene)
+
+    assert announced.count(_TOO_FAR_MESSAGE) == 2
+
+
+def test_too_far_from_home_is_not_re_announced_by_a_rebuild_around_a_battle(monkeypatch: pytest.MonkeyPatch) -> None:
+    scene, generation = _scene([EncounterKind.NOTHING])
+    narration = scene._narration
+    announced = _record_narration(monkeypatch, narration)
+    _override_turf_distance(monkeypatch)(PROXIMITY_FALLOFF_RANGE + 1)
+    scene.update(0.016)
+    _drain_narration(scene)
+
+    resumed = ExplorationScene.resuming_after_combat(
+        generation, scene._game, build_placeholder_atlas(), narration=narration, audio=_audio()
+    )
+    resumed.update(0.016)
+
+    assert announced.count(_TOO_FAR_MESSAGE) == 1
+    assert narration.queue.is_active is False
+
+
+def test_too_far_from_home_is_announced_once_on_the_first_frame_with_fresh_narration_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A fresh NarrationTriggers starts unlatched, so a scene built already beyond range announces
+    # it straight away rather than waiting for a crossing it can't see.
+    scene, generation = _scene([EncounterKind.NOTHING])
+    _override_turf_distance(monkeypatch)(PROXIMITY_FALLOFF_RANGE + 1)
+    narration = NarrationTriggers()
+    announced = _record_narration(monkeypatch, narration)
+    resumed = ExplorationScene.resuming_after_combat(
+        generation, scene._game, build_placeholder_atlas(), narration=narration, audio=_audio()
+    )
+
+    resumed.update(0.016)
+    _drain_narration(resumed)
+    resumed.update(0.016)
+
+    assert announced == [_TOO_FAR_MESSAGE]
 
 
 def test_narration_dismiss_withholds_a_mid_sequence_advance_but_not_the_last() -> None:

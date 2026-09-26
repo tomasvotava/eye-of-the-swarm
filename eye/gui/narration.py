@@ -4,12 +4,12 @@ involvement, no rendering commitment beyond `draw_narration` below. Whoever hold
 feeding it `dismiss()` from its own `handle_pygame_event`; this module makes no assumption about
 which input counts as "continue".
 
-NarrationTrigger/NarrationTriggers add the bookkeeping on top: which of the 9 scripted moments
-have already been shown, so a scene can ask to fire one unconditionally and get a silent no-op if
-it already has. 8 of the 9 are first-playthrough beats, remembered for a save file forever via
+NarrationTrigger/NarrationTriggers add the bookkeeping on top: which of the 7 first-playthrough
+moments have already been shown, so a scene can ask to fire one unconditionally and get a silent
+no-op if it already has. They are remembered for a save file forever via
 `load_seen_triggers`/`persist_seen_triggers` (GameDriver owns calling these, at the same
-checkpoints it already persists the rest of the save); FIRST_SEED_READY is a standing reminder
-instead, deliberately excluded so it re-shows every generation.
+checkpoints it already persists the rest of the save). RecurringNarration covers the alerts that
+are announced again every time their condition comes back, never persisted.
 """
 
 from __future__ import annotations
@@ -73,44 +73,46 @@ class NarrationQueue:
 
 
 class NarrationTrigger(Enum):
-    """The 9 scripted moments a scene can narrate (PROJECT_BRIEF.md §9.8) -- one member per
-    trigger point, independent of which scene ends up firing it. FIRST_SEED_READY is a per-life
-    reminder; the other 8 are first-playthrough beats, shown once for a save file's whole
-    lifetime (see `_PERSISTED_TRIGGERS`)."""
+    """The 7 first-playthrough moments a scene can narrate (PROJECT_BRIEF.md §9.8) -- one member
+    per trigger point, independent of which scene ends up firing it, each shown once for a save
+    file's whole lifetime."""
 
     INTRO_LORE = auto()
     FIRST_EXPLORATION = auto()
-    FIRST_SEED_READY = auto()
     FIRST_PICKUP = auto()
     FIRST_BATTLE = auto()
     FIRST_ATTACK = auto()
     FIRST_METER_FULL = auto()
     FIRST_DEATH = auto()
-    FIRST_PROXIMITY_FALLOFF = auto()
 
 
-# Every trigger except FIRST_SEED_READY: that one is a standing "here's how you plant" reminder,
-# not a once-ever story beat, so it must re-fire every generation regardless of save-file history.
-_PERSISTED_TRIGGERS = frozenset(NarrationTrigger) - {NarrationTrigger.FIRST_SEED_READY}
+class RecurringNarration(Enum):
+    """Alerts announced each time their condition comes true (PROJECT_BRIEF.md §9.8), via
+    `NarrationTriggers.announce_recurring`. Never persisted to a save file."""
+
+    TOO_FAR_FROM_HOME = auto()
+    SEED_READY = auto()
 
 
 @dataclass(slots=True)
 class NarrationTriggers:
-    """Owns a `NarrationQueue` plus which `NarrationTrigger`s have already fired this generation.
-    One instance is shared by `GameDriver` across every scene reconstruction in a generation's
-    lifetime (a fresh `Generation` gets a fresh instance, via `for_generation()`), so `fire()` is a
-    no-op the second time a trigger is asked for -- callers need not track "have I already shown
-    this" themselves."""
+    """Owns a `NarrationQueue` plus which `NarrationTrigger`s have already fired and which
+    `RecurringNarration`s are currently latched. One instance is shared by `GameDriver` across
+    every scene reconstruction in a generation's lifetime (a fresh `Generation` gets a fresh
+    instance, via `for_generation()`), so `fire()` is a no-op the second time a trigger is asked
+    for, and a rebuilt scene doesn't re-announce a recurring alert whose condition still holds --
+    callers need not track "have I already shown this" themselves."""
 
     queue: NarrationQueue = field(default_factory=NarrationQueue)
     _seen: set[NarrationTrigger] = field(default_factory=set)
+    _latched: set[RecurringNarration] = field(default_factory=set)
 
     @classmethod
     def for_generation(cls, persisted_seen: Iterable[NarrationTrigger] = ()) -> NarrationTriggers:
         """A fresh generation's triggers, pre-seeded with whichever first-playthrough triggers
-        this save file has already shown (`load_seen_triggers`). Filters to `_PERSISTED_TRIGGERS`
-        even if `persisted_seen` carries FIRST_SEED_READY -- that one always starts unseen."""
-        return cls(_seen=set(persisted_seen) & _PERSISTED_TRIGGERS)
+        this save file has already shown (`load_seen_triggers`), and every recurring alert
+        unlatched."""
+        return cls(_seen=set(persisted_seen))
 
     def fire(self, trigger: NarrationTrigger, message: str, subtitle: str) -> None:
         self.fire_sequence(trigger, [(message, subtitle)])
@@ -125,13 +127,26 @@ class NarrationTriggers:
         for message, subtitle in entries:
             self.queue.enqueue(message, subtitle)
 
+    def announce_recurring(
+        self, beat: RecurringNarration, *, armed: bool, level: bool, message: str, subtitle: str
+    ) -> None:
+        """Enqueue `beat` once per rise of its condition; safe to call every frame. `level` is
+        whether the condition holds: while it's false, `beat` unlatches so its next rise announces
+        again. `armed` is whether announcing is allowed right now (it implies `level`); a disarmed
+        frame with `level` still true neither announces nor unlatches."""
+        if not level:
+            self._latched.discard(beat)
+            return
+        if armed and beat not in self._latched:
+            self._latched.add(beat)
+            self.queue.enqueue(message, subtitle)
+
     @property
     def persisted_seen(self) -> frozenset[NarrationTrigger]:
-        """The subset of this generation's `_seen` triggers a save file should remember forever.
-        GameDriver folds this into its own running set and writes it out via
-        `persist_seen_triggers` at the same checkpoints it already persists the rest of the save.
-        """
-        return frozenset(self._seen) & _PERSISTED_TRIGGERS
+        """This generation's `_seen` triggers, which a save file remembers forever. GameDriver folds
+        this into its own running set and writes it out via `persist_seen_triggers` at the same
+        checkpoints it already persists the rest of the save."""
+        return frozenset(self._seen)
 
 
 def load_seen_triggers(store: SaveStore) -> frozenset[NarrationTrigger]:
