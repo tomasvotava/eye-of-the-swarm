@@ -232,6 +232,8 @@ def _build_both_sides_hold_wilty_and_adrenaline_simultaneously() -> _Scenario:
         assert sorted(revive.combatant.name for revive in revives) == ["Enemy", "Player"]
         deaths = [e for e in events if isinstance(e, Death)]
         assert len(deaths) == 3  # each side's Wilty death, then the enemy's real one
+        for combatant in (player, enemy):
+            assert EffectExpired(target=combatant, effect=EffectName.WILTY, category=EffectCategory.BATTLE) in events
         assert player.effects.has(EffectName.ADRENALINE) is False
         assert enemy.effects.has(EffectName.ADRENALINE) is False
 
