@@ -66,6 +66,7 @@ class EffectApplied:
 class EffectExpired:
     target: Combatant
     effect: EffectName
+    category: EffectCategory
 
 
 @dataclass(frozen=True, slots=True)
