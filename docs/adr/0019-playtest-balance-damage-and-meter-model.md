@@ -45,8 +45,8 @@ Playtesting after Epic #253 surfaced three problems that are properties of the c
   `crit_chance > 0`. `HitLanded` gains `is_critical: bool` so the GUI can call it out.
 - **`resolve_hit` stays deterministic.** It takes `damage_multiplier: float = 1.0` (spread × crit
   combined) instead of drawing anything itself; `Battle` does the drawing. `GreedyAI` scores
-  with the default 1.0, so the enemy ranks actions on unvaried, non-critical damage and never
-  consumes the battle's RNG. Its "wins the fight" bonus (§5.7) is therefore judged on the
+  with the default 1.0, so the enemy ranks actions on unvaried, non-critical damage and makes
+  no draw for scoring; its only draw stays the existing weighted pick. Its "wins the fight" bonus (§5.7) is therefore judged on the
   average hit — a slightly conservative AI, accepted.
 - **What varies and what doesn't.** Recoil and Spiky Skin reflection derive from the final
   hit damage, so they vary with it (a player crit also costs more recoil). Toxicity and
