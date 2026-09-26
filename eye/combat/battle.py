@@ -23,6 +23,7 @@ from eye.combat.events import (
     Revive,
     SelfDamageTaken,
     TurnSkipped,
+    Wilted,
 )
 from eye.combat.stats import Combatant
 from eye.combat.tuning import (
@@ -148,6 +149,7 @@ class Battle:
         if actor.effects.has(EffectName.WILTY) and self._roll(WILTY_TRIGGER_CHANCE):
             wilty_fired = True
             actor.current_hp = 0
+            events.append(Wilted(combatant=actor))
             death_events, _ = self._handle_potential_death(actor)
             events.extend(death_events)
 

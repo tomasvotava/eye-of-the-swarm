@@ -20,6 +20,7 @@ from eye.combat.events import (
     Revive,
     SelfDamageTaken,
     TurnSkipped,
+    Wilted,
 )
 from eye.combat.stats import Combatant
 from eye.exploration.events import (
@@ -59,6 +60,8 @@ def _render_event(console: Console, event: SessionEvent) -> None:
             console.print(f"You plant a seed at screen {position}.")
         case Death(combatant=combatant):
             console.print(f"{combatant.name} falls.")
+        case Wilted(combatant=combatant):
+            console.print(f"{combatant.name} wilts away.")
         case Revive(combatant=combatant, revived_hp=revived_hp):
             console.print(f"{combatant.name} revives with {revived_hp} HP!")
         case TurnSkipped(combatant=combatant):
