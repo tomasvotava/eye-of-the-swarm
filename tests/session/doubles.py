@@ -46,7 +46,10 @@ class ScriptedEncounterRandom(random.Random):
     strain_queue and resource_queue are optional: most scenarios don't care which of
     ENCOUNTERABLE_STRAINS they face or which ResourceKind a pickup rolls, and can leave either
     unscripted (falls through to the seeded real random.Random). A scenario that needs a specific
-    one passes it by name instead of hand-picking a seed that happens to produce it."""
+    one passes it by name instead of hand-picking a seed that happens to produce it.
+
+    unvaried_damage pins Battle's damage-spread draw (a uniform() over bounds symmetric around 1.0)
+    to its midpoint, so every hit lands at its unvaried damage; any other uniform() stays random."""
 
     def __init__(
         self,
@@ -54,8 +57,11 @@ class ScriptedEncounterRandom(random.Random):
         strain_queue: Sequence[Strain] = (),
         resource_queue: Sequence[ResourceKind] = (),
         seed: int = 0,
+        *,
+        unvaried_damage: bool = False,
     ) -> None:
         super().__init__(seed)
+        self._unvaried_damage = unvaried_damage
         self._kind_queue = list(kind_queue)
         self._strain_queue = list(strain_queue)
         self._resource_queue = list(resource_queue)
@@ -79,6 +85,11 @@ class ScriptedEncounterRandom(random.Random):
             kind = self._kind_queue.pop(0)
             return [kind]  # type: ignore[list-item]
         return super().choices(population, weights, cum_weights=cum_weights, k=k)
+
+    def uniform(self, a: float, b: float) -> float:
+        if self._unvaried_damage and a + b == 2:
+            return 1.0
+        return super().uniform(a, b)
 
     def choice(self, seq: Sequence[_T]) -> _T:  # type: ignore[override]
         if self._strain_scripting_enabled and seq and isinstance(seq[0], Strain):

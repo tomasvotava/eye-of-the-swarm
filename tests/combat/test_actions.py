@@ -179,3 +179,45 @@ def test_inflicted_effect_resolves_self_and_opponent_to_concrete_combatants() ->
         (EffectName.WILTY, attacker),
         (EffectName.ADRENALINE, defender),
     )
+
+
+def test_damage_multiplier_applies_before_rounding() -> None:
+    attacker = _combatant("Sporeling", attack=10, defense=3)
+    defender = _combatant("Grub", attack=4, defense=5)
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    outcome = resolve_hit(attacker, defender, action, distance_from_turf=0.0, damage_multiplier=1.3)
+
+    assert outcome.damage_to_defender == 15  # 11.25 * 1.3 = 14.625; rounding first would give 11 * 1.3 -> 14
+
+
+def test_damage_multiplier_cannot_push_a_hit_below_one() -> None:
+    attacker = _combatant("Sporeling", attack=10, defense=3)
+    defender = _combatant("Grub", attack=4, defense=5)
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    outcome = resolve_hit(attacker, defender, action, distance_from_turf=0.0, damage_multiplier=0.01)
+
+    assert outcome.damage_to_defender == 1
+
+
+def test_recoil_derives_from_the_multiplied_damage() -> None:
+    attacker = _combatant("Sporeling", attack=15, defense=3, recoil=0.25)
+    defender = _combatant("Grub", attack=4, defense=5)
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    outcome = resolve_hit(attacker, defender, action, distance_from_turf=0.0, damage_multiplier=1.2)
+
+    assert outcome.damage_to_defender == 19  # P = 20: 400 / 25 * 1.2 = 19.2
+    assert outcome.recoil_to_attacker == 5  # 19 * 0.25 = 4.75; the unvaried 16 would give 4
+
+
+def test_damage_multiplier_defaults_to_one() -> None:
+    attacker = _combatant("Sporeling", attack=10, defense=3)
+    defender = _combatant("Grub", attack=4, defense=5)
+    action = ActionDefinition(kind=ActionKind.STRUGGLE)
+
+    default = resolve_hit(attacker, defender, action, distance_from_turf=0.0)
+    explicit = resolve_hit(attacker, defender, action, distance_from_turf=0.0, damage_multiplier=1.0)
+
+    assert default == explicit
