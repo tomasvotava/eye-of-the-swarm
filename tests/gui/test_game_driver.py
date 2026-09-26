@@ -12,7 +12,7 @@ from eye.exploration.encounters import EncounterKind
 from eye.gui.assets import build_placeholder_atlas
 from eye.gui.audio import AudioManager, SoundKey
 from eye.gui.game_driver import GameDriver
-from eye.gui.narration import NarrationTrigger
+from eye.gui.narration import NarrationTrigger, RecurringNarration
 from eye.gui.scenes.combat import ACTION_KEYS, CombatScene
 from eye.gui.scenes.exploration import ExplorationScene
 from eye.gui.scenes.settings import SettingsScene
@@ -340,15 +340,22 @@ def test_a_persisted_trigger_does_not_re_fire_in_a_later_generation() -> None:
     assert NarrationTrigger.FIRST_DEATH in driver._narration._seen
 
 
-def test_first_seed_ready_still_re_fires_every_generation_even_once_persisted() -> None:
+def test_a_new_generation_starts_with_every_recurring_announcement_unlatched() -> None:
     driver = _driver()
-    driver._narration.fire(NarrationTrigger.FIRST_SEED_READY, "msg", "sub")
+    driver._narration.announce_recurring(
+        RecurringNarration.SEED_READY, armed=True, level=True, message="m", subtitle="s"
+    )
     driver._persist()
 
     driver._game._current_generation = None  # let a second start_generation() through, mirroring _driver_with
     driver._scene = driver._start_new_generation()
+    while driver._narration.queue.is_active:
+        driver._narration.queue.dismiss()
+    driver._narration.announce_recurring(
+        RecurringNarration.SEED_READY, armed=True, level=True, message="m", subtitle="s"
+    )
 
-    assert NarrationTrigger.FIRST_SEED_READY not in driver._narration._seen
+    assert driver._narration.queue.is_active is True
 
 
 def test_a_persisted_trigger_survives_a_fresh_game_driver_instance() -> None:

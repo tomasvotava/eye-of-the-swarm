@@ -198,19 +198,19 @@ rather than patching it inline.
 
 ## 2026-09-14 - No matured turf means `distance_to_nearest_matured_turf` is `inf`, not "close"
 
-`FIRST_PROXIMITY_FALLOFF`/`FIRST_METER_FULL` narration cannot fire during a generation that has no
-matured turf yet -- including every brand-new save's entire first life -- and that is correct, not
-a bug to "fix" by loosening the guard back up.
+`RecurringNarration.TOO_FAR_FROM_HOME`/`FIRST_METER_FULL` narration cannot fire during a
+generation that has no matured turf yet -- including every brand-new save's entire first life --
+and that is correct, not a bug to "fix" by loosening the guard back up.
 
 `ExplorationRun.distance_to_nearest_matured_turf` returns `math.inf` when `_matured_turfs` is empty
 (no turf has matured this generation). `meter_fill_scale(inf, ...)` is `0.0`, so the player's
 meter-fill rate is genuinely scaled to zero for that whole life -- the meter can never reach
-capacity, so `FIRST_METER_FULL` never has a real occasion to fire. `FIRST_PROXIMITY_FALLOFF`
-excludes the `inf` case on purpose (`math.isfinite(distance)` in `exploration.py`) because "you've
-ventured too far from home" is a lie on turn one, before the player has taken a step -- re-including
-`inf` reintroduces that exact bug.
+capacity, so `FIRST_METER_FULL` never has a real occasion to fire. `TOO_FAR_FROM_HOME` excludes
+the `inf` case on purpose (`math.isfinite(distance)` in `exploration.py`) because "you've ventured
+too far from home" is a lie on turn one, before the player has taken a step -- re-including `inf`
+reintroduces that exact bug.
 
-Both triggers work as intended from generation 2 onward, once a real matured turf gives a finite
+Both work as intended from generation 2 onward, once a real matured turf gives a finite
 distance to walk away from.
 
 ## 2026-09-14 - Hiding an announcement behind narration isn't the same as pausing it
@@ -238,10 +238,10 @@ forwards a dismissed press's action into `_pending_action` -- but only when `sel
 Dropping that half of the guard still passes the entire suite; nothing else catches it.
 
 `_check_narration_triggers()` runs unconditionally every `update()`, regardless of `self._card`.
-`FIRST_SEED_READY` is level-checked (`_can_plant_seed()`), not edge-triggered, so it can raise on
-the very frame a screen's own pickup card is already showing (the advance that makes the seed
-ready is also the advance that reveals the pickup). Forwarding the action there would plant the
-seed while the card still stands, bypassing the card gate entirely.
+`RecurringNarration.SEED_READY` is armed by `_can_plant_seed()`, which first holds on the frame at
+rest after the walk, so it can raise while that screen's own pickup card is already showing (the
+advance that makes the seed ready is also the advance that reveals the pickup). Forwarding the
+action there would plant the seed while the card still stands, bypassing the card gate entirely.
 
 Any future "dismiss-and-act" forwarding needs its own `self._card is None` check, not just "queue
 now empty" -- and needs a test that actually reaches card-up-plus-narration-active, not just one

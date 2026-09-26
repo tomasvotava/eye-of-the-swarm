@@ -125,7 +125,7 @@ class GameDriver:
 
     def _start_new_generation(self) -> ExplorationScene:
         self._generation = self._game.start_generation()
-        # A fresh life re-sees FIRST_SEED_READY (a standing reminder) but not this save file's
+        # A fresh life starts with every recurring alert unlatched but keeps this save file's
         # already-shown first-playthrough beats -- a new instance, not a cleared old one, since
         # ExplorationScene/CombatScene hold a reference to it too.
         self._narration = NarrationTriggers.for_generation(self._narration_seen)
