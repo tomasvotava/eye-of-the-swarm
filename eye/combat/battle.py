@@ -1,3 +1,4 @@
+import math
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -331,7 +332,7 @@ class Battle:
         )
 
         if outcome.damage_to_defender > 0 and opponent.effects.has(EffectName.SPIKY_SKIN):
-            reflected = round(outcome.damage_to_defender * SPIKY_SKIN_REFLECT_RATIO)
+            reflected = math.ceil(outcome.damage_to_defender * SPIKY_SKIN_REFLECT_RATIO)
             actor.current_hp -= reflected
             events.append(
                 HitReflected(source=opponent, target=actor, damage=reflected, target_hp_after=actor.current_hp)
