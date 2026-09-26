@@ -206,6 +206,13 @@ def _describe_event(event: BattleEvent, player: Combatant) -> str:
             assert_never(event)
 
 
+def _wilted_narration(combatant: Combatant, player: Combatant) -> tuple[str, str]:
+    """The narration entry (message, subtitle) announcing that a Wilty roll killed `combatant`."""
+    if combatant is player:
+        return "You wilted away.", "Wilty's rot took you - no blow was struck."
+    return f"The {combatant.name} wilted away.", "Wilty's rot claimed it - no blow was struck."
+
+
 def _turn_title(combatant: Combatant) -> str:
     if combatant.is_player:
         return "Your turn"
@@ -730,10 +737,12 @@ class CombatScene:
         self._current_phases = deque(self._phases_for(event))
 
     def _fire_narration_for(self, event: BattleEvent) -> None:
-        # Player-initiated only (eye.combat.events' own source/target naming) -- an enemy's
-        # HitLanded, MeterFilled or Death says nothing about a mechanic the player has personally
-        # met yet.
+        # The first-playthrough triggers are player-initiated only -- an enemy's HitLanded,
+        # MeterFilled or Death says nothing about a mechanic the player has personally met yet.
         match event:
+            case Wilted(combatant=combatant):
+                # Every time and for either side: nothing else on screen explains a Wilty death.
+                self._narration.queue.enqueue(*_wilted_narration(combatant, self._battle.player))
             case HitLanded(source=source) if source is self._battle.player:
                 self._narration.fire(
                     NarrationTrigger.FIRST_ATTACK,
