@@ -26,6 +26,11 @@ dev = [
 strict = true
 python_version = "3.12"
 
+# Written only for the duration of a build (Makefile `STAMP_VERSION`).
+[[tool.mypy.overrides]]
+module = "eye._version"
+ignore_missing_imports = true
+
 [tool.ruff]
 target-version = "py312"
 line-length = 120

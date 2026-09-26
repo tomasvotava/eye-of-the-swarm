@@ -22,14 +22,14 @@ def _press(scene: TitleScene, key: int) -> None:
 
 def test_update_returns_none_without_a_dismiss_key() -> None:
     next_scene = _StubScene()
-    scene = TitleScene(next_scene)
+    scene = TitleScene(next_scene, "1.2.3")
 
     assert scene.update(0.016) is None
 
 
 def test_enter_transitions_to_the_next_scene() -> None:
     next_scene = _StubScene()
-    scene = TitleScene(next_scene)
+    scene = TitleScene(next_scene, "1.2.3")
 
     _press(scene, pygame.K_RETURN)
 
@@ -41,7 +41,7 @@ def test_other_keys_do_not_dismiss(key: int) -> None:
     # Regression: a plain "any KEYDOWN" dismiss also fired from an OS/window-manager fullscreen
     # toggle, skipping the title screen before the player pressed anything themselves (GOTCHAS.md).
     next_scene = _StubScene()
-    scene = TitleScene(next_scene)
+    scene = TitleScene(next_scene, "1.2.3")
 
     _press(scene, key)
 
@@ -50,7 +50,7 @@ def test_other_keys_do_not_dismiss(key: int) -> None:
 
 def test_non_keydown_events_are_ignored() -> None:
     next_scene = _StubScene()
-    scene = TitleScene(next_scene)
+    scene = TitleScene(next_scene, "1.2.3")
 
     scene.handle_pygame_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_a))
 
@@ -58,7 +58,8 @@ def test_non_keydown_events_are_ignored() -> None:
 
 
 @pytest.mark.parametrize("surface_size", [(64, 64), (800, 600)])
-def test_draw_does_not_raise(surface_size: tuple[int, int]) -> None:
-    scene = TitleScene(_StubScene())
+@pytest.mark.parametrize("version", ["1.2.3", None])
+def test_draw_does_not_raise(surface_size: tuple[int, int], version: str | None) -> None:
+    scene = TitleScene(_StubScene(), version)
 
     scene.draw(pygame.Surface(surface_size))

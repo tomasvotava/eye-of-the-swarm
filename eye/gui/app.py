@@ -26,6 +26,7 @@ from eye.gui.scenes.menu import MenuScene
 from eye.gui.scenes.title import TitleScene
 from eye.gui.window import apply_window_scale, desktop_window_scales, effective_window_scale
 from eye.persistence import save
+from eye.version import game_version
 
 _WINDOW_SIZE = (640, 480)
 _MAX_FPS = 60
@@ -82,7 +83,7 @@ def _initial_scene(rng: random.Random, audio: AudioManager, dev_asset_viewer: bo
     atlas = build_art_atlas(_SPRITES_DIR)
     if dev_asset_viewer:
         return DevAssetViewerScene(atlas)
-    return TitleScene(MenuScene(atlas, rng, audio))
+    return TitleScene(MenuScene(atlas, rng, audio), game_version())
 
 
 async def run() -> None:

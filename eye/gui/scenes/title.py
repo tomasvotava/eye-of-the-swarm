@@ -15,14 +15,17 @@ _FOOTER_FONT_SIZE = 16
 _TEXT_COLOR: pygame.typing.ColorLike = "white"
 _TITLE_CENTER_Y_FRACTION = 0.45
 _FOOTER_BOTTOM_MARGIN = 24
+_VERSION_FONT_SIZE = 14
+_VERSION_MARGIN = 8
 
 _TITLE = "The Eye of the Swarm"
 _FOOTER = "Press Enter to continue"
 
 
 class TitleScene:
-    def __init__(self, next_scene: Scene) -> None:
+    def __init__(self, next_scene: Scene, version: str | None) -> None:
         self._next_scene = next_scene
+        self._version_label = f"v{version}" if version is not None else "dev"
         self._dismissed = False
 
     def handle_pygame_event(self, pygame_event: pygame.event.Event) -> None:
@@ -52,3 +55,7 @@ class TitleScene:
             footer,
             (surface.get_width() // 2 - footer.get_width() // 2, surface.get_height() - _FOOTER_BOTTOM_MARGIN),
         )
+
+        version_font = get_font(GameFont.ITHACA, _VERSION_FONT_SIZE)
+        version = version_font.render(self._version_label, True, _TEXT_COLOR)
+        surface.blit(version, (surface.get_width() - version.get_width() - _VERSION_MARGIN, _VERSION_MARGIN))
