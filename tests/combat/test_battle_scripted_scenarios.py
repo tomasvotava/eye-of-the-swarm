@@ -14,6 +14,7 @@ from eye.combat.events import (
     BattleEvent,
     Death,
     EffectApplied,
+    EffectExpired,
     ExtraActionTriggered,
     HitLanded,
     HitReflected,
@@ -21,7 +22,7 @@ from eye.combat.events import (
     TurnSkipped,
 )
 from eye.combat.stats import Combatant, Stats
-from eye.combat.tuning import MAX_EXTRA_ACTIONS_PER_TURN
+from eye.combat.tuning import ADRENALINE_REVIVE_HP, MAX_EXTRA_ACTIONS_PER_TURN
 from tests.combat.support import unfold
 
 
@@ -105,7 +106,9 @@ def _build_adrenaline_inflicted_mid_battle_then_revives() -> _Scenario:
 
     def check(battle: Battle, events: list[BattleEvent]) -> None:
         assert battle.winner is player
-        assert [e for e in events if isinstance(e, Revive)] == [Revive(combatant=enemy, revived_hp=1)]
+        assert [e for e in events if isinstance(e, Revive)] == [
+            Revive(combatant=enemy, revived_hp=ADRENALINE_REVIVE_HP)
+        ]
         adrenaline_applied = [e for e in events if isinstance(e, EffectApplied) and e.effect is EffectName.ADRENALINE]
         assert len(adrenaline_applied) == 1
         assert adrenaline_applied[0].target is enemy
@@ -114,19 +117,18 @@ def _build_adrenaline_inflicted_mid_battle_then_revives() -> _Scenario:
     return _Scenario(battle=battle, pick_action=pick_action, check=check)
 
 
-def _build_player_wilty_and_adrenaline_cascade_then_real_death() -> _Scenario:
-    """Player holds Wilty+Adrenaline from the start; the Wilty roll is forced to succeed on every
-    eligible turn so the death->revive cascade, and the later real death once Adrenaline is spent,
-    are both deterministic rather than left to a lucky/unlucky roll."""
-    player = _combatant("Player", attack=15, defense=50, available_actions=(STRUGGLE_ACTION,))
+def _build_player_wilty_revive_clears_wilty_then_real_death() -> _Scenario:
+    """Player holds Wilty+Adrenaline from the start; the forced Wilty roll kills and revives them,
+    the revive clears Wilty so it never rolls again, and the enemy's hits then kill for real."""
+    player = _combatant("Player", attack=15, defense=5, available_actions=(STRUGGLE_ACTION,))
     player.effects.apply(ActiveEffect(EffectName.WILTY, EffectCategory.BATTLE, remaining_turns=None))
     player.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
-    enemy = _combatant("Enemy", attack=0, defense=5, current_hp=1000)
+    enemy = _combatant("Enemy", attack=6, defense=5, current_hp=1000)  # two hits kill a revived player
     battle = Battle(
         player,
         enemy,
-        ScriptedChooser([STRUGGLE_ACTION]),
-        _ScriptedRandom([0.0, 0.0]),  # round 1: player's Wilty fires; round 2: it fires again
+        ScriptedChooser([STRUGGLE_ACTION, STRUGGLE_ACTION]),
+        _ScriptedRandom([0.0]),  # the only Wilty roll; a second one would exhaust the script
         0.0,
     )
 
@@ -137,8 +139,11 @@ def _build_player_wilty_and_adrenaline_cascade_then_real_death() -> _Scenario:
         assert battle.winner is enemy
         assert events[-1] == BattleEnded(winner=enemy)
         deaths = [e for e in events if isinstance(e, Death) and e.combatant is player]
-        assert len(deaths) == 2  # revived once, then dies for real once Adrenaline is spent
-        assert [e for e in events if isinstance(e, Revive)] == [Revive(combatant=player, revived_hp=1)]
+        assert len(deaths) == 2  # the Wilty death that revives, then the enemy's killing hit
+        assert [e for e in events if isinstance(e, Revive)] == [
+            Revive(combatant=player, revived_hp=ADRENALINE_REVIVE_HP)
+        ]
+        assert EffectExpired(target=player, effect=EffectName.WILTY, category=EffectCategory.BATTLE) in events
         assert player.effects.has(EffectName.ADRENALINE) is False
 
     return _Scenario(battle=battle, pick_action=pick_action, check=check)
@@ -214,7 +219,7 @@ def _build_both_sides_hold_wilty_and_adrenaline_simultaneously() -> _Scenario:
         player,
         enemy,
         ScriptedChooser([STRUGGLE_ACTION]),
-        _ScriptedRandom([0.0, 0.0, 0.0]),  # round 1: both sides' Wilty fires; round 2: player's fires again
+        _ScriptedRandom([0.0, 0.0]),  # round 1: both sides' Wilty fires; each revive clears it
         0.0,
     )
 
@@ -222,11 +227,11 @@ def _build_both_sides_hold_wilty_and_adrenaline_simultaneously() -> _Scenario:
         return STRUGGLE_ACTION
 
     def check(battle: Battle, events: list[BattleEvent]) -> None:
-        assert battle.winner is enemy
+        assert battle.winner is player  # the revived enemy's 10 HP falls to the player's round-2 hit
         revives = [e for e in events if isinstance(e, Revive)]
         assert sorted(revive.combatant.name for revive in revives) == ["Enemy", "Player"]
         deaths = [e for e in events if isinstance(e, Death)]
-        assert len(deaths) == 3  # player revived then dies for real; enemy revived once
+        assert len(deaths) == 3  # each side's Wilty death, then the enemy's real one
         assert player.effects.has(EffectName.ADRENALINE) is False
         assert enemy.effects.has(EffectName.ADRENALINE) is False
 
@@ -259,7 +264,7 @@ def _build_greedy_ai_enemy_drives_a_full_battle_to_completion() -> _Scenario:
 
 SCENARIOS: dict[str, Callable[[], _Scenario]] = {
     "adrenaline_inflicted_mid_battle_then_revives": _build_adrenaline_inflicted_mid_battle_then_revives,
-    "player_wilty_and_adrenaline_cascade_then_real_death": _build_player_wilty_and_adrenaline_cascade_then_real_death,
+    "player_wilty_revive_clears_wilty_then_real_death": _build_player_wilty_revive_clears_wilty_then_real_death,
     "uprooted_chain_reaches_cap_under_clouded_judgement": _build_uprooted_chain_reaches_cap_under_clouded_judgement,
     "vegetative_skip_does_not_spuriously_trigger_spiky_skin": (
         _build_vegetative_skip_does_not_spuriously_trigger_spiky_skin
