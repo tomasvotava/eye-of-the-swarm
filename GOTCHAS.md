@@ -340,3 +340,14 @@ The combat scene's `active_effects` is a displayed snapshot (ADR 0013). It drops
 gone by then.
 
 Any domain path that removes an effect emits `EffectExpired` with the removed instance's category.
+
+## 2026-09-26 - `_ScriptedRandom` feeds its scripted rolls into the damage spread
+
+Scripting Wilty or Uprooted rolls on a default `Battle` hands some of those values to hit damage.
+
+`random.Random.uniform` is built on `self.random()`, so a double that overrides `random()` to pop
+scripted values also answers `Battle`'s per-hit spread draw. That shifts every later roll by one.
+Battles built through `Generation` draw from the shared seeded RNG the same way.
+
+A direct test `Battle` passes `damage_spread=0.0` unless it scripts the spread itself. A
+`Generation`-built one that asserts exact damage uses `ScriptedEncounterRandom(unvaried_damage=True)`.

@@ -30,12 +30,14 @@ def _generation(
     stats: Stats | None = None,
     kind_queue: Sequence[EncounterKind] = (),
     strain_queue: Sequence[Strain] = (),
+    *,
+    unvaried_damage: bool = False,
 ) -> Generation:
     return Generation(
         character=character or _character(),
         stats=stats or Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10, recoil=0.0),
         actions=(ActionDefinition(kind=ActionKind.STRUGGLE),),
-        rng=ScriptedEncounterRandom(kind_queue, strain_queue=strain_queue),
+        rng=ScriptedEncounterRandom(kind_queue, strain_queue=strain_queue, unvaried_damage=unvaried_damage),
         starting_screen=0,
         matured_turfs=(),
     )
@@ -52,7 +54,7 @@ def test_advance_forwards_exploration_events_untouched_when_nothing_happens() ->
 
 
 def test_enemy_encounter_resolves_a_battle_against_the_bestiary_profile() -> None:
-    generation = _generation(kind_queue=[EncounterKind.ENEMY], strain_queue=[Strain.GOLEM])
+    generation = _generation(kind_queue=[EncounterKind.ENEMY], strain_queue=[Strain.GOLEM], unvaried_damage=True)
 
     events = advance_flat(generation)
 
@@ -99,7 +101,11 @@ def test_character_lifespan_effects_apply_to_the_player_combatant_in_battle() ->
     character.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.LIFESPAN, None))
     stats = Stats(max_hp=100, attack=10, defense=5, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(
-        character=character, stats=stats, kind_queue=[EncounterKind.ENEMY], strain_queue=[Strain.GOLEM]
+        character=character,
+        stats=stats,
+        kind_queue=[EncounterKind.ENEMY],
+        strain_queue=[Strain.GOLEM],
+        unvaried_damage=True,
     )
 
     events = advance_flat(generation)
@@ -258,7 +264,7 @@ def test_finish_battle_raises_for_a_battle_this_generation_did_not_start() -> No
     foreign_stats = Stats(max_hp=1, attack=0, defense=0, meter_capacity=1, meter_fill_rate=1, recoil=0.0)
     foreign_player = Combatant(name="Foreign", base_stats=foreign_stats, current_hp=1)
     foreign_enemy = Combatant(name="ForeignEnemy", base_stats=foreign_stats, current_hp=0)
-    foreign_battle = Battle(foreign_player, foreign_enemy, ScriptedChooser([]), random.Random(), 0.0)
+    foreign_battle = Battle(foreign_player, foreign_enemy, ScriptedChooser([]), random.Random(), 0.0, damage_spread=0.0)
 
     with pytest.raises(RuntimeError):
         generation.finish_battle(foreign_battle)

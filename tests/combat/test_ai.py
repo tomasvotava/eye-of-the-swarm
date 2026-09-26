@@ -104,3 +104,26 @@ def test_greedy_ai_sampling_matches_the_geometric_distribution(t: float) -> None
 
     expected_ratio = 1 / (1 + t)
     assert abs(first_picks / samples - expected_ratio) < 0.05
+
+
+class _CountingRandom(random.Random):
+    def __init__(self, seed: int) -> None:
+        super().__init__(seed)
+        self.draws = 0
+
+    def random(self) -> float:
+        self.draws += 1
+        return super().random()
+
+
+def test_greedy_ai_scoring_draws_nothing_beyond_its_weighted_pick() -> None:
+    actor = _combatant("Enemy", attack=10, defense=5)
+    opponent = _combatant("Player", attack=4, defense=5, current_hp=100)
+    struggle = ActionDefinition(kind=ActionKind.STRUGGLE)
+    swarm = ActionDefinition(kind=ActionKind.SWARM_ATTACK, requires_full_meter=True)
+    rng = _CountingRandom(0)
+    ai = GreedyAI(t=0.5, rng=rng, distance_from_turf=0.0)
+
+    ai.choose(actor, opponent, [struggle, swarm])
+
+    assert rng.draws == 1

@@ -15,15 +15,17 @@ def _game(
     kind_queue: Sequence[EncounterKind] = (),
     matured_turf_positions: Sequence[int] = (),
     strain_queue: Sequence[Strain] = (),
+    *,
+    unvaried_damage: bool = False,
 ) -> Game:
     return Game(
-        rng=ScriptedEncounterRandom(kind_queue, strain_queue=strain_queue),
+        rng=ScriptedEncounterRandom(kind_queue, strain_queue=strain_queue, unvaried_damage=unvaried_damage),
         matured_turf_positions=matured_turf_positions,
     )
 
 
 def test_start_generation_uses_base_player_stats_from_an_empty_skill_tree() -> None:
-    game = _game(kind_queue=[EncounterKind.ENEMY], strain_queue=[Strain.GOLEM])
+    game = _game(kind_queue=[EncounterKind.ENEMY], strain_queue=[Strain.GOLEM], unvaried_damage=True)
     generation = game.start_generation()
 
     events = advance_flat(generation)
