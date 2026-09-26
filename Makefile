@@ -6,11 +6,15 @@ run:
 serve:
 	uv run pygbag .
 
+# Stamped only for the build's duration, so a later `make run` reports `dev`, not a stale version.
+STAMP_VERSION = version="$$(uv version --short)" && printf 'VERSION = "%s"\n' "$$version" > eye/_version.py
+UNSTAMP_VERSION = status=$$?; rm -f eye/_version.py; exit $$status
+
 web-archive:
-	uv run pygbag --archive .
+	$(STAMP_VERSION) && uv run pygbag --archive .; $(UNSTAMP_VERSION)
 
 exe:
-	uv run pyinstaller --noconfirm --distpath dist --workpath build/pyinstaller eye.spec
+	$(STAMP_VERSION) && uv run pyinstaller --noconfirm --distpath dist --workpath build/pyinstaller eye.spec; $(UNSTAMP_VERSION)
 # ditto keeps the .app's symlinks, which its code signature covers; zipfile would copy their targets.
 ifeq ($(shell uname -s),Darwin)
 	ditto -c -k --sequesterRsrc --keepParent "dist/The Eye of the Swarm.app" dist/eye-of-the-swarm-osx.zip

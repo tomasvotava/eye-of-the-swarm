@@ -8,6 +8,7 @@ __pycache__/
 
 /build/
 /dist/
+/eye/_version.py
 # pygbag writes transcoded audio next to the source files.
 *-pygbag.ogg
 
