@@ -5,7 +5,7 @@ from enum import Enum, auto
 
 from eye.combat.actions import ActionDefinition, resolve_hit
 from eye.combat.ai import ActionChooser
-from eye.combat.effects import ActiveEffect, EffectCategory, EffectName
+from eye.combat.effects import EFFECT_POLARITY, ActiveEffect, EffectCategory, EffectName, EffectPolarity
 from eye.combat.events import (
     ActionChosen,
     BattleEnded,
@@ -442,19 +442,33 @@ class Battle:
 
     def _revive(self, combatant: Combatant, adrenaline_category: EffectCategory) -> list[BattleEvent]:
         combatant.current_hp = ADRENALINE_REVIVE_HP
+        # Consumed before the clear, so a Battle Adrenaline isn't swept up as a Battle buff.
         combatant.effects.remove(EffectName.ADRENALINE, category=adrenaline_category)
+        events: list[BattleEvent] = [Revive(combatant=combatant, revived_hp=ADRENALINE_REVIVE_HP)]
+        events.extend(self._clear_on_revive(combatant))
         combatant.effects.apply(
             ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, DEFAULT_BATTLE_EFFECT_DURATION_TURNS)
         )
-        return [
-            Revive(combatant=combatant, revived_hp=ADRENALINE_REVIVE_HP),
+        events.append(
             EffectApplied(
                 target=combatant,
                 effect=EffectName.FIBROUS,
                 category=EffectCategory.BATTLE,
                 remaining_turns=DEFAULT_BATTLE_EFFECT_DURATION_TURNS,
-            ),
-        ]
+            )
+        )
+        return events
+
+    def _clear_on_revive(self, combatant: Combatant) -> list[BattleEvent]:
+        """Removes every debuff and every Battle-scoped buff, keeping Lifespan buffs, in enum order."""
+        events: list[BattleEvent] = []
+        for category in EffectCategory:
+            for name in EffectName:
+                is_cleared = EFFECT_POLARITY[name] is EffectPolarity.DEBUFF or category is EffectCategory.BATTLE
+                if is_cleared and combatant.effects.has(name, category=category):
+                    combatant.effects.remove(name, category=category)
+                    events.append(EffectExpired(target=combatant, effect=name, category=category))
+        return events
 
     def action_availability(self, combatant: Combatant) -> list[ActionAvailability]:
         return [

@@ -34,7 +34,12 @@ from eye.combat.events import (
     TurnSkipped,
 )
 from eye.combat.stats import Combatant, Stats
-from eye.combat.tuning import MAX_EXTRA_ACTIONS_PER_TURN, RESONANCE_METER_PREFILL_RATIO
+from eye.combat.tuning import (
+    ADRENALINE_REVIVE_HP,
+    DEFAULT_BATTLE_EFFECT_DURATION_TURNS,
+    MAX_EXTRA_ACTIONS_PER_TURN,
+    RESONANCE_METER_PREFILL_RATIO,
+)
 from tests.combat.support import unfold
 
 
@@ -164,7 +169,8 @@ def test_wilty_adrenaline_chain_continues_as_an_extra_turn() -> None:
         ),
         MeterFilled(combatant=player, amount=10, meter_after=10),
         Death(combatant=enemy),
-        Revive(combatant=enemy, revived_hp=1),
+        Revive(combatant=enemy, revived_hp=ADRENALINE_REVIVE_HP),
+        EffectExpired(target=enemy, effect=EffectName.WILTY, category=EffectCategory.BATTLE),
         EffectApplied(target=enemy, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE, remaining_turns=3),
         ActionChosen(actor=enemy, action=ActionKind.STRUGGLE, was_swapped_by_clouded_judgement=False),
         HitLanded(
@@ -178,7 +184,7 @@ def test_wilty_adrenaline_chain_continues_as_an_extra_turn() -> None:
         ),
         MeterFilled(combatant=enemy, amount=10, meter_after=10),
     ]
-    assert enemy.current_hp == 1
+    assert enemy.current_hp == ADRENALINE_REVIVE_HP
     assert not enemy.effects.has(EffectName.ADRENALINE)
 
 
@@ -445,8 +451,96 @@ def test_revive_consumes_lifespan_adrenaline_when_no_battle_instance_is_active()
 
     _play_round(battle, STRUGGLE_ACTION)
 
-    assert enemy.current_hp == 1
+    assert enemy.current_hp == ADRENALINE_REVIVE_HP
     assert enemy.effects.has(EffectName.ADRENALINE, category=EffectCategory.LIFESPAN) is False
+
+
+def _revive_enemy_via_wilty(enemy: Combatant) -> list[BattleEvent]:
+    """Forces the enemy's Wilty to fire on its turn and returns the events from Death onwards."""
+    player = _combatant("Player")
+    enemy.effects.apply(ActiveEffect(EffectName.WILTY, EffectCategory.BATTLE, remaining_turns=None))
+    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([0.0]), 0.0)
+    events = _play_round(battle, STRUGGLE_ACTION)
+    death_index = events.index(Death(combatant=enemy))
+    return events[death_index:]
+
+
+def test_revive_restores_the_tuned_revive_hp() -> None:
+    enemy = _combatant("Enemy")
+    enemy.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
+
+    events = _revive_enemy_via_wilty(enemy)
+
+    assert Revive(combatant=enemy, revived_hp=ADRENALINE_REVIVE_HP) in events
+    assert enemy.current_hp == ADRENALINE_REVIVE_HP
+
+
+def test_revive_clears_debuffs_of_both_categories_and_battle_buffs_in_order() -> None:
+    enemy = _combatant("Enemy")
+    enemy.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
+    enemy.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, remaining_turns=3))
+    enemy.effects.apply(ActiveEffect(EffectName.WILTY, EffectCategory.LIFESPAN, remaining_turns=None))
+    enemy.effects.apply(ActiveEffect(EffectName.NOURISHED, EffectCategory.BATTLE, remaining_turns=3))
+    enemy.effects.apply(ActiveEffect(EffectName.FIBROUS, EffectCategory.BATTLE, remaining_turns=1))
+
+    events = _revive_enemy_via_wilty(enemy)
+
+    assert events[:8] == [
+        Death(combatant=enemy),
+        Revive(combatant=enemy, revived_hp=ADRENALINE_REVIVE_HP),
+        EffectExpired(target=enemy, effect=EffectName.WILTY, category=EffectCategory.LIFESPAN),
+        EffectExpired(target=enemy, effect=EffectName.TOXICITY, category=EffectCategory.BATTLE),
+        EffectExpired(target=enemy, effect=EffectName.NOURISHED, category=EffectCategory.BATTLE),
+        EffectExpired(target=enemy, effect=EffectName.FIBROUS, category=EffectCategory.BATTLE),
+        EffectExpired(target=enemy, effect=EffectName.WILTY, category=EffectCategory.BATTLE),
+        EffectApplied(
+            target=enemy,
+            effect=EffectName.FIBROUS,
+            category=EffectCategory.BATTLE,
+            remaining_turns=DEFAULT_BATTLE_EFFECT_DURATION_TURNS,
+        ),
+    ]
+    for name in (EffectName.TOXICITY, EffectName.WILTY, EffectName.NOURISHED):
+        assert not enemy.effects.has(name)
+    assert enemy.effects.has(EffectName.FIBROUS, category=EffectCategory.BATTLE)
+
+
+def test_revive_keeps_lifespan_buffs() -> None:
+    enemy = _combatant("Enemy")
+    enemy.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
+    enemy.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.LIFESPAN, remaining_turns=None))
+    enemy.effects.apply(ActiveEffect(EffectName.NOURISHED, EffectCategory.LIFESPAN, remaining_turns=None))
+    enemy.effects.apply(ActiveEffect(EffectName.SPIKY_SKIN, EffectCategory.LIFESPAN, remaining_turns=None))
+
+    events = _revive_enemy_via_wilty(enemy)
+
+    assert enemy.effects.has(EffectName.ADRENALINE, category=EffectCategory.LIFESPAN)
+    assert enemy.effects.has(EffectName.NOURISHED, category=EffectCategory.LIFESPAN)
+    assert enemy.effects.has(EffectName.SPIKY_SKIN, category=EffectCategory.LIFESPAN)
+    expired = {event.effect for event in events if isinstance(event, EffectExpired) and event.target is enemy}
+    assert expired == {EffectName.WILTY}
+
+
+def test_revive_consumes_the_triggering_adrenaline_without_an_expiry_event() -> None:
+    enemy = _combatant("Enemy")
+    enemy.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
+
+    events = _revive_enemy_via_wilty(enemy)
+
+    assert not any(isinstance(event, EffectExpired) and event.effect is EffectName.ADRENALINE for event in events)
+
+
+def test_a_toxicity_holder_revived_by_a_lethal_tick_takes_no_further_ticks() -> None:
+    player = _combatant("Player", current_hp=3)
+    player.effects.apply(ActiveEffect(EffectName.TOXICITY, EffectCategory.BATTLE, remaining_turns=3))
+    player.effects.apply(ActiveEffect(EffectName.ADRENALINE, EffectCategory.BATTLE, remaining_turns=None))
+    enemy = _combatant("Enemy", attack=-3)
+    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION, STRUGGLE_ACTION]), _ScriptedRandom([]), 0.0)
+
+    events = _play_round(battle, STRUGGLE_ACTION) + _play_round(battle, STRUGGLE_ACTION)
+
+    assert Revive(combatant=player, revived_hp=ADRENALINE_REVIVE_HP) in events
+    assert len([event for event in events if isinstance(event, DotTicked)]) == 1
 
 
 def test_battle_ending_clears_indefinite_battle_effects_and_emits_effect_expired() -> None:
@@ -706,8 +800,10 @@ def test_vegetative_skip_cascading_into_lethal_toxicity_and_adrenaline_revive_st
     assert isinstance(query, PlayerTurnConcluded)
     assert TurnSkipped(combatant=player) in query.events
     assert Death(combatant=player) in query.events
-    assert Revive(combatant=player, revived_hp=1) in query.events
-    assert player.current_hp == 1
+    assert Revive(combatant=player, revived_hp=ADRENALINE_REVIVE_HP) in query.events
+    assert EffectExpired(target=player, effect=EffectName.TOXICITY, category=EffectCategory.BATTLE) in query.events
+    assert EffectExpired(target=player, effect=EffectName.VEGETATIVE, category=EffectCategory.BATTLE) in query.events
+    assert player.current_hp == ADRENALINE_REVIVE_HP
     assert not battle.is_over
     assert battle.turn_phase == TurnPhase.AWAITING_ENEMY_TURN
 
