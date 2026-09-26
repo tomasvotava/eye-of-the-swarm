@@ -160,7 +160,7 @@ def _build_uprooted_chain_reaches_cap_under_clouded_judgement() -> _Scenario:
     player = _combatant("Player", attack=15, defense=5, available_actions=(WEAK_ACTION, STRONG_ACTION))
     player.effects.apply(ActiveEffect(EffectName.UPROOTED, EffectCategory.BATTLE, remaining_turns=None))
     player.effects.apply(ActiveEffect(EffectName.CLOUDED_JUDGEMENT, EffectCategory.BATTLE, remaining_turns=None))
-    enemy = _combatant("Enemy", attack=0, defense=10, current_hp=110)  # dies exactly on the chain's 11th swing
+    enemy = _combatant("Enemy", attack=0, defense=10, current_hp=143)  # dies exactly on the chain's 11th swing
     uprooted_rolls = [0.0] * MAX_EXTRA_ACTIONS_PER_TURN  # every offered chain roll succeeds
     battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom(uprooted_rolls), 0.0)
 
@@ -186,7 +186,7 @@ def _build_vegetative_skip_does_not_spuriously_trigger_spiky_skin() -> _Scenario
     reflect -- only a real swing in a later round should."""
     player = _combatant("Player", attack=15, defense=50, available_actions=(STRUGGLE_ACTION,))
     player.effects.apply(ActiveEffect(EffectName.VEGETATIVE, EffectCategory.BATTLE, remaining_turns=None))
-    enemy = _combatant("Enemy", attack=0, defense=10, current_hp=10)  # dies exactly on the round-2 hit
+    enemy = _combatant("Enemy", attack=0, defense=10, current_hp=13)  # dies exactly on the round-2 hit
     enemy.effects.apply(ActiveEffect(EffectName.SPIKY_SKIN, EffectCategory.BATTLE, remaining_turns=3))
     battle = Battle(
         player,
@@ -205,7 +205,7 @@ def _build_vegetative_skip_does_not_spuriously_trigger_spiky_skin() -> _Scenario
         player_hits = [e for e in events if isinstance(e, HitLanded) and e.source is player]
         assert len(player_hits) == 1  # only the round-2 swing -- round 1's skipped turn landed nothing
         assert [e for e in events if isinstance(e, HitReflected)] == [
-            HitReflected(source=enemy, target=player, damage=5, target_hp_after=95)
+            HitReflected(source=enemy, target=player, damage=7, target_hp_after=92)  # after round 1's floor-of-1 hit
         ]
 
     return _Scenario(battle=battle, pick_action=pick_action, check=check)

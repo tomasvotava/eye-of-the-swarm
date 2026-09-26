@@ -26,7 +26,9 @@ Playtesting after Epic #253 surfaced three problems that are properties of the c
 
 - **Ratio formula.** With `P = base_power + effective ATK`:
   `raw = P² / (P + effective DEF)`. It never reaches zero, defense has diminishing returns, and
-  the attacker's own power still matters against a heavy defender.
+  the attacker's own power still matters against a heavy defender. P and effective DEF are each
+  clamped at 0 before the division (`raw` is 0 when P is 0), a defensive guard no shipped
+  combatant reaches.
 - **Per-hit order of operations:** `raw` → × distance scale (Swarm Attack only, unchanged) →
   × spread multiplier → × critical multiplier → round → `max(1, …)`. The floor of 1 covers the
   corner a Runt-reduced attacker can reach (`P = 3` against DEF 22 is 0.36 before rounding).
