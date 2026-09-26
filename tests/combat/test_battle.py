@@ -72,6 +72,8 @@ def _combatant(
     current_hp: int = 100,
     max_hp: int = 100,
     recoil: float = 0.0,
+    crit_chance: float = 0.0,
+    crit_multiplier: float = 1.0,
     current_meter: int = 0,
     meter_capacity: int = 100,
     meter_fill_rate: int = 10,
@@ -84,6 +86,8 @@ def _combatant(
         meter_capacity=meter_capacity,
         meter_fill_rate=meter_fill_rate,
         recoil=recoil,
+        crit_chance=crit_chance,
+        crit_multiplier=crit_multiplier,
     )
     return Combatant(
         name=name,
@@ -126,6 +130,7 @@ def test_basic_round_with_no_active_effects() -> None:
             hit_count=1,
             damage=11,
             target_hp_after=89,
+            is_critical=False,
         ),
         MeterFilled(combatant=player, amount=10, meter_after=10),
         ActionChosen(actor=enemy, action=ActionKind.STRUGGLE, was_swapped_by_clouded_judgement=False),
@@ -137,6 +142,7 @@ def test_basic_round_with_no_active_effects() -> None:
             hit_count=1,
             damage=11,
             target_hp_after=89,
+            is_critical=False,
         ),
         MeterFilled(combatant=enemy, amount=10, meter_after=10),
     ]
@@ -169,6 +175,7 @@ def test_wilty_adrenaline_chain_continues_as_an_extra_turn() -> None:
             hit_count=1,
             damage=11,
             target_hp_after=89,
+            is_critical=False,
         ),
         MeterFilled(combatant=player, amount=10, meter_after=10),
         Wilted(combatant=enemy),
@@ -186,6 +193,7 @@ def test_wilty_adrenaline_chain_continues_as_an_extra_turn() -> None:
             hit_count=1,
             damage=15,
             target_hp_after=85,
+            is_critical=False,
         ),
         MeterFilled(combatant=enemy, amount=10, meter_after=10),
     ]
@@ -211,6 +219,7 @@ def test_cluster_hit_stops_early_on_death_and_short_circuits_the_round() -> None
             hit_count=3,
             damage=11,
             target_hp_after=4,
+            is_critical=False,
         ),
         HitLanded(
             source=player,
@@ -220,6 +229,7 @@ def test_cluster_hit_stops_early_on_death_and_short_circuits_the_round() -> None
             hit_count=3,
             damage=11,
             target_hp_after=-7,
+            is_critical=False,
         ),
         Death(combatant=enemy),
         BattleEnded(winner=player),
@@ -1058,3 +1068,73 @@ def test_damage_spread_outside_zero_to_one_is_rejected(spread: float) -> None:
             0.0,
             damage_spread=spread,
         )
+
+
+def test_zero_crit_chance_never_crits_and_makes_no_rng_draw() -> None:
+    player = _combatant("Player", attack=15, crit_chance=0.0, crit_multiplier=1.5)
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom([]), 0.0, damage_spread=0.0)
+
+    events = _play_player_swing(battle, STRUGGLE_ACTION)
+
+    landed = next(event for event in events if isinstance(event, HitLanded))
+    assert landed.damage == 16
+    assert landed.is_critical is False
+
+
+def test_a_landed_crit_multiplies_the_hit_and_its_recoil() -> None:
+    player = _combatant("Player", attack=15, recoil=0.25, crit_chance=0.1, crit_multiplier=1.5)
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom([0.0]), 0.0, damage_spread=0.0)
+
+    events = _play_player_swing(battle, STRUGGLE_ACTION)
+
+    landed = next(event for event in events if isinstance(event, HitLanded))
+    self_damage = next(event for event in events if isinstance(event, SelfDamageTaken))
+    assert landed.damage == 24  # 16 * 1.5
+    assert landed.is_critical is True
+    assert self_damage.damage == 6  # 24 * 0.25
+
+
+def test_a_missed_crit_roll_lands_the_plain_hit() -> None:
+    player = _combatant("Player", attack=15, crit_chance=0.1, crit_multiplier=1.5)
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom([0.1]), 0.0, damage_spread=0.0)
+
+    events = _play_player_swing(battle, STRUGGLE_ACTION)
+
+    landed = next(event for event in events if isinstance(event, HitLanded))
+    assert landed.damage == 16
+    assert landed.is_critical is False
+
+
+def test_an_enemy_crits_on_its_own_crit_stats() -> None:
+    player = _combatant("Player")
+    enemy = _combatant("Enemy", attack=15, crit_chance=0.1, crit_multiplier=1.5)
+    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([0.0]), 0.0, damage_spread=0.0)
+    _play_player_swing(battle, STRUGGLE_ACTION)
+
+    events = battle.resolve_enemy_turn()
+
+    landed = next(event for event in events if isinstance(event, HitLanded))
+    assert landed.damage == 24
+    assert landed.is_critical is True
+
+
+@pytest.mark.parametrize(
+    ("draws", "damage", "is_critical"),
+    [
+        ([0.0, 0.0], 19, True),  # spread 0.8, then crit: 16 * 0.8 * 1.5 = 19.2
+        ([0.0, 0.99], 13, False),  # spread 0.8, no crit: 12.8; crit-first order would read 0.0 as a crit
+    ],
+)
+def test_each_hit_draws_its_spread_before_its_crit_roll(draws: list[float], damage: int, is_critical: bool) -> None:
+    player = _combatant("Player", attack=15, crit_chance=0.1, crit_multiplier=1.5)
+    enemy = _combatant("Enemy")
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom(draws), 0.0, damage_spread=0.2)
+
+    events = _play_player_swing(battle, STRUGGLE_ACTION)
+
+    landed = next(event for event in events if isinstance(event, HitLanded))
+    assert landed.damage == damage
+    assert landed.is_critical is is_critical

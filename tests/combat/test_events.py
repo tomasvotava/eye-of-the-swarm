@@ -99,6 +99,7 @@ def test_hit_landed_carries_hit_progress_and_damage() -> None:
         hit_count=3,
         damage=7,
         target_hp_after=93,
+        is_critical=False,
     )
 
     assert event.source is source
@@ -107,6 +108,7 @@ def test_hit_landed_carries_hit_progress_and_damage() -> None:
     assert event.hit_count == 3
     assert event.damage == 7
     assert event.target_hp_after == 93
+    assert event.is_critical is False
 
 
 def test_hit_reflected_carries_reflection_source_and_target() -> None:

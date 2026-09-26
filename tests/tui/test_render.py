@@ -83,6 +83,7 @@ def test_events_renders_hit_landed_with_damage_and_hp() -> None:
                 hit_count=1,
                 damage=5,
                 target_hp_after=15,
+                is_critical=False,
             )
         ],
     )
@@ -107,6 +108,7 @@ def test_events_renders_multi_hit_index() -> None:
                 hit_count=3,
                 damage=3,
                 target_hp_after=10,
+                is_critical=False,
             )
         ],
     )

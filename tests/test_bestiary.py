@@ -1,6 +1,7 @@
 from eye.bestiary import BESTIARY, StrainProfile
 from eye.combat.actions import ActionDefinition, ActionKind, resolve_hit
 from eye.combat.stats import Combatant, Stats
+from eye.combat.tuning import CRIT_CHANCE, CRIT_MULTIPLIER
 from eye.exploration.encounters import ENCOUNTERABLE_STRAINS, Strain
 
 # Design intent (PROJECT_BRIEF.md §8 -- playtesting-driven, not final): weakest to strongest.
@@ -23,6 +24,12 @@ def test_bramble_profile_has_stats_actions_and_a_spore_award() -> None:
 
 def test_bramble_is_immune_to_recoil() -> None:
     assert BESTIARY[Strain.BRAMBLE].stats.recoil == 0.0
+
+
+def test_every_strain_crits_at_the_shared_tuning_values() -> None:
+    for profile in BESTIARY.values():
+        assert profile.stats.crit_chance == CRIT_CHANCE
+        assert profile.stats.crit_multiplier == CRIT_MULTIPLIER
 
 
 def test_every_encounterable_strain_has_a_struggle_and_a_meter_gated_swarm_attack() -> None:
