@@ -32,6 +32,7 @@ from eye.combat.events import (
     Revive,
     SelfDamageTaken,
     TurnSkipped,
+    Wilted,
 )
 from eye.combat.stats import Combatant, Stats
 from eye.combat.tuning import (
@@ -168,6 +169,7 @@ def test_wilty_adrenaline_chain_continues_as_an_extra_turn() -> None:
             target_hp_after=90,
         ),
         MeterFilled(combatant=player, amount=10, meter_after=10),
+        Wilted(combatant=enemy),
         Death(combatant=enemy),
         Revive(combatant=enemy, revived_hp=ADRENALINE_REVIVE_HP),
         EffectExpired(target=enemy, effect=EffectName.ADRENALINE, category=EffectCategory.BATTLE),
@@ -302,6 +304,30 @@ def test_wilty_without_adrenaline_ends_the_turn_immediately() -> None:
     assert Death(combatant=enemy) in events
     assert events[-1] == BattleEnded(winner=player)
     assert not any(isinstance(event, ActionChosen) and event.actor is enemy for event in events)
+
+
+def test_an_enemy_wilty_roll_emits_wilted_immediately_before_its_death() -> None:
+    player = _combatant("Player")
+    enemy = _combatant("Enemy")
+    enemy.effects.apply(ActiveEffect(EffectName.WILTY, EffectCategory.BATTLE, remaining_turns=None))
+    battle = Battle(player, enemy, ScriptedChooser([STRUGGLE_ACTION]), _ScriptedRandom([0.0]), 0.0)
+
+    events = _play_round(battle, STRUGGLE_ACTION)
+
+    death_index = events.index(Death(combatant=enemy))
+    assert events[death_index - 1] == Wilted(combatant=enemy)
+    assert [e for e in events if isinstance(e, Wilted)] == [Wilted(combatant=enemy)]
+
+
+def test_a_lethal_hit_emits_no_wilted() -> None:
+    player = _combatant("Player")
+    enemy = _combatant("Enemy", current_hp=1)
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom([]), 0.0)
+
+    events = _play_round(battle, STRUGGLE_ACTION)
+
+    assert Death(combatant=enemy) in events
+    assert not any(isinstance(e, Wilted) for e in events)
 
 
 def test_spiky_skin_reflects_partial_damage_to_the_attacker() -> None:
@@ -838,6 +864,18 @@ def test_player_wilty_without_adrenaline_ends_the_battle_via_query() -> None:
     assert query.events[-1] == BattleEnded(winner=enemy)
     assert battle.is_over
     assert battle.turn_phase == TurnPhase.FINISHED
+
+
+def test_a_player_wilty_roll_emits_wilted_immediately_before_its_death() -> None:
+    player = _combatant("Player")
+    enemy = _combatant("Enemy")
+    player.effects.apply(ActiveEffect(EffectName.WILTY, EffectCategory.BATTLE, remaining_turns=None))
+    battle = Battle(player, enemy, ScriptedChooser([]), _ScriptedRandom([0.0]), 0.0)
+
+    query = battle.query_player_turn()
+
+    assert isinstance(query, PlayerTurnConcluded)
+    assert query.events[:2] == [Wilted(combatant=player), Death(combatant=player)]
 
 
 def test_query_player_turn_raises_after_the_player_turn_already_concluded_via_resolve() -> None:

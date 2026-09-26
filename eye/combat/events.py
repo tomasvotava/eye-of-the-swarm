@@ -11,6 +11,13 @@ class Death:
 
 
 @dataclass(frozen=True, slots=True)
+class Wilted:
+    """A Wilty roll killed `combatant`; always immediately followed by that combatant's `Death`."""
+
+    combatant: Combatant
+
+
+@dataclass(frozen=True, slots=True)
 class Revive:
     combatant: Combatant
     revived_hp: int
@@ -111,6 +118,7 @@ class BattleEnded:
 
 type BattleEvent = (
     Death
+    | Wilted
     | Revive
     | TurnSkipped
     | ActionChosen

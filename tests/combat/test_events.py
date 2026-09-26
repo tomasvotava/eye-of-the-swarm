@@ -20,6 +20,7 @@ from eye.combat.events import (
     Revive,
     SelfDamageTaken,
     TurnSkipped,
+    Wilted,
 )
 from eye.combat.stats import Combatant, Stats
 
@@ -47,6 +48,14 @@ def test_death_carries_the_combatant() -> None:
     combatant = _combatant("Sporeling")
 
     event = Death(combatant=combatant)
+
+    assert event.combatant is combatant
+
+
+def test_wilted_carries_the_combatant() -> None:
+    combatant = _combatant("Sporeling")
+
+    event = Wilted(combatant=combatant)
 
     assert event.combatant is combatant
 

@@ -37,6 +37,7 @@ from eye.combat.events import (
     Revive,
     SelfDamageTaken,
     TurnSkipped,
+    Wilted,
 )
 from eye.combat.stats import Combatant
 from eye.exploration.encounters import Strain
@@ -168,6 +169,8 @@ def _describe_event(event: BattleEvent, player: Combatant) -> str:
     match event:
         case Death(combatant=combatant):
             return f"{combatant.name} falls."
+        case Wilted(combatant=combatant):
+            return f"{combatant.name} wilts away."
         case Revive(combatant=combatant, revived_hp=revived_hp):
             return f"{combatant.name} revives with {revived_hp} HP!"
         case TurnSkipped(combatant=combatant):
@@ -970,13 +973,9 @@ class CombatScene:
                 return []
             case Death(combatant=combatant):
                 animator = self._animator_for(combatant)
-                displayed = self._displayed_for(combatant)
 
                 def on_start() -> None:
                     self._phase_focus = PhaseFocus(receiving=combatant)
-                    # Defensive snap: a Wilty-triggered death sets current_hp directly and emits
-                    # no event for the GUI to tween against.
-                    displayed.hp = float(max(0, combatant.current_hp))
                     if animator is not None:
                         animator.set_state(CombatAnimationState.DEAD)
 
@@ -985,6 +984,16 @@ class CombatScene:
                         duration_seconds=BATTLE_DEATH_POSE_HOLD_SECONDS / self._combat_speed_multiplier,
                         on_start=on_start,
                     )
+                ]
+            case Wilted(combatant=combatant):
+
+                def focus() -> None:
+                    self._phase_focus = PhaseFocus(receiving=combatant)
+
+                # Its real duration stops the zero-duration cascade from starting Death's pose under the card.
+                return [
+                    Phase(duration_seconds=0.0, on_start=focus),
+                    _hp_tween_phase(self._displayed_for(combatant), 0, self._combat_speed_multiplier),
                 ]
             case Revive(combatant=combatant, revived_hp=revived_hp):
                 animator = self._animator_for(combatant)
