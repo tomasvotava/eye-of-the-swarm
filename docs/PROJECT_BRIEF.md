@@ -295,7 +295,8 @@ No dedicated tutorial mode. Instead, a lightweight message-and-continue mechanic
 from your swarm's land into biomes unknown — press → to venture further," "You've found a pile of
 spores. Might be useful.") lets the game speak to the player at key first-playthrough moments,
 folding instruction into story instead of breaking away for it. Presentation-only: an
-overlay/queue the GUI shows at scripted trigger points, no domain involvement.
+overlay/queue the GUI shows at scripted trigger points, no domain involvement. Leaving a matured
+Turf's influence, and growing a seed ready to plant, are announced each time they happen.
 
 ### 9.9 Art & audio asset pipeline
 
