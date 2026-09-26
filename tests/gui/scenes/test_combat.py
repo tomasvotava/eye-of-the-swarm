@@ -3373,6 +3373,70 @@ def test_fire_narration_for_the_enemys_death_does_not_fire_first_death() -> None
     assert NarrationTrigger.FIRST_DEATH not in scene._narration._seen
 
 
+def test_fire_narration_for_the_players_wilted_queues_the_player_copy() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+
+    scene._fire_narration_for(Wilted(combatant=scene._battle.player))
+
+    assert scene._narration.queue.current == NarrationEntry(
+        "You wilted away.", "Wilty's rot took you - no blow was struck."
+    )
+
+
+def test_fire_narration_for_the_enemys_wilted_queues_the_enemy_copy() -> None:
+    generation = _generation(strain_queue=[Strain.BEATLE])
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+
+    scene._fire_narration_for(Wilted(combatant=scene._battle.enemy))
+
+    assert scene._narration.queue.current == NarrationEntry(
+        f"The {scene._battle.enemy.name} wilted away.", "Wilty's rot claimed it - no blow was struck."
+    )
+
+
+def test_fire_narration_for_wilted_queues_an_entry_every_time() -> None:
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_placeholder_atlas(), audio=_audio())
+
+    scene._fire_narration_for(Wilted(combatant=scene._battle.player))
+    scene._fire_narration_for(Wilted(combatant=scene._battle.player))
+
+    scene._narration.queue.dismiss()
+
+    assert scene._narration.queue.is_active
+
+
+def test_a_wilty_death_shows_its_card_then_drains_hp_then_plays_the_death_pose(tmp_path: Path) -> None:
+    _write_full_combat_sprite_set(tmp_path / SpriteKey.PLAYER.value)
+    generation = _generation()
+    scene = CombatScene(generation, _encounter(generation), build_art_atlas(tmp_path), audio=_audio())
+    player = scene._battle.player
+    animator = scene._player_animator
+    assert animator is not None
+
+    def posed_dead() -> bool:
+        return animator.state is CombatAnimationState.DEAD
+
+    scene._queue_events([Wilted(combatant=player), Death(combatant=player)])
+
+    scene.update(0.0)
+    for _ in range(200):
+        scene.update(0.016)  # frozen under the card, however long it stays up
+    assert scene._narration.queue.is_active
+    assert scene._player_displayed.hp == _STATS.max_hp
+    assert not posed_dead()
+
+    scene._narration.queue.dismiss()
+    scene.update(BATTLE_VALUE_TWEEN_SECONDS / 2)
+    assert 0.0 < scene._player_displayed.hp < _STATS.max_hp
+    assert not posed_dead()
+
+    scene.update(BATTLE_VALUE_TWEEN_SECONDS / 2)
+    assert scene._player_displayed.hp == 0.0
+    assert posed_dead()
+
+
 def test_a_won_battle_fires_first_attack_narration_along_the_way() -> None:
     overwhelming = Stats(max_hp=100, attack=1000, defense=1000, meter_capacity=100, meter_fill_rate=10, recoil=0.0)
     generation = _generation(stats=overwhelming)
