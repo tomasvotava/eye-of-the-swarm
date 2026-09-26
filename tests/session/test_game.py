@@ -2,13 +2,10 @@ from collections.abc import Sequence
 
 import pytest
 
-from eye.bestiary import BESTIARY
 from eye.combat.events import HitLanded
-from eye.combat.tuning import STRUGGLE_BASE_POWER
 from eye.exploration.encounters import EncounterKind, Strain
-from eye.exploration.events import EnemyEncountered, SeedPlanted
+from eye.exploration.events import SeedPlanted
 from eye.exploration.tuning import SEED_GROWTH_RATE_CAP, SEED_GROWTH_THRESHOLD
-from eye.player import BASE_PLAYER_STATS
 from eye.session.events import SeedsMatured, SporesAwarded
 from eye.session.game import Game
 from tests.session.doubles import ScriptedEncounterRandom, advance_flat
@@ -26,15 +23,13 @@ def _game(
 
 
 def test_start_generation_uses_base_player_stats_from_an_empty_skill_tree() -> None:
-    game = _game(kind_queue=[EncounterKind.ENEMY])
+    game = _game(kind_queue=[EncounterKind.ENEMY], strain_queue=[Strain.GOLEM])
     generation = game.start_generation()
 
     events = advance_flat(generation)
 
-    enemy_event = next(event for event in events if isinstance(event, EnemyEncountered))
-    profile = BESTIARY[enemy_event.strain]
     first_hit = next(event for event in events if isinstance(event, HitLanded))
-    assert first_hit.damage == round(STRUGGLE_BASE_POWER + BASE_PLAYER_STATS.attack - profile.stats.defense)
+    assert first_hit.damage == 9  # base ATK 10 gives P = 15 against Golem's DEF 10: 225 / 25
 
 
 def test_start_generation_spawns_at_the_furthest_matured_turf() -> None:

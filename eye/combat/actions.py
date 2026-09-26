@@ -57,8 +57,10 @@ def _damage_to_defender(
             if STRUGGLE_SCALES_WITH_DISTANCE
             else 1.0
         )
-    raw = base_power + attacker.effective(Stat.ATTACK) - defender.effective(Stat.DEFENSE)
-    return round(max(0.0, raw) * scale)
+    power = max(0.0, base_power + attacker.effective(Stat.ATTACK))
+    defense = max(0.0, defender.effective(Stat.DEFENSE))
+    raw = 0.0 if power == 0 else power**2 / (power + defense)
+    return max(1, round(raw * scale))
 
 
 def _recoil_to_attacker(attacker: Combatant, action: ActionDefinition, damage_to_defender: int) -> int:
