@@ -97,7 +97,7 @@ The intended effect: fights can't be fully calculated in advance from stats alon
 
 **Reapplication:** applying a buff/debuff already active on a target refreshes it (the new instance replaces the old) rather than stacking — but only *within* the same category. A Lifespan instance and a Battle/turn instance of the same buff type are tracked as separate slots and both apply at once, combining additively (e.g. a Lifespan Fibrous +20% picked up while exploring plus a Battle/turn Fibrous +30% granted mid-fight give +50% Attack for that battle, dropping back to +20% once the battle-scoped instance expires). At most one instance per category per buff type is ever active on a target.
 
-**v1 has no cleanse/dispel mechanic** — effects run out only via duration or death.
+**v1 has no cleanse/dispel mechanic** — effects run out only via duration or death, with one exception: an Adrenaline revive (below) clears its holder's debuffs.
 
 **Specialty types** (beyond conventional HP/Attack/Defense modifiers):
 - **Toxicity** (debuff) — after the holder attacks, they take poison damage each turn for N turns.
@@ -106,7 +106,7 @@ The intended effect: fights can't be fully calculated in advance from stats alon
 - **Ligneous Periderm** (buff, name pending) — reduces damage taken (raises effective Defense) for its duration.
 - **Splintered** (debuff) — lowers effective Defense for its duration.
 - **Spiky Skin** (buff) — an attacker takes reflected damage when they hit the holder.
-- **Adrenaline** (buff) — one-shot: the next time the holder would die, they instead revive with a small fixed HP, gain Fibrous, and take an extra turn immediately. Consumed on trigger, regardless of which category (Lifespan or Battle) held the triggering instance — a Lifespan-granted Adrenaline (e.g. a skill-tree trait) is a once-per-generation save, not a once-per-battle one. If both categories are active on the same holder, only the triggering instance is consumed (Battle preferred over Lifespan), leaving the other independently in play per the reapplication rule above.
+- **Adrenaline** (buff) — one-shot: the next time the holder would die, they instead revive at a fixed 10 HP — every debuff (Battle and Lifespan) and every Battle-scoped buff is cleared, Lifespan buffs are kept — gain Fibrous, and take an extra turn immediately. Consumed on trigger, regardless of which category (Lifespan or Battle) held the triggering instance — a Lifespan-granted Adrenaline (e.g. a skill-tree trait) is a once-per-generation save, not a once-per-battle one. If both categories are active on the same holder, only the triggering instance is consumed (Battle preferred over Lifespan), leaving the other independently in play per the reapplication rule above.
 - **Fibrous** (buff) — raises Attack for its duration.
 - **Runt** (debuff) — lowers Attack for its duration.
 - **Uprooted** (buff) — each turn, a fixed flat % chance of a second action that same turn.
